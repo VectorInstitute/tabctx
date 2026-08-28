@@ -39,7 +39,18 @@ class TabctxEngine:
         one (e.g. to reuse a stable, caller-known identifier).
 
         Raises AdmissionRejected before any backend/GPU work if the training
-        shape alone is estimated to exceed the configured memory ceiling.
+        shape alone is estimated to exceed the configured memory ceiling
+        (using the conservative formula-based estimator -- this pre-fit gate
+        must stay conservative since nothing has run yet to measure).
+
+        The context's cache-accounting size (used for capacity/eviction
+        bookkeeping, not for this admission gate) is queried from the
+        backend AFTER fit() completes, not before: a real backend can
+        measure actual post-fit GPU memory now that the fit has happened,
+        which is far more accurate than any pre-fit estimate. Confirmed
+        empirically this mattered -- the formula-based estimate ran ~14x
+        higher than real measured GPU memory for a realistic multi-tenant
+        shape, needlessly throttling how many contexts actually fit.
         """
         n_train = len(X)
         n_features = len(X[0]) if n_train else 0
@@ -52,13 +63,12 @@ class TabctxEngine:
                 f"exceeding the {self._estimator.ceiling_bytes()} byte ceiling"
             )
 
-        est_bytes = self._backend.context_bytes_hint(n_train, n_features)
-        if est_bytes is None:
-            est_bytes = self._estimator.estimate_bytes(n_train, 0, n_features)
-
         resolved_id = dataset_id or str(uuid.uuid4())
         with self._cache.lock:
             payload = self._backend.fit(X, y, task)
+            est_bytes = self._backend.context_bytes_hint(n_train, n_features)
+            if est_bytes is None:
+                est_bytes = self._estimator.estimate_bytes(n_train, 0, n_features)
             context = CachedContext(
                 dataset_id=resolved_id,
                 backend_name=self._backend.name,

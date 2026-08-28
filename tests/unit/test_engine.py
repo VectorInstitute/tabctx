@@ -62,6 +62,30 @@ def test_fit_predict_evicts_after_one_shot():
     assert engine.stats().n_cached_contexts == 0
 
 
+def test_context_bytes_hint_is_queried_after_fit_not_before():
+    # Regression test: cache-accounting size must come from the backend
+    # AFTER fit() runs (so a real backend can report an actual measurement
+    # of the fit that just happened), not before. Found to matter a lot in
+    # practice -- the pre-fit formula-based estimate ran ~14x higher than
+    # real measured GPU memory for a realistic shape on real hardware.
+    calls = []
+
+    class OrderTrackingBackend(FakeBackend):
+        def fit(self, X, y, task):
+            calls.append("fit")
+            return super().fit(X, y, task)
+
+        def context_bytes_hint(self, n_train, n_features):
+            calls.append("context_bytes_hint")
+            return super().context_bytes_hint(n_train, n_features)
+
+    engine, _ = make_engine(backend=OrderTrackingBackend(bytes_hint=1234))
+    engine.fit(TRAIN_X, TRAIN_Y)
+    assert calls == ["fit", "context_bytes_hint"], (
+        f"expected fit() before context_bytes_hint(), got order {calls}"
+    )
+
+
 def test_fit_predict_evicts_even_on_predict_failure():
     class FailingBackend(FakeBackend):
         def predict(self, payload, X_test, return_proba=False):
