@@ -233,6 +233,20 @@ class TabctxService:
         import torch
 
         stats = self._engine.stats()
+        real_gpu_memory = None
+        if torch.cuda.is_available():
+            # Real device memory, independent of our own byte-accounting --
+            # cache_stats.used_bytes is the estimator's *prediction* for what
+            # cached contexts should cost; this is what the device actually
+            # reports. Comparing the two across a long-running replica is how
+            # you'd catch the estimator drifting from reality or the cache
+            # failing to actually release GPU memory on eviction (Python
+            # dropping a reference doesn't guarantee PyTorch's caching
+            # allocator returns the memory immediately).
+            real_gpu_memory = {
+                "allocated_mb": torch.cuda.memory_allocated() / 1e6,
+                "reserved_mb": torch.cuda.memory_reserved() / 1e6,
+            }
         return {
             "status": "ready",
             "device": self._device,
@@ -244,6 +258,7 @@ class TabctxService:
                 "free_bytes": stats.free_bytes,
                 "capacity_bytes": stats.capacity_bytes,
             },
+            "real_gpu_memory": real_gpu_memory,
         }
 
 
