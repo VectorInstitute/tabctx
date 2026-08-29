@@ -36,7 +36,9 @@ Roadmap = "https://github.com/VectorInstitute/tabctx/blob/main/ROADMAP.md"
 tabicl = ["tabicl", "torch"]
 # ray>=2.58 is required for the consistent-hash request router that makes
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).
-serve = ["ray[serve]>=2.58.0", "fastapi", "uvicorn[standard]"]
+# jinja2 is imported unconditionally by ray.serve's haproxy module but
+# missing from some ray[serve] distributions (seen on a clean CI install).
+serve = ["ray[serve]>=2.58.0", "fastapi", "uvicorn[standard]", "jinja2"]
 dev = ["pytest>=7.0", "httpx"]
 
 [tool.hatch.build.targets.wheel]
