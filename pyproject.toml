@@ -34,6 +34,9 @@ Roadmap = "https://github.com/VectorInstitute/tabctx/blob/main/ROADMAP.md"
 
 [project.optional-dependencies]
 tabicl = ["tabicl", "torch"]
+# TabPFN v8+ weights are license-gated on Hugging Face: accept the model
+# license and `huggingface-cli login` before first use.
+tabpfn = ["tabpfn", "torch"]
 # ray>=2.58 is required for the consistent-hash request router that makes
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).
 # jinja2 is imported unconditionally by ray.serve's haproxy module but

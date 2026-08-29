@@ -29,9 +29,13 @@ class TestServeSettings:
         assert ServeSettings.from_env().backend == "fake"
 
     def test_unknown_backend_rejected(self, monkeypatch):
-        monkeypatch.setenv(BACKEND_ENV_VAR, "tabpfn")
-        with pytest.raises(ValueError, match="tabpfn"):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "xgboost")
+        with pytest.raises(ValueError, match="xgboost"):
             ServeSettings.from_env()
+
+    def test_tabpfn_is_a_known_backend(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "tabpfn")
+        assert ServeSettings.from_env().backend == "tabpfn"
 
     @pytest.mark.parametrize("bad", ["0", "-0.5", "1.5", "abc"])
     def test_bad_fraction_rejected(self, monkeypatch, bad):

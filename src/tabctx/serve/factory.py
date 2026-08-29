@@ -7,9 +7,10 @@ same construction logic.
 
 Environment variables:
 
-- ``TABCTX_BACKEND``: ``"tabicl"`` (default; requires torch + tabicl) or
-  ``"fake"`` (deterministic stand-in with no GPU/torch dependency --
-  what makes multi-replica routing testable on a laptop or in CI).
+- ``TABCTX_BACKEND``: ``"tabicl"`` (default; requires torch + tabicl),
+  ``"tabpfn"`` (requires torch + tabpfn), or ``"fake"`` (deterministic
+  stand-in with no GPU/torch dependency -- what makes multi-replica
+  routing testable on a laptop or in CI).
 - ``TABCTX_GPU_MEMORY_FRACTION``: fraction of the calibrated GPU budget
   this engine may use, in (0, 1]; default 1.0. Set below 1.0 when
   several replicas share one physical GPU (e.g. two replicas at
@@ -50,7 +51,7 @@ GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
 
-BackendKind = Literal["tabicl", "fake"]
+BackendKind = Literal["tabicl", "tabpfn", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
 
 
@@ -64,10 +65,10 @@ class ServeSettings:
     @classmethod
     def from_env(cls) -> "ServeSettings":
         backend = os.environ.get(BACKEND_ENV_VAR, "tabicl").strip().lower()
-        if backend not in ("tabicl", "fake"):
+        if backend not in ("tabicl", "tabpfn", "fake"):
             raise ValueError(
                 f"{BACKEND_ENV_VAR}={backend!r} is not a known backend "
-                "(expected 'tabicl' or 'fake')"
+                "(expected 'tabicl', 'tabpfn', or 'fake')"
             )
         raw_fraction = os.environ.get(GPU_MEMORY_FRACTION_ENV_VAR, "1.0")
         try:
@@ -135,9 +136,15 @@ def _build_backend(settings: ServeSettings) -> tuple[TabularICLBackend, str]:
 
     import torch
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if settings.backend == "tabpfn":
+        from tabctx.backends.tabpfn import TabPFNBackend
+
+        # TABCTX_KV_CACHE maps onto TabPFN's fit_mode (see backends/tabpfn.py).
+        return TabPFNBackend(device=device, cache_mode=settings.kv_cache), device
+
     from tabctx.backends.tabicl import TabICLBackend
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     kv_cache: bool | str = False if settings.kv_cache == "off" else settings.kv_cache
     return TabICLBackend(device=device, kv_cache=kv_cache), device
 

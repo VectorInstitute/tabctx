@@ -12,9 +12,10 @@
 # tabctx
 
 Multi-tenant context caching and serving for tabular in-context-learning
-(ICL) foundation models. [TabICL](https://github.com/soda-inria/tabicl)
-today, designed to add [TabPFN](https://github.com/PriorLabs/TabPFN) and
-similar models later without a rewrite.
+(ICL) foundation models: [TabICL](https://github.com/soda-inria/tabicl)
+and [TabPFN](https://github.com/PriorLabs/TabPFN) behind one engine,
+cache, and serving stack (`TABCTX_BACKEND=tabicl|tabpfn`), with a
+protocol seam (`backends/base.py`) for adding more.
 
 ## Why
 
@@ -159,6 +160,8 @@ Requires Python ≥ 3.10.
 ```bash
 pip install -e .                 # core library only (FakeBackend, no GPU deps)
 pip install -e ".[tabicl]"       # + real TabICL backend (torch, tabicl)
+pip install -e ".[tabpfn]"       # + TabPFN backend (weights are license-gated
+                                 #   on Hugging Face: accept + hf login first)
 pip install -e ".[serve]"        # + Ray Serve deployment (ray[serve], fastapi)
 pip install -e ".[dev]"          # + test dependencies
 ```

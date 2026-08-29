@@ -111,11 +111,15 @@ serialization is *possible* if ever justified.
 
 ## Lower priority (don't start here)
 
-- **TabPFN backend.** `TabularICLBackend` (protocol in `backends/base.py`)
-  was designed for this. Breadth, not depth — do it once 1-2 above are
-  settled. Note TabPFN has its own fit-context caching flag
-  (`fit_mode="fit_with_cache"` in TabPFN v2); the kv-cache lesson above
-  says check its default before assuming it's on.
+- **TabPFN backend: built (2026-08-29), pending GPU validation.**
+  `backends/tabpfn.py` exists and the protocol seam held (zero changes
+  elsewhere); the kv-cache lesson applied verbatim (`fit_with_cache` is
+  not TabPFN's default either). Blockers on full validation: the v8+
+  checkpoint is license-gated on Hugging Face (a human must accept +
+  `huggingface-cli login`; integration tests skip with instructions
+  until then), and the memory estimator's static calibration is
+  TabICL-on-A100 data — run a TabPFN calibration pass on GPU before
+  trusting capacity numbers.
 - **Verified tenant identity** (API keys -> tenant id at a proxy, or in
   tabctx itself). The namespacing boundary exists; making identity
   trustworthy is product/deployment work.
