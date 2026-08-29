@@ -196,28 +196,33 @@ Not yet on PyPI; install from a clone for now (see [Roadmap](ROADMAP.md)).
 
 ## Validated at scale (real A100-40GB, not simulated)
 
-- **Cache reuse works**: a `predict()` against an already-cached context is
-  routinely 3-10x faster than the `fit()` that created it.
-- **Real bugs found and fixed by actually load-testing**, not by reasoning
-  about the code in the abstract: a ~14x cache-accounting overestimate that
-  was throttling real multi-tenant capacity to a fraction of what the
-  hardware supports (fixed in v0.3.0), and malformed input crashing as an
-  unhandled 500 instead of a clean rejection (fixed in v0.5.0). Full list
-  in [CHANGELOG.md](CHANGELOG.md).
-- **Eviction under real pressure**: looping past the cache's ~25.7GB
-  ceiling correctly evicts the oldest contexts, with no memory leak across
-  repeated cycles.
-- **Concurrency is honestly benchmarked, not assumed**: throughput
-  plateaus around 9-9.4 ops/sec at concurrency 2-4 on a single replica,
-  and then Ray Serve's own backpressure kicks in. See
-  `benchmarks/baselines/v0.5.0.json` and
-  [`benchmarks/README.md`](benchmarks/README.md) for the methodology
-  (adapted from LLM-serving benchmark vocabulary: TTFT maps to cold-fit
-  latency, tokens/sec maps to warm-predict ops/sec).
+All numbers below are from a live GKE deployment of **two replicas
+sharing one A100-40GB** (v0.7.0, 2026-08-29,
+`benchmarks/baselines/v0.7.0-2replica.json`), except where noted:
+
+- **Multi-replica routing is correct, not assumed**: 80 sticky predicts
+  across 8 datasets on 2 replicas produced zero spurious 404s, every one
+  pinned to the replica that fit its dataset; 428 concurrent predicts
+  clean. The same probe run WITHOUT the affinity header 404s about half
+  the time -- the gap the `x-session-id` contract closes.
+- **Cache reuse works**: warm `predict()` at ~107ms server-side against a
+  ~1,367ms `fit()` (~13x), with TabICL's kv-cache enabled (v0.7.0) so
+  repeat predicts genuinely skip the training-set re-encode.
+- **Throughput scales with concurrency now**: 7.6 -> 14.2 -> 22.1 -> 27.1
+  ops/sec at c=1/2/4/8 (peak ~2.9x the v0.5.0 single-replica plateau of
+  ~9.4), zero backpressure through c=16. Same-context coalescing verified
+  live (48 concurrent requests -> 32 GPU calls).
+- **Eviction under real pressure**: filling a replica to 95% of its
+  fraction-scaled budget evicts oldest-first with clean 404s for evicted
+  contexts and no memory leak across repeated fit/evict cycles.
+- **Real bugs found by testing, not reasoning**: a ~14x cache-accounting
+  overestimate (v0.3.0), malformed input surfacing as a raw 500 (v0.5.0),
+  the multi-replica routing gap itself (v0.6.0), and an upstream Ray
+  Serve quirk where `request_router_config` changes never reach live
+  proxies (see ROADMAP.md). Full list in [CHANGELOG.md](CHANGELOG.md).
 - **Column count scales linearly, not quadratically** (TabICLv2's
-  inducing-point column attention, confirmed empirically): ~13ms/feature
-  for `fit()`, ~0.9ms/feature for `predict()`, out to 700 columns tested.
-  See `benchmarks/baselines/v0.5.0-feature-sweep.json`.
+  inducing-point column attention, confirmed empirically out to 700
+  columns; `benchmarks/baselines/v0.5.0-feature-sweep.json`, pre-kv-cache).
 
 ## Status & Roadmap
 

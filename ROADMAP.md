@@ -46,23 +46,26 @@ baseline (`benchmarks/baselines/v0.5.0*.json`) is historical**. The 3-10x
 secretly re-encoding training data per predict; re-baseline before
 drawing any new conclusions.
 
-## Priority 1: Re-baseline performance and recalibrate memory data
+## Priority 1: Memory recalibration for the kv-cache era
 
-v0.7.0 changed the performance and memory profile fundamentally
-(kv-cache tensors now live in each cached context; warm predicts are
-much cheaper; `max_ongoing_requests` went 2 -> 8; same-context
-coalescing exists). The v0.5.0 baselines no longer describe the system.
+The re-baseline itself happened 2026-08-29 on the 2-replica A100
+deployment (`benchmarks/baselines/v0.7.0-2replica.json`): peak 27 ops/s
+at c=8 (2.9x the v0.5.0 plateau), warm predict ~107ms vs fit ~1.4s,
+coalescing verified live. What remains is the memory side:
 
-**Where to start:** run `benchmarks/bench_concurrency.py` (it already
-sends affinity headers) against a current deployment, save
-`benchmarks/baselines/v0.7.0-*.json`, and update README's "Validated at
-scale" numbers. Watch specifically: (a) whether the kv cache's
-per-context GPU memory (visible in fit()'s measured delta) changes how
-many tenants fit under the ceiling — the adaptive estimator prices it
-automatically, but the static calibration in `memory/calibration_data.py`
-predates kv-cache and is now doubly stale; (b) whether throughput past
-c=4 improves now that requests queue on a lock guarding much shorter GPU
-calls.
+- **kv-cache contexts are much bigger**: a 4,000-row x 30-feature
+  context costs ~850MB resident in "kv" mode (a replica held only ~13
+  before evicting at a ~11.6GB fraction-scaled budget), vs ~110MB for a
+  10,000x50 context pre-kv-cache. The adaptive estimator prices this
+  automatically per-shape, but capacity planning intuition must change;
+  "repr" mode (~24x smaller ICL cache, slower predicts) is the lever
+  when tenant count matters more than latency — worth benchmarking as a
+  config point.
+- **The static formula is now doubly stale** (calibrated pre-kv-cache,
+  and it gates ADMISSION for novel shapes): on 0.45-fraction replicas it
+  413s shapes like 10,000x50 that would really fit. Recalibrate
+  `memory/calibration_data.py` on kv-cache-enabled fits, ideally
+  separating fit-time transient memory from resident context size.
 
 ## Priority 2: Cross-context batching (feasibility now precisely known)
 

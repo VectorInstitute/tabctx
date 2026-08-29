@@ -1,0 +1,103 @@
+{
+  "recorded_at": "2026-08-29T02:56:39.007510+00:00",
+  "shape": {
+    "n_train": 500,
+    "n_test": 20,
+    "n_features": 15
+  },
+  "cold_fit_latency_ms": {
+    "p50": 448.52137519046664,
+    "p95": 482.8305831179023,
+    "p99": 482.8305831179023,
+    "mean": 453.2010166440159,
+    "max": 482.8305831179023
+  },
+  "concurrency_levels": [
+    {
+      "concurrency": 1,
+      "duration_s": 20.08,
+      "n_successful_requests": 153,
+      "n_attempted_requests": 153,
+      "warm_predict_ops_per_sec": 7.618,
+      "warm_predict_latency_ms": {
+        "p50": 126.99754210188985,
+        "p95": 145.12104215100408,
+        "p99": 215.67783318459988,
+        "mean": 131.25768060692482,
+        "max": 227.09216689690948
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 2,
+      "duration_s": 20.08,
+      "n_successful_requests": 286,
+      "n_attempted_requests": 286,
+      "warm_predict_ops_per_sec": 14.241,
+      "warm_predict_latency_ms": {
+        "p50": 137.90108310058713,
+        "p95": 154.1575831361115,
+        "p99": 218.74124999158084,
+        "mean": 140.38343316878655,
+        "max": 237.35837498679757
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 4,
+      "duration_s": 20.16,
+      "n_successful_requests": 445,
+      "n_attempted_requests": 445,
+      "warm_predict_ops_per_sec": 22.076,
+      "warm_predict_latency_ms": {
+        "p50": 191.02291692979634,
+        "p95": 218.61704089678824,
+        "p99": 264.36533289961517,
+        "mean": 180.59434352934443,
+        "max": 289.82175001874566
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 8,
+      "duration_s": 20.22,
+      "n_successful_requests": 547,
+      "n_attempted_requests": 547,
+      "warm_predict_ops_per_sec": 27.05,
+      "warm_predict_latency_ms": {
+        "p50": 293.22566697373986,
+        "p95": 393.1965830270201,
+        "p99": 459.6086251549423,
+        "mean": 294.0912601717627,
+        "max": 512.3804591130465
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 16,
+      "duration_s": 20.71,
+      "n_successful_requests": 549,
+      "n_attempted_requests": 549,
+      "warm_predict_ops_per_sec": 26.503,
+      "warm_predict_latency_ms": {
+        "p50": 381.2827500514686,
+        "p95": 1144.146375125274,
+        "p99": 4183.754042023793,
+        "mean": 592.1986868523591,
+        "max": 7523.212249856442
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    }
+  ],
+  "feature_count_sweep": null
+}
