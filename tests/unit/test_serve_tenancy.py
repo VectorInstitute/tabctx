@@ -4,10 +4,13 @@ import pytest
 
 from tabctx.errors import InvalidInputError
 from tabctx.serve.tenancy import (
+    API_KEYS_ENV_VAR,
     REQUIRE_TENANT_ENV_VAR,
     TENANT_HEADER,
+    InvalidApiKeyError,
     InvalidTenantIdError,
     TenantRequiredError,
+    api_key_map,
     resolve_tenant_id,
     scope_dataset_id,
     tenant_id_from_headers,
@@ -63,6 +66,55 @@ class TestRequireTenantMode:
             resolve_tenant_id({})
         # With a tenant present, required mode passes it through.
         assert resolve_tenant_id({TENANT_HEADER: "acme"}) == "acme"
+
+
+class TestApiKeyMode:
+    def test_off_by_default(self, monkeypatch):
+        monkeypatch.delenv(API_KEYS_ENV_VAR, raising=False)
+        assert api_key_map() is None
+
+    def test_parse(self, monkeypatch):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme, sk-bbb:globex")
+        assert api_key_map() == {"sk-aaa": "acme", "sk-bbb": "globex"}
+
+    @pytest.mark.parametrize("bad", ["justakey", "key:", ":tenant", "k:bad tenant"])
+    def test_malformed_map_fails_loudly(self, monkeypatch, bad):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, bad)
+        with pytest.raises(ValueError):
+            api_key_map()
+
+    def test_tenant_derived_from_key(self, monkeypatch):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme")
+        headers = {"Authorization": "Bearer sk-aaa"}
+        assert resolve_tenant_id(headers) == "acme"
+
+    def test_missing_or_unknown_key_rejected(self, monkeypatch):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme")
+        with pytest.raises(InvalidApiKeyError):
+            resolve_tenant_id({})
+        with pytest.raises(InvalidApiKeyError) as exc_info:
+            resolve_tenant_id({"Authorization": "Bearer sk-wrong"})
+        # Never confirm whether a presented key exists.
+        assert "sk-wrong" not in str(exc_info.value)
+
+    def test_header_must_agree_with_key(self, monkeypatch):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme")
+        headers = {"Authorization": "Bearer sk-aaa", TENANT_HEADER: "globex"}
+        with pytest.raises(InvalidApiKeyError):
+            resolve_tenant_id(headers)
+        headers[TENANT_HEADER] = "acme"  # agreeing header is fine
+        assert resolve_tenant_id(headers) == "acme"
+
+    def test_key_mode_overrides_header_supplied_identity(self, monkeypatch):
+        # The whole point: a caller cannot pick a tenant, only prove one.
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme")
+        with pytest.raises(InvalidApiKeyError):
+            resolve_tenant_id({TENANT_HEADER: "acme"})  # header alone, no key
+
+    def test_non_bearer_scheme_rejected(self, monkeypatch):
+        monkeypatch.setenv(API_KEYS_ENV_VAR, "sk-aaa:acme")
+        with pytest.raises(InvalidApiKeyError):
+            resolve_tenant_id({"Authorization": "Basic c2stYWFh"})
 
 
 class TestScoping:

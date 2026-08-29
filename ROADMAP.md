@@ -166,7 +166,7 @@ serialization is *possible* if ever justified.
 - **Disk/CPU cache tiering** — only matters once deployments push the
   (per-replica, fraction-scaled) ceiling.
 - **PyPI publishing + docs site.** The release workflow now exists
-  (`.github/workflows/release.yml`, tag-triggered, Trusted Publishing)
+  (`.github/workflows/publish.yml`, tag-triggered, Trusted Publishing)
   but needs the one-time human setup documented in its header (create
   the PyPI project + trusted publisher + GitHub `pypi` environment)
   before a `v*` tag actually publishes. A docs site is still unstarted.

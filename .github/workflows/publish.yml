@@ -6,10 +6,10 @@
 # ONE-TIME SETUP before the first release:
 #   1. PyPI -> project (or pending publisher) -> Publishing -> add a
 #      trusted publisher: owner=VectorInstitute, repo=tabctx,
-#      workflow=release.yml, environment=pypi.
+#      workflow=publish.yml, environment=pypi.
 #   2. GitHub repo -> Settings -> Environments -> create "pypi"
 #      (optionally with required reviewers as a release gate).
-name: release
+name: publish package
 
 on:
   push:
