@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tabctx"
-version = "0.5.0"
+version = "0.6.0"
 description = "Multi-tenant context caching and serving for tabular in-context-learning foundation models"
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,8 +34,10 @@ Roadmap = "https://github.com/VectorInstitute/tabctx/blob/main/ROADMAP.md"
 
 [project.optional-dependencies]
 tabicl = ["tabicl", "torch"]
-serve = ["ray[serve]", "fastapi", "uvicorn[standard]"]
-dev = ["pytest>=7.0"]
+# ray>=2.58 is required for the consistent-hash request router that makes
+# multi-replica deployments correct (see serve/app.py and ROADMAP.md).
+serve = ["ray[serve]>=2.58.0", "fastapi", "uvicorn[standard]"]
+dev = ["pytest>=7.0", "httpx"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tabctx"]

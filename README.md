@@ -81,6 +81,44 @@ ready-to-run deployment (`fit`/`predict` endpoints, health checks, live
 memory-usage reporting). See `benchmarks/README.md` for how to measure it
 once it's running.
 
+## Scaling out: multi-replica serving
+
+The context cache is in-process and per-replica, so at `num_replicas >= 2`
+requests for one dataset must consistently reach the replica that holds
+its context. The deployment ships with Ray Serve's consistent-hash
+request router (requires ray >= 2.58) configured for strict session
+affinity, and the contract is simply: **send the dataset_id as the
+`x-session-id` header on every `/v1/tabctx/fit` and `/v1/tabctx/predict`
+call.**
+
+```bash
+curl -X POST $URL/v1/tabctx/fit \
+  -H "content-type: application/json" -H "x-session-id: my-dataset" \
+  -d '{"train_X": [[1,2],[3,4]], "train_y": [0,1], "dataset_id": "my-dataset"}'
+
+curl -X POST $URL/v1/tabctx/predict \
+  -H "content-type: application/json" -H "x-session-id: my-dataset" \
+  -d '{"dataset_id": "my-dataset", "test_X": [[5,6]]}'
+```
+
+Details worth knowing:
+
+- fit() adopts the header value as the dataset_id if the body omits one; a
+  header/body mismatch is rejected 422 (a silent mismatch would mis-route).
+- Omitting the header still works, but only routes correctly on
+  single-replica deployments.
+- Affinity is strict (no fallback replica): if the owning replica is
+  backpressured, callers see retry-with-backoff/503 rather than a
+  spurious 404 from a replica that doesn't hold the context.
+- Responses report `served_by` (the replica tag) so affinity is
+  observable and testable end to end.
+- When replicas share one physical GPU (e.g. 2 replicas at
+  `num_gpus: 0.5`), set `TABCTX_GPU_MEMORY_FRACTION` (e.g. `0.45`) so
+  each replica budgets its share of GPU memory.
+- `TABCTX_BACKEND=fake` runs the whole serve stack without a GPU or
+  torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
+  prove the multi-replica contract on a laptop.
+
 ## Installation
 
 Requires Python ≥ 3.10.
@@ -139,10 +177,9 @@ Not yet on PyPI; install from a clone for now (see [Roadmap](ROADMAP.md)).
 
 ## Status & Roadmap
 
-v0.5.0, single-replica. **Read [ROADMAP.md](ROADMAP.md) before starting new
-work.** It ranks what's next and why (short version: multi-replica
-deployment is currently broken due to a routing gap, and that's the first
-thing to fix, ahead of any pure performance work).
+v0.6.0. Multi-replica deployments are now correct via session-sticky
+routing (the former top roadmap item). **Read [ROADMAP.md](ROADMAP.md)
+before starting new work** -- it ranks what's next and why.
 
 ## Contributing
 

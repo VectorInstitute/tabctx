@@ -12,6 +12,13 @@ Two endpoint families:
 2. /v1/tabctx/fit + /v1/tabctx/predict -- the actual new capability this
    library exists to prove out: fit once, predict many times against the
    same cached context, with no re-fit cost on repeat calls.
+
+Multi-replica routing (v0.6.0): the deployment ships with Ray Serve's
+consistent-hash request router so requests carrying the session-affinity
+header (`x-session-id`, configurable via RAY_SERVE_SESSION_ID_HEADER_KEY)
+pin to a consistent replica. The contract -- the session id IS the
+dataset_id -- lives in serve/affinity.py; engine construction (backend
+selection, GPU memory budgeting) lives in serve/factory.py.
 """
 
 import logging
@@ -19,31 +26,38 @@ import time
 import uuid
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from ray import serve
+from ray.serve.config import RequestRouterConfig
 from starlette.concurrency import run_in_threadpool
 
 from tabctx import (
     AdmissionRejected,
     BackendComputeError,
     CacheCapacityError,
-    ContextCacheManager,
     DatasetNotFoundError,
     InvalidInputError,
-    TabctxEngine,
 )
-from tabctx.backends.tabicl import TabICLBackend
-from tabctx.memory import (
-    A100_40GB_TABICL_CALIBRATION,
-    AdaptiveMemoryEstimator,
-    PowerLawMemoryEstimator,
-)
+from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
+from tabctx.serve.factory import ServeSettings, build_engine
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
 
 fastapi_app = FastAPI(title="tabctx Serve API")
+
+
+def _torch_or_none():
+    """The fake-backend configuration must run without torch installed;
+    everything torch-dependent here (GPU memory reporting) degrades to
+    None rather than failing at import."""
+    try:
+        import torch
+
+        return torch
+    except ImportError:
+        return None
 
 
 class GpuMemory(BaseModel):
@@ -82,6 +96,10 @@ class FitResponse(BaseModel):
     dataset_id: str
     n_train: int
     n_features: int
+    # Which replica served this -- lets clients and probes verify that
+    # session affinity actually pinned fit() and later predict() calls to
+    # the same replica (the multi-replica correctness contract).
+    served_by: str | None = None
 
 
 class TabctxPredictRequest(BaseModel):
@@ -96,6 +114,7 @@ class TabctxPredictResponse(BaseModel):
     classes: list[str] | None = None
     n_test: int
     latency_ms: float
+    served_by: str | None = None
 
 
 _INVALID_INPUT_ERRORS = (InvalidInputError,)
@@ -116,38 +135,51 @@ def _map_error(e: Exception) -> HTTPException:
     raise e
 
 
+def _replica_tag() -> str | None:
+    try:
+        return serve.get_replica_context().replica_tag
+    except Exception:  # not running inside a Serve replica (e.g. tests)
+        return None
+
+
 @serve.deployment(
     max_ongoing_requests=2,
     max_queued_requests=8,
     health_check_period_s=30,
     health_check_timeout_s=60,
+    # Consistent-hash routing on the session-affinity header: requests for
+    # the same dataset_id (sent as `x-session-id`) always land on the same
+    # replica, which is what makes the per-replica context cache correct at
+    # num_replicas > 1 at all. num_fallback_replicas=0 is deliberate:
+    # falling back to a *different* replica under backpressure would land
+    # predict() calls on a replica without the cached context -- the exact
+    # spurious-404 failure this router exists to prevent. Strict affinity
+    # means backpressure surfaces as retry-with-backoff (and eventually
+    # 503) on the owning replica instead, which is honest and retryable.
+    request_router_config=RequestRouterConfig(
+        request_router_class=(
+            "ray.serve.experimental.consistent_hash_router.ConsistentHashRouter"
+        ),
+        request_router_kwargs={"num_fallback_replicas": 0},
+    ),
 )
 @serve.ingress(fastapi_app)
 class TabctxService:
     def __init__(self) -> None:
-        import torch
-
-        self._device = "cuda" if torch.cuda.is_available() else "cpu"
-        if self._device != "cuda":
+        settings = ServeSettings.from_env()
+        built = build_engine(settings)
+        self._engine = built.engine
+        self._estimator = built.estimator
+        self._device = built.device
+        if "cuda" not in self._device and settings.backend == "tabicl":
             logger.warning("No CUDA device visible -- running tabctx on CPU")
-
-        # AdaptiveMemoryEstimator wraps the static formula as a fallback for
-        # shapes never seen before, but uses real per-fit measurements (fed
-        # back via engine.fit() -> record_observation()) for the admission
-        # gate whenever a past fit at least as large has been observed --
-        # see memory/adaptive.py. This is why confidence() is queried fresh
-        # per /readyz call below rather than cached at startup: it changes
-        # as the replica accumulates real operational observations.
-        self._estimator = AdaptiveMemoryEstimator(
-            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-        )
-        cache = ContextCacheManager(capacity_bytes=self._estimator.ceiling_bytes())
-        self._engine = TabctxEngine(
-            backend=TabICLBackend(device=self._device), cache=cache, estimator=self._estimator
-        )
         logger.info(
-            "TabctxService initialized (device=%s). %s",
+            "TabctxService initialized (backend=%s, device=%s, "
+            "gpu_memory_fraction=%s, replica=%s). %s",
+            settings.backend,
             self._device,
+            settings.gpu_memory_fraction,
+            _replica_tag(),
             self._estimator.confidence(),
         )
 
@@ -158,13 +190,14 @@ class TabctxService:
         return await run_in_threadpool(self._legacy_predict_sync, req)
 
     def _legacy_predict_sync(self, req: LegacyPredictRequest) -> LegacyPredictResponse:
-        import torch
+        torch = _torch_or_none()
+        cuda = torch is not None and torch.cuda.is_available()
 
         request_id = str(uuid.uuid4())
         n_train, n_test = len(req.train_X), len(req.test_X)
         n_features = len(req.train_X[0]) if n_train else 0
 
-        if torch.cuda.is_available():
+        if cuda:
             torch.cuda.reset_peak_memory_stats()
         start = time.monotonic()
         try:
@@ -181,7 +214,7 @@ class TabctxService:
         latency_ms = (time.monotonic() - start) * 1000
 
         gpu_memory = None
-        if torch.cuda.is_available():
+        if cuda:
             gpu_memory = GpuMemory(
                 allocated_mb=torch.cuda.max_memory_allocated() / 1e6,
                 reserved_mb=torch.cuda.max_memory_reserved() / 1e6,
@@ -205,27 +238,40 @@ class TabctxService:
     # ---- new tabctx-native endpoints: the actual capability this library adds ----
 
     @fastapi_app.post("/v1/tabctx/fit", response_model=FitResponse)
-    async def tabctx_fit(self, req: FitRequest) -> FitResponse:
-        return await run_in_threadpool(self._fit_sync, req)
+    async def tabctx_fit(self, req: FitRequest, request: Request) -> FitResponse:
+        session_id = session_id_from_headers(request.headers)
+        return await run_in_threadpool(self._fit_sync, req, session_id)
 
-    def _fit_sync(self, req: FitRequest) -> FitResponse:
+    def _fit_sync(self, req: FitRequest, session_id: str | None) -> FitResponse:
         n_train = len(req.train_X)
         n_features = len(req.train_X[0]) if n_train else 0
         try:
+            dataset_id = resolve_dataset_id(session_id, req.dataset_id)
             dataset_id = self._engine.fit(
-                req.train_X, req.train_y, task=req.task, dataset_id=req.dataset_id
+                req.train_X, req.train_y, task=req.task, dataset_id=dataset_id
             )
         except (*_INVALID_INPUT_ERRORS, *_ADMISSION_ERRORS, *_COMPUTE_ERRORS) as e:
             raise _map_error(e) from e
-        return FitResponse(dataset_id=dataset_id, n_train=n_train, n_features=n_features)
+        return FitResponse(
+            dataset_id=dataset_id,
+            n_train=n_train,
+            n_features=n_features,
+            served_by=_replica_tag(),
+        )
 
     @fastapi_app.post("/v1/tabctx/predict", response_model=TabctxPredictResponse)
-    async def tabctx_predict(self, req: TabctxPredictRequest) -> TabctxPredictResponse:
-        return await run_in_threadpool(self._predict_sync, req)
+    async def tabctx_predict(
+        self, req: TabctxPredictRequest, request: Request
+    ) -> TabctxPredictResponse:
+        session_id = session_id_from_headers(request.headers)
+        return await run_in_threadpool(self._predict_sync, req, session_id)
 
-    def _predict_sync(self, req: TabctxPredictRequest) -> TabctxPredictResponse:
+    def _predict_sync(
+        self, req: TabctxPredictRequest, session_id: str | None
+    ) -> TabctxPredictResponse:
         start = time.monotonic()
         try:
+            resolve_dataset_id(session_id, req.dataset_id)
             outcome = self._engine.predict(
                 req.dataset_id, req.test_X, return_proba=req.return_proba
             )
@@ -238,6 +284,7 @@ class TabctxService:
             classes=outcome.classes,
             n_test=len(req.test_X),
             latency_ms=latency_ms,
+            served_by=_replica_tag(),
         )
 
     @fastapi_app.get("/healthz")
@@ -246,11 +293,11 @@ class TabctxService:
 
     @fastapi_app.get("/readyz")
     def readyz(self):
-        import torch
+        torch = _torch_or_none()
 
         stats = self._engine.stats()
         real_gpu_memory = None
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             # Real device memory, independent of our own byte-accounting --
             # cache_stats.used_bytes is the estimator's *prediction* for what
             # cached contexts should cost; this is what the device actually
@@ -266,7 +313,8 @@ class TabctxService:
         return {
             "status": "ready",
             "device": self._device,
-            "cuda_available": torch.cuda.is_available(),
+            "cuda_available": torch is not None and torch.cuda.is_available(),
+            "replica": _replica_tag(),
             "estimator_confidence": self._estimator.confidence(),
             "cache_stats": {
                 "n_cached_contexts": stats.n_cached_contexts,

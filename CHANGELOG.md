@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-28
+### Fixed
+- **Multi-replica deployments are now correct** (previously the architecture was only safe at exactly one replica -- ROADMAP.md's former Priority 1). The Ray Serve deployment now ships with Ray's consistent-hash request router (`ray.serve.experimental.consistent_hash_router.ConsistentHashRouter`, requires ray >= 2.58) configured for strict session affinity (`num_fallback_replicas=0`): requests carrying the `x-session-id` header always land on the same replica. The contract, enforced in the new `serve/affinity.py`, is that the session id IS the dataset_id -- clients send `x-session-id: <dataset_id>` on every `/v1/tabctx/fit` and `/v1/tabctx/predict` call (fit adopts the header value as the dataset_id when the body omits one; a mismatched header/body pair is rejected 422 loudly rather than silently mis-routing). Requests without the header behave as before, which only routes correctly on single-replica deployments.
+
+### Added
+- `serve/factory.py`: environment-driven engine construction, shared by any host. `TABCTX_BACKEND=fake` runs the full serve app against the deterministic fake backend (no GPU/torch), which is what makes multi-replica routing testable on a laptop and in CI. `TABCTX_GPU_MEMORY_FRACTION` scales the estimator's admission ceiling and the cache's capacity budget for replicas sharing one physical GPU (e.g. two replicas at `num_gpus: 0.5` on one A100).
+- `served_by` (replica tag) in fit/predict responses and `replica` in `/readyz`, so clients and probes can verify affinity actually pinned a tenant's traffic to one replica.
+- `tests/integration/test_multi_replica_affinity.py`: boots a real local 2-replica Ray Serve cluster (fake backend) and asserts 16 datasets x 6 predicts see zero spurious 404s, every predict lands on its fit replica, and fits spread across both replicas. This is the regression test that would have caught the routing gap immediately; also run in CI (new `integration` job).
+- `benchmarks/bench_concurrency.py` now sends the session header on all tabctx-native calls, so its numbers stay valid at `num_replicas >= 2`.
+
 ## [0.5.0] - 2026-08-28
 ### Fixed
 - Malformed input (mismatched `train_X`/`train_y` lengths, empty tables, ragged rows, zero-feature rows, a `predict()` feature count mismatched against the cached context) now raises `InvalidInputError` -> HTTP 422, instead of reaching the backend as raw numpy/sklearn arrays and surfacing as an unhandled, untranslated exception (a bare 500 with no useful detail). Found via `probe_scale.py`'s malformed-input test against a real deployment.

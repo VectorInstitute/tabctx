@@ -60,11 +60,16 @@ from sklearn.datasets import make_classification
 N_TRAIN, N_TEST, N_FEATURES = 500, 20, 15  # default shape for the concurrency sweep
 
 
-def _post_status(url, payload, timeout):
+def _post_status(url, payload, timeout, session_id=None):
+    # session_id carries the dataset_id in the x-session-id header so the
+    # consistent-hash router (v0.6.0) pins all of one tenant's requests to
+    # the replica holding its cached context. Harmless at num_replicas=1;
+    # required for the benchmark to be valid at num_replicas >= 2.
+    headers = {"Content-Type": "application/json"}
+    if session_id is not None:
+        headers["x-session-id"] = session_id
     data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
-    )
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read().decode())
@@ -114,11 +119,11 @@ def measure_cold_fit_latency(base_url, timeout, tenant_seed_offset, n_samples=5)
     for i in range(n_samples):
         train_X, train_y, _ = _make_tenant_data(tenant_seed_offset + i)
         start = time.monotonic()
+        dataset_id = f"bench-cold-{tenant_seed_offset}-{i}"
         status, _ = _post_status(
             f"{base_url}/v1/tabctx/fit",
-            {"train_X": train_X, "train_y": train_y,
-             "dataset_id": f"bench-cold-{tenant_seed_offset}-{i}"},
-            timeout,
+            {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
+            timeout, session_id=dataset_id,
         )
         latencies.append((time.monotonic() - start) * 1000)
         if status != 200:
@@ -137,7 +142,8 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
         dataset_id = f"bench-warm-{tenant_seed_offset}-{i}"
         status, _ = _post_status(
             f"{base_url}/v1/tabctx/fit",
-            {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id}, timeout,
+            {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
+            timeout, session_id=dataset_id,
         )
         if status != 200:
             raise RuntimeError(f"warmup fit failed for tenant {i}: status {status}")
@@ -163,7 +169,8 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
             try:
                 status, _ = _post_status(
                     f"{base_url}/v1/tabctx/predict",
-                    {"dataset_id": dataset_ids[idx], "test_X": test_sets[idx]}, timeout,
+                    {"dataset_id": dataset_ids[idx], "test_X": test_sets[idx]},
+                    timeout, session_id=dataset_ids[idx],
                 )
                 elapsed_ms = (time.monotonic() - start) * 1000
                 if status == 200:
@@ -213,7 +220,8 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
     fit_start = time.monotonic()
     status, body = _post_status(
         f"{base_url}/v1/tabctx/fit",
-        {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id}, timeout,
+        {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
+        timeout, session_id=dataset_id,
     )
     fit_ms = (time.monotonic() - fit_start) * 1000
     if status != 200:
@@ -225,7 +233,8 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
         start = time.monotonic()
         status, body = _post_status(
             f"{base_url}/v1/tabctx/predict",
-            {"dataset_id": dataset_id, "test_X": test_X}, timeout,
+            {"dataset_id": dataset_id, "test_X": test_X},
+            timeout, session_id=dataset_id,
         )
         predict_latencies.append((time.monotonic() - start) * 1000)
         if status != 200:

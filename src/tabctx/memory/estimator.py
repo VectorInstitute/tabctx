@@ -47,6 +47,15 @@ class MemoryEstimator(Protocol):
         ...
 
 
+# Defaults for PowerLawMemoryEstimator's two ceilings, exposed as module
+# constants so a deployment that needs to scale them (e.g. two replicas
+# sharing one physical GPU each budget a fraction; see serve/app.py's
+# TABCTX_GPU_MEMORY_FRACTION) can derive from the same numbers instead of
+# hardcoding copies.
+DEFAULT_HARD_CEILING_BYTES = 24 * 1024**3
+DEFAULT_GPU_CAPACITY_BYTES = 40536 * 1024**2  # A100-40GB, MiB-reported
+
+
 class PowerLawMemoryEstimator:
     """estimate_bytes ~= a * cells^b, fit by OLS in log-log space over the
     "ok" calibration points, with a multiplicative safety_margin and an
