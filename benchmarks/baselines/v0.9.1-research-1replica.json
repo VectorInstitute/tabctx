@@ -1,0 +1,86 @@
+{
+  "recorded_at": "2026-08-29T22:12:30.051086+00:00",
+  "shape": {
+    "n_train": 500,
+    "n_test": 20,
+    "n_features": 15
+  },
+  "cold_fit_latency_ms": {
+    "p50": 476.6517081297934,
+    "p95": 23502.311708871275,
+    "p99": 23502.311708871275,
+    "mean": 5080.361800082028,
+    "max": 23502.311708871275
+  },
+  "concurrency_levels": [
+    {
+      "concurrency": 1,
+      "duration_s": 15.13,
+      "n_successful_requests": 108,
+      "n_attempted_requests": 108,
+      "warm_predict_ops_per_sec": 7.14,
+      "warm_predict_latency_ms": {
+        "p50": 140.19912481307983,
+        "p95": 156.30366699770093,
+        "p99": 157.93858421966434,
+        "mean": 140.03810690741778,
+        "max": 194.23129106871784
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 2,
+      "duration_s": 15.11,
+      "n_successful_requests": 205,
+      "n_attempted_requests": 205,
+      "warm_predict_ops_per_sec": 13.567,
+      "warm_predict_latency_ms": {
+        "p50": 146.8519999179989,
+        "p95": 167.1871670987457,
+        "p99": 174.16287492960691,
+        "mean": 147.04400652269948,
+        "max": 196.1875418201089
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 4,
+      "duration_s": 15.18,
+      "n_successful_requests": 235,
+      "n_attempted_requests": 235,
+      "warm_predict_ops_per_sec": 15.478,
+      "warm_predict_latency_ms": {
+        "p50": 256.9922080729157,
+        "p95": 318.0319999810308,
+        "p99": 335.2672499604523,
+        "mean": 256.93036877114247,
+        "max": 345.39304208010435
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 8,
+      "duration_s": 15.46,
+      "n_successful_requests": 237,
+      "n_attempted_requests": 237,
+      "warm_predict_ops_per_sec": 15.332,
+      "warm_predict_latency_ms": {
+        "p50": 503.5261670127511,
+        "p95": 767.1209580730647,
+        "p99": 879.695667186752,
+        "mean": 514.2249017197419,
+        "max": 906.9580829236656
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    }
+  ],
+  "feature_count_sweep": null
+}
