@@ -49,4 +49,9 @@ jobs:
           uv venv && uv pip install -e ".[serve,dev]"
 
       - name: Run integration tests
-        run: uv run pytest tests/integration -q
+        # Invoked via the venv's python, NOT `uv run`: under `uv run`,
+        # Ray launches its worker processes through uv, which re-syncs
+        # the project env from the lockfile (dev group only -- no
+        # ray[serve]) and every replica dies with "No module named
+        # 'ray'". Observed on CI run 33260341506.
+        run: .venv/bin/python -m pytest tests/integration -q
