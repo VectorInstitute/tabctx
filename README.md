@@ -49,6 +49,26 @@ TabPFN backend · cross-request/heterogeneous-shape batching · disk/CPU cache
 tiering · multi-replica cache-aware routing · custom CUDA/Triton kernels ·
 PyPI/GitHub publishing.
 
+## Validated at scale (2026-08-28, real A100-40GB)
+
+Extensive multi-tenant load testing found and fixed a real bug, then
+confirmed the fix under genuine sustained pressure: cache-capacity
+accounting used to come from the same pre-fit formula used for admission
+control, which ran ~14x higher than real GPU memory for a representative
+shape (see CHANGELOG's v0.3.0 entry) — capping real usable capacity at ~2
+concurrent contexts when the hardware could actually hold ~227. Fixed by
+measuring real `torch.cuda.memory_allocated()` after `fit()` instead of
+estimating before it. Re-validated by looping 260 fits to genuinely exceed
+the cache ceiling: eviction fired correctly and continuously, the earliest
+context was cleanly evicted (404) while the most recent stayed served
+(200), accounted vs. real GPU memory tracked within <1% of each other
+throughout, and 8 further cycles under continued full-capacity pressure
+showed no memory leak (evicted contexts' GPU memory was genuinely
+reclaimed). Multi-tenant isolation, concurrent-request correctness (no data
+races, though GPU work itself still serializes per replica by design),
+the regression task path, and `dataset_id` reuse/overwrite semantics were
+all confirmed end-to-end on real hardware too.
+
 ## Quickstart
 
 ```python
@@ -72,29 +92,34 @@ deployment.
 
 ## Gaps / roadmap
 
-- **Memory estimator confidence is LOW**: calibrated from 4 successful
-  measurements + 1 known-OOM boundary, one A100-40GB card, one backend
-  (TabICL). The OOM boundary itself is only bounded between 5.2M and 18.4M
-  `(train+test)×features` cells — real calibration data collection (more
-  shapes, other GPU types, other backends) is needed before trusting this
-  elsewhere.
+- **Memory estimator (the pre-fit admission-control gate) confidence is
+  LOW**: calibrated from 4 successful measurements + 1 known-OOM boundary,
+  one A100-40GB card, one backend (TabICL). The OOM boundary itself is only
+  bounded between 5.2M and 18.4M `(train+test)×features` cells — real
+  calibration data collection (more shapes, other GPU types, other
+  backends) is needed before trusting this elsewhere. (Cache *accounting*
+  no longer uses this estimator when a real measurement is available — see
+  "Validated at scale" above — this gap is specifically about the pre-fit
+  safety gate, which must stay conservative since nothing has run yet.)
 - **The estimator overestimates badly for tiny inputs** (found via unit
   testing, not just theorized): calibration only covers 6,000-5,200,000
   cells, and extrapolating below that range overestimates substantially — a
   20-row/2-feature table estimates to ~23MB. Safe (never risks OOM by
-  under-estimating) but unnecessarily conservative for exactly the small,
-  typical requests this library's multi-tenancy is supposed to make cheap.
-  Needs a piecewise or additive-intercept model, not a pure power law,
-  once more calibration data exists.
+  under-estimating) but still relevant to the admission gate's precision
+  for small requests. Needs a piecewise or additive-intercept model, not a
+  pure power law, once more calibration data exists.
 - **No tenant/authz boundary** on `dataset_id` — it's a flat, shared,
   unauthenticated cache namespace. Anyone who knows or guesses a
   `dataset_id` can `predict()` against someone else's cached context.
 - **No cache durability** — a replica restart silently drops every cached
   context; callers only find out via a subsequent `DatasetNotFoundError`.
 - **v1 serializes all GPU work per replica** via one coarse lock around the
-  cache's fit/evict/predict critical section. Correct under real single-GPU
-  memory pressure, but the first thing to revisit before any concurrency
-  work — well before multi-replica routing.
+  cache's fit/evict/predict critical section. Confirmed correct/necessary
+  given how the admission ceiling is derived (it only accounts for one
+  in-flight backend call) — not just an arbitrary v1 shortcut. A safe
+  concurrency improvement requires re-deriving that ceiling as a function
+  of the max number of concurrent in-flight backend calls first, then this
+  lock can be relaxed accordingly.
 - **No TabPFN backend yet** — the `TabularICLBackend` protocol is designed
   to support one, but it isn't implemented.
 - **Checkpoint reload cost per `fit()`, confirmed empirically**: a fresh
