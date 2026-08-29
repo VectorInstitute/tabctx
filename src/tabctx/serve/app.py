@@ -213,6 +213,7 @@ class TabctxService:
         self._engine = built.engine
         self._estimator = built.estimator
         self._backend_name = built.backend.name  # default model id
+        self._spill_store = built.spill_store
         self._device = built.device
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
@@ -579,6 +580,7 @@ class TabctxService:
                 "engine_calls": self._predictor.engine_calls,
             },
             "uploads": self._uploads.stats(),
+            "spill": self._spill_store.stats() if self._spill_store else None,
             "real_gpu_memory": real_gpu_memory,
         }
 

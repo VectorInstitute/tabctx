@@ -161,7 +161,27 @@ class TabICLBackend:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
         self._stash_backbone(task, model)
+        # Explicit even though tabicl's fit path clears internally today:
+        # a future tabicl change must not silently re-pin (see
+        # _unpin_shared_module for the OOM this prevents).
+        self._unpin_shared_module(model)
         return model
+
+    def _unpin_shared_module(self, model: Any) -> None:
+        """Drop the shared backbone's pointer to the last-used context.
+
+        tabicl's `forward_with_cache` stores the active context's cache
+        on the MODULE (`model_._cache = cache`) and leaves it there.
+        With the backbone shared across all contexts (see __init__),
+        that pointer pins the most recently used context's multi-GB kv
+        cache even after tabctx evicts it -- found on a real A100 as
+        ~15GB that eviction "freed" in the accounting but never left the
+        device, eventually OOMing a fit the books said was safe. The
+        context's own cache lives on its estimator (model_kv_cache_), so
+        clearing the module pointer costs nothing and unpins eviction."""
+        module = getattr(model, "model_", None)
+        if module is not None and hasattr(module, "clear_cache"):
+            module.clear_cache()
 
     def predict(
         self, payload: Any, X_test: ArrayLike, return_proba: bool = False
@@ -188,6 +208,8 @@ class TabICLBackend:
             return PredictOutcome(predictions=predictions)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
+        finally:
+            self._unpin_shared_module(model)
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features

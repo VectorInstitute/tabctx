@@ -58,7 +58,11 @@ class AdaptiveMemoryEstimator:
         max_observations: int = 500,
         preloaded: tuple[Observation, ...] = (),
         preloaded_margin: float = 1.1,
-        transient_capacity_fraction: float = 0.9,
+        # 0.85, not higher: on a real A100 a fit admitted with ~400MB of
+        # nominal slack at 0.9 still OOMed -- allocator fragmentation and
+        # run-to-run peak variance eat several hundred MB, so the top ~15%
+        # of the device is treated as unbudgetable.
+        transient_capacity_fraction: float = 0.85,
     ) -> None:
         """preloaded: factory-installed observations (e.g. a measured
         calibration grid -- see memory/calibration_data.py), consulted

@@ -1,14 +1,39 @@
 """Same-context request coalescing for predict().
 
-The concurrency benchmark (benchmarks/baselines/v0.5.0.json) shows
-per-request latency for a small table (~200ms) dominated by fixed
-per-call overhead, not GPU saturation -- so when several concurrent
-requests target the SAME cached context, packing their test rows into
-one backend call and splitting the results amortizes that overhead
-almost for free. This is the "straightforward and worth doing
-regardless" half of ROADMAP.md's Priority 3; batching across DIFFERENT
-contexts is a separate, model-dependent question this module does not
-attempt.
+Per-request latency for a small table (~100-200ms warm) is dominated by
+fixed per-call overhead, not GPU saturation -- so when several
+concurrent requests target the SAME cached context, packing their test
+rows into one backend call and splitting the results amortizes that
+overhead almost for free. Verified live on an A100 deployment
+(2026-08-29): 48 concurrent same-context requests coalesced into 32 GPU
+calls.
+
+CROSS-context batching (different tenants' contexts in ONE forward pass)
+is deliberately NOT implemented. What a deep read of tabicl's model
+internals (2026-08-29) established, so nobody has to rediscover it:
+
+- The model's batch dim is over tables (`TabICL.forward`, B = number of
+  tables); the sklearn wrapper just uses it for ensemble members of one
+  table. With a kv cache, test rows attend only to fit-time-cached K/V
+  (no test-to-test attention), so batching different contexts' test rows
+  into one forward is numerically EXACT.
+- `TabICLCache.concat` works today for contexts agreeing on
+  (n_feature_groups, train_size, dtype); `num_classes` must be handled
+  by per-context slicing, and you must call `model_.forward_with_cache`
+  directly (tabicl's `_batch_forward_with_cache` re-splits by
+  batch_size=8). So wrapper-level cross-context batching is feasible
+  ONLY for same-shape buckets.
+- Cross-SHAPE batching needs model changes: the encoder stacks don't
+  thread key_padding_mask, and -- the trap -- SSMax scales attention by
+  a single scalar src_len for the whole batch, so padding train_size
+  SILENTLY degrades accuracy rather than crashing. Do not pad the train
+  dimension without fixing ssmax's per-element `n` upstream first.
+
+Decision (2026-08-29): build it only if real traffic shows distinct
+same-shape contexts frequently predicting in the same instant -- a
+narrow coincidence that synthetic benchmarks can't answer honestly. The
+first real-user deployment is what will measure it; until then this
+module's same-context coalescing is the batching layer.
 
 Safety argument (why this can't blow the memory budget): the engine
 serializes all GPU work behind its cache lock, and engine.predict()

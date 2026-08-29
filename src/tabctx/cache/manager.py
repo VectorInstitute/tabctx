@@ -97,6 +97,20 @@ class ContextCacheManager:
                 evicted.append(victim_id)
         return evicted
 
+    def evict_one(self) -> str | None:
+        """Evict a single victim chosen by the policy (spilling it when a
+        spill tier is attached). Returns the evicted dataset_id, or None
+        if the cache is empty. Used by the engine's evict-ahead-of-fit
+        path to convert resident bytes into transient fit headroom."""
+        with self._lock:
+            victim_id = self._policy.select_victim(list(self._entries.values()))
+            if victim_id is None:
+                return None
+            victim = self._entries.pop(victim_id)
+            if self._spill is not None:
+                self._spill.spill(victim)
+            return victim_id
+
     def put(self, context: CachedContext) -> list[str]:
         """Insert a context, evicting via the policy to make room first.
         Returns the list of evicted dataset_ids. Raises CacheCapacityError

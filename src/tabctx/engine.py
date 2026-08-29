@@ -180,28 +180,35 @@ class TabctxEngine:
         backend_name, chosen = self._resolve_backend(backend)
         estimator = self._estimators[backend_name]
 
-        # Usage-aware admission (v0.9.0): what OOMs is the fit's transient
-        # PEAK on top of everything already resident, so the estimated
-        # peak must fit the estimator's headroom given current cache
-        # usage. (The static estimator's headroom ignores usage -- its
-        # formula is conservative enough to price coexistence in; the
-        # adaptive estimator subtracts real usage from real capacity.)
-        # Known conservatism: usage is measured before eviction, so a
-        # nearly-full cache can reject a fit that evicting cold contexts
-        # would have made room for -- evict-ahead-of-fit is a possible
-        # future refinement.
-        estimated = estimator.estimate_bytes(n_train, 0, n_features)
-        headroom = estimator.admission_headroom_bytes(self._cache.stats().used_bytes)
-        if estimated > headroom:
-            raise AdmissionRejected(
-                f"training shape ({n_train} rows x {n_features} features) "
-                f"is estimated to need {estimated} bytes at peak, "
-                f"exceeding the current {headroom} byte admission headroom "
-                f"(cache holds {self._cache.stats().used_bytes} bytes)"
-            )
-
         resolved_id = dataset_id or str(uuid.uuid4())
         with self._cache.lock:
+            # Usage-aware admission (v0.9.0): what OOMs is the fit's
+            # transient PEAK on top of everything resident, so the
+            # estimated peak must fit the headroom given current cache
+            # usage -- checked under the cache lock so two concurrent
+            # fits can't both pass against the same snapshot.
+            #
+            # Evict-ahead-of-fit: when the cache is warm, cold contexts
+            # are evicted (spilled, when a spill tier is attached) until
+            # the fit's transient need fits -- without this, a filling
+            # replica would reject fits that are perfectly safe once a
+            # cold context steps aside. Proven necessary on real
+            # hardware: a fourth ~13GB-peak fit OOMed an A100 with three
+            # ~8GB contexts resident, exactly the state this drains.
+            estimated = estimator.estimate_bytes(n_train, 0, n_features)
+            while True:
+                headroom = estimator.admission_headroom_bytes(
+                    self._cache.stats().used_bytes
+                )
+                if estimated <= headroom:
+                    break
+                if self._cache.evict_one() is None:
+                    raise AdmissionRejected(
+                        f"training shape ({n_train} rows x {n_features} "
+                        f"features) is estimated to need {estimated} bytes "
+                        f"at peak, exceeding the {headroom} byte admission "
+                        "headroom even with the cache fully drained"
+                    )
             payload = chosen.fit(X, y, task)
             est_bytes = chosen.context_bytes_hint(n_train, n_features)
             if est_bytes is None:

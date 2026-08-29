@@ -162,6 +162,7 @@ class BuiltEngine:
     backends: dict[str, TabularICLBackend]
     default: str
     device: str
+    spill_store: object | None = None
 
     # Single-model conveniences (the common deployment):
     @property
@@ -286,4 +287,5 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         backends=backends,
         default=default,
         device=device,
+        spill_store=spill_store,
     )

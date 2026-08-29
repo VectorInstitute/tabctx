@@ -5,9 +5,17 @@ to be a later 404 and a full re-fit. With a spill store attached
 (TABCTX_SPILL_DIR), capacity evictions instead serialize the context to
 local disk, and a later get() for it transparently reloads and re-admits
 it -- the same trade LLM engines make when they swap KV blocks to host
-memory. Reloading a multi-GB context from local SSD is typically ~2x
-faster than re-fitting it, and unlike a re-fit it needs no training data
-from the caller.
+memory.
+
+Economics, measured honestly (A100 + GCP pd-ssd, 2026-08-29): reloading
+a ~13GB spilled TabICL context took ~54s at ~250MB/s disk -- SLOWER than
+the ~5s re-fit for that shape, because TabICL fits are fast relative to
+context size. Spillover earns its keep when (a) the disk is fast local
+NVMe (~GB/s -> reloads in seconds), (b) the fit itself is expensive
+(large tables, slow models), or (c) the caller no longer has the
+training data -- reload needs nothing from them, a re-fit needs the full
+table again. It is opt-in (TABCTX_SPILL_DIR) for exactly this reason:
+measure on your hardware before enabling.
 
 Deliberately best-effort and bounded:
 

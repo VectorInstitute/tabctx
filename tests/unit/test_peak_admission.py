@@ -15,7 +15,7 @@ import pytest
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import ContextCacheManager
 from tabctx.engine import TabctxEngine
-from tabctx.errors import AdmissionRejected
+from tabctx.errors import AdmissionRejected, DatasetNotFoundError
 from tabctx.memory import (
     A100_40GB_TABICL_CALIBRATION,
     AdaptiveMemoryEstimator,
@@ -98,7 +98,7 @@ class TestUsageAwareHeadroom:
     def test_headroom_shrinks_with_usage(self):
         estimator = AdaptiveMemoryEstimator(fallback=_fallback())
         full = estimator.admission_headroom_bytes(0)
-        assert full == int(_fallback().gpu_capacity_bytes * 0.9)
+        assert full == int(_fallback().gpu_capacity_bytes * 0.85)
         assert (
             estimator.admission_headroom_bytes(10_000_000_000) == full - 10_000_000_000
         )
@@ -112,25 +112,45 @@ class TestUsageAwareHeadroom:
             == static.ceiling_bytes()
         )
 
-    def test_engine_rejects_when_cache_usage_eats_headroom(self):
-        # A shape whose measured peak fits an empty device but not one
-        # already holding a huge resident cache.
+    def test_evict_ahead_drains_cold_contexts_to_admit(self):
+        """A warm cache must step aside for an admissible fit: cold
+        contexts are evicted (spilled when a tier exists) until the new
+        fit's transient peak fits -- proven necessary on a real A100
+        (see engine.fit)."""
         estimator = AdaptiveMemoryEstimator(
             fallback=_fallback(),
             preloaded=(Observation(100_000, 50, 30_000_000_000),),
         )
         cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
-        # Pretend a prior fit left ~20GB resident.
+        # A prior fit left ~20GB resident: headroom is now ~14.5GB, the
+        # next fit estimates 33GB -> the resident context must be
+        # evicted ahead of the fit rather than the fit rejected.
         backend = FakeBackend(bytes_hint=20_000_000_000, peak_bytes_hint=20_000_000_001)
         engine = TabctxEngine(backend=backend, cache=cache, estimator=estimator)
         engine.fit(TRAIN_X, TRAIN_Y, dataset_id="big-resident")
 
-        # 50k x 20 is dominated by the preloaded point: estimate = 33GB.
-        # Empty device: headroom = 0.9 x 40GB = ~36.5GB -> would admit.
-        # With 20GB resident: headroom ~16.5GB -> must reject.
-        with pytest.raises(AdmissionRejected, match="admission headroom"):
+        engine.fit(
+            [[1.0] * 20 for _ in range(50_000)],
+            ["a"] * 50_000,
+            dataset_id="big-fit",
+        )
+        assert engine.predict("big-fit", [[1.0] * 20]).predictions == ["a"]
+        # The cold context was drained to make transient room.
+        with pytest.raises(DatasetNotFoundError):
+            engine.predict("big-resident", TRAIN_X[:1])
+
+    def test_rejects_only_when_draining_everything_is_not_enough(self):
+        estimator = AdaptiveMemoryEstimator(
+            fallback=_fallback(),
+            preloaded=(Observation(100_000, 50, 60_000_000_000),),  # > device
+        )
+        cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
+        engine = TabctxEngine(
+            backend=FakeBackend(bytes_hint=1), cache=cache, estimator=estimator
+        )
+        with pytest.raises(AdmissionRejected, match="fully drained"):
             engine.fit(
                 [[1.0] * 20 for _ in range(50_000)],
                 ["a"] * 50_000,
-                dataset_id="big-fit",
+                dataset_id="never",
             )
