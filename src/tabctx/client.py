@@ -41,6 +41,7 @@ from tabctx.errors import (
     DatasetNotFoundError,
     InvalidInputError,
     TabctxError,
+    UploadNotFoundError,
 )
 from tabctx.types import ArrayLike, Task
 
@@ -98,12 +99,65 @@ class TabctxClient:
         resp = self._post("/v1/tabctx/fit", body, session_id=dataset_id)
         return resp["dataset_id"]
 
+    def upload_csv(self, data: bytes, dataset_id: str) -> str:
+        """Upload a CSV (bytes) for later fit/predict-by-reference;
+        returns the upload_id. dataset_id is required because it is the
+        affinity routing key: the upload must land on the same replica
+        the fit/predict for that dataset will reach."""
+        req = urllib.request.Request(
+            f"{self._base_url}/v1/tabctx/upload",
+            data=data,
+            headers={**self._headers(dataset_id), "Content-Type": "text/csv"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+                return json.loads(resp.read().decode())["upload_id"]
+        except urllib.error.HTTPError as e:
+            raise self._map_status(e.code, self._detail(e)) from e
+
+    def upload_csv_file(self, path: str, dataset_id: str) -> str:
+        """upload_csv from a file path, read in streaming-friendly chunks."""
+        with open(path, "rb") as f:
+            return self.upload_csv(f.read(), dataset_id)
+
+    def fit_uploaded(
+        self,
+        train_upload_id: str,
+        dataset_id: str,
+        task: Task = "classification",
+        target_column: str | None = None,
+    ) -> str:
+        """Fit-by-reference: consume a prior upload_csv() of a CSV whose
+        columns are the features plus one target column (target_column,
+        default: the last column)."""
+        resp = self._post(
+            "/v1/tabctx/fit",
+            {
+                "train_upload_id": train_upload_id,
+                "target_column": target_column,
+                "task": task,
+                "dataset_id": dataset_id,
+            },
+            session_id=dataset_id,
+        )
+        return resp["dataset_id"]
+
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike | None = None,
+        return_proba: bool = False,
+        test_upload_id: str | None = None,
     ) -> PredictResult:
+        body: dict = {"dataset_id": dataset_id, "return_proba": return_proba}
+        if X_test is not None:
+            body["test_X"] = X_test
+        if test_upload_id is not None:
+            body["test_upload_id"] = test_upload_id
         resp = self._post(
             "/v1/tabctx/predict",
-            {"dataset_id": dataset_id, "test_X": X_test, "return_proba": return_proba},
+            body,
             session_id=dataset_id,
         )
         return PredictResult(
@@ -206,6 +260,12 @@ class TabctxClient:
         if code == 422:
             return InvalidInputError(detail)
         if code == 404:
+            # Both not-found kinds share the status; the server's upload
+            # message always says "upload" (see UploadStore.consume), so
+            # this sniff only ever swaps between two same-semantics
+            # not-found types.
+            if "upload" in detail.lower():
+                return UploadNotFoundError(detail)
             return DatasetNotFoundError(detail)
         if code == 413:
             return AdmissionRejected(detail)

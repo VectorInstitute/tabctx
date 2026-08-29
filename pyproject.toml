@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tabctx"
-version = "0.7.0"
+version = "0.8.0"
 description = "Multi-tenant context caching and serving for tabular in-context-learning foundation models"
 readme = "README.md"
 license = "Apache-2.0"

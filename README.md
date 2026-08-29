@@ -132,6 +132,40 @@ Details worth knowing:
   torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
   prove the multi-replica contract on a laptop.
 
+## Large tables: upload, then fit by reference
+
+Inline JSON tables are convenient to ~10^4 rows and painful beyond.
+For big tables, stream a CSV first and reference it (the same
+upload/orchestration split hosted tabular APIs use, minus the object
+store -- uploads stream straight to the serving replica's disk):
+
+```python
+client = TabctxClient("http://localhost:8000")
+upload_id = client.upload_csv_file("train.csv", dataset_id="churn-v1")
+client.fit_uploaded(upload_id, "churn-v1", target_column="label")
+
+test_upload = client.upload_csv_file("scoring_batch.csv", "churn-v1")
+result = client.predict("churn-v1", test_upload_id=test_upload)
+```
+
+The contract, in short:
+
+- Training CSV = header row + numeric feature columns + one target
+  column (`target_column`, default: the last). Test CSVs carry exactly
+  the training feature columns, same names and order -- a reordered
+  header is rejected 422 rather than silently producing garbage.
+- Uploads are **single-use** (consumed by the fit/predict that
+  references them) and expire after `TABCTX_UPLOAD_TTL_S` (default 1h);
+  size-capped by `TABCTX_MAX_UPLOAD_BYTES` (default 4GiB, enforced
+  mid-stream).
+- Uploads are replica-local, so in multi-replica deployments the upload
+  request must carry the same `x-session-id: <dataset_id>` header as
+  everything else -- affinity routes the upload, fit, and predicts to
+  one replica. (The bundled client does this for you.)
+- Transport size and admission are separate layers: a huge CSV uploads
+  fine, and the memory-admission gate then decides whether the *table*
+  fits the GPU budget (413 if not).
+
 ## Tenant isolation
 
 `dataset_id` alone is a flat, guessable namespace -- without isolation,

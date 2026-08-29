@@ -18,6 +18,8 @@ from tabctx.errors import (
     DatasetNotFoundError,
     InvalidInputError,
     TabctxError,
+    UploadNotFoundError,
+    UploadTooLargeError,
 )
 from tabctx.types import EngineStats, PredictOutcome, Task
 
@@ -34,4 +36,6 @@ __all__ = [
     "TabctxEngine",
     "TabctxError",
     "Task",
+    "UploadNotFoundError",
+    "UploadTooLargeError",
 ]

@@ -40,10 +40,14 @@ from tabctx import (
     CacheCapacityError,
     DatasetNotFoundError,
     InvalidInputError,
+    UploadNotFoundError,
+    UploadTooLargeError,
 )
 from tabctx.batching import CoalescingPredictor
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
+from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.uploads import UploadStore
 from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
@@ -94,10 +98,21 @@ class LegacyPredictResponse(BaseModel):
 
 
 class FitRequest(BaseModel):
-    train_X: list[list[float]]
-    train_y: list[float | str]
+    # Inline path (small tables) ...
+    train_X: list[list[float]] | None = None
+    train_y: list[float | str] | None = None
+    # ... or by-reference path (large tables): a prior POST /v1/tabctx/upload
+    # of a CSV whose columns are features plus one target column.
+    train_upload_id: str | None = None
+    target_column: str | None = None  # default: the CSV's last column
     task: Literal["classification", "regression"] = "classification"
     dataset_id: str | None = None
+
+
+class UploadResponse(BaseModel):
+    upload_id: str
+    n_bytes: int
+    served_by: str | None = None
 
 
 class FitResponse(BaseModel):
@@ -112,7 +127,11 @@ class FitResponse(BaseModel):
 
 class TabctxPredictRequest(BaseModel):
     dataset_id: str
-    test_X: list[list[float]]
+    # Inline path ...
+    test_X: list[list[float]] | None = None
+    # ... or by-reference: an uploaded CSV of feature columns only, with
+    # the same header (names and order) the training CSV had.
+    test_upload_id: str | None = None
     return_proba: bool = False
 
 
@@ -127,8 +146,8 @@ class TabctxPredictResponse(BaseModel):
 
 _AUTH_ERRORS = (TenantRequiredError,)
 _INVALID_INPUT_ERRORS = (InvalidInputError,)
-_ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError)
-_NOT_FOUND_ERRORS = (DatasetNotFoundError,)
+_ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
+_NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)
 _COMPUTE_ERRORS = (BackendComputeError,)
 
 
@@ -195,6 +214,18 @@ class TabctxService:
         self._predictor = CoalescingPredictor(
             self._engine, window_s=settings.batch_window_ms / 1000.0
         )
+        # Large-table ingestion (fit/predict-by-reference): replica-local
+        # streamed CSV uploads; see serve/uploads.py for the affinity and
+        # tenancy contracts that make this correct at num_replicas >= 2.
+        self._uploads = UploadStore(
+            ttl_s=settings.upload_ttl_s,
+            max_upload_bytes=settings.max_upload_bytes,
+        )
+        # dataset_id (scoped) -> training CSV feature names, so a test
+        # CSV's header can be checked against the training schema (a
+        # silently reordered column would mean garbage predictions).
+        # Entries are dropped when a predict finds the dataset evicted.
+        self._feature_names: dict[str, list[str]] = {}
         # Restart visibility (ROADMAP "cache durability", first step): a
         # replica restart silently drops every cached context, and the
         # caller-visible symptom (404 -> re-fit) is indistinguishable
@@ -268,18 +299,72 @@ class TabctxService:
 
     # ---- new tabctx-native endpoints: the actual capability this library adds ----
 
+    @fastapi_app.post("/v1/tabctx/upload", response_model=UploadResponse)
+    async def tabctx_upload(self, request: Request) -> UploadResponse:
+        """Streamed CSV upload for fit/predict-by-reference. Send the raw
+        CSV as the request body. In multi-replica deployments the request
+        MUST carry `x-session-id: <dataset_id>` so the upload lands on
+        the replica that the fit/predict for that dataset will reach."""
+        try:
+            tenant_id = resolve_tenant_id(dict(request.headers))
+        except _AUTH_ERRORS as e:
+            raise _map_error(e) from e
+        writer = self._uploads.begin()
+        try:
+            async for chunk in request.stream():
+                if chunk:
+                    writer.write(chunk)
+            record = writer.commit(tenant_id)
+        except UploadTooLargeError as e:
+            raise _map_error(e) from e
+        except BaseException:
+            writer.abort()
+            raise
+        return UploadResponse(
+            upload_id=record.upload_id,
+            n_bytes=record.n_bytes,
+            served_by=_replica_tag(),
+        )
+
     @fastapi_app.post("/v1/tabctx/fit", response_model=FitResponse)
     async def tabctx_fit(self, req: FitRequest, request: Request) -> FitResponse:
         session_id = session_id_from_headers(request.headers)
         return await run_in_threadpool(self._fit_sync, req, dict(request.headers), session_id)
 
+    def _resolve_train_table(
+        self, req: FitRequest, tenant_id: str | None
+    ) -> tuple[object, object, list[str] | None]:
+        """Returns (X, y, feature_names_or_None) from whichever of the
+        inline / by-reference paths the request used -- exactly one."""
+        inline = req.train_X is not None or req.train_y is not None
+        if inline and req.train_upload_id is not None:
+            raise InvalidInputError(
+                "provide either inline train_X/train_y or train_upload_id, not both"
+            )
+        if req.train_upload_id is not None:
+            path = self._uploads.consume(req.train_upload_id, tenant_id)
+            try:
+                X, y, feature_names = parse_train_csv(
+                    path, req.task, req.target_column
+                )
+            finally:
+                self._uploads.discard(path)
+            return X, y, feature_names
+        if req.train_X is None or req.train_y is None:
+            raise InvalidInputError(
+                "fit needs either train_X and train_y (inline) or "
+                "train_upload_id (an uploaded CSV)"
+            )
+        return req.train_X, req.train_y, None
+
     def _fit_sync(
         self, req: FitRequest, headers: dict[str, str], session_id: str | None
     ) -> FitResponse:
-        n_train = len(req.train_X)
-        n_features = len(req.train_X[0]) if n_train else 0
         try:
             tenant_id = resolve_tenant_id(headers)
+            X, y, feature_names = self._resolve_train_table(req, tenant_id)
+            n_train = len(X)
+            n_features = len(X[0]) if n_train else 0
             # The caller-visible dataset_id: header/body reconciliation
             # first (affinity contract), server-generated as a last
             # resort. Tenant scoping is applied only on the cache-facing
@@ -287,16 +372,17 @@ class TabctxService:
             dataset_id = resolve_dataset_id(session_id, req.dataset_id) or str(
                 uuid.uuid4()
             )
-            self._engine.fit(
-                req.train_X,
-                req.train_y,
-                task=req.task,
-                dataset_id=scope_dataset_id(tenant_id, dataset_id),
-            )
+            scoped_id = scope_dataset_id(tenant_id, dataset_id)
+            self._engine.fit(X, y, task=req.task, dataset_id=scoped_id)
+            if feature_names is not None:
+                self._feature_names[scoped_id] = feature_names
+            else:
+                self._feature_names.pop(scoped_id, None)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
             *_ADMISSION_ERRORS,
+            *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
         ) as e:
             raise _map_error(e) from e
@@ -316,6 +402,29 @@ class TabctxService:
             self._predict_sync, req, dict(request.headers), session_id
         )
 
+    def _resolve_test_table(
+        self, req: TabctxPredictRequest, tenant_id: str | None, scoped_id: str
+    ) -> object:
+        if req.test_X is not None and req.test_upload_id is not None:
+            raise InvalidInputError(
+                "provide either inline test_X or test_upload_id, not both"
+            )
+        if req.test_upload_id is not None:
+            path = self._uploads.consume(req.test_upload_id, tenant_id)
+            try:
+                # Schema check against the training CSV's header when the
+                # context was fit by reference; inline-fit contexts fall
+                # back to the engine's feature-count check.
+                return parse_features_csv(path, self._feature_names.get(scoped_id))
+            finally:
+                self._uploads.discard(path)
+        if req.test_X is None:
+            raise InvalidInputError(
+                "predict needs either test_X (inline) or test_upload_id "
+                "(an uploaded CSV)"
+            )
+        return req.test_X
+
     def _predict_sync(
         self,
         req: TabctxPredictRequest,
@@ -326,11 +435,18 @@ class TabctxService:
         try:
             tenant_id = resolve_tenant_id(headers)
             resolve_dataset_id(session_id, req.dataset_id)
-            outcome = self._predictor.predict(
-                scope_dataset_id(tenant_id, req.dataset_id),
-                req.test_X,
-                return_proba=req.return_proba,
-            )
+            scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
+            X_test = self._resolve_test_table(req, tenant_id, scoped_id)
+            try:
+                outcome = self._predictor.predict(
+                    scoped_id, X_test, return_proba=req.return_proba
+                )
+            except DatasetNotFoundError:
+                # The context is gone (evicted/restart) -- drop the stale
+                # training-schema entry so it can't mismatch a future
+                # re-fit of the same id via a different path.
+                self._feature_names.pop(scoped_id, None)
+                raise
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -343,7 +459,7 @@ class TabctxService:
             predictions=outcome.predictions,
             probabilities=outcome.probabilities,
             classes=outcome.classes,
-            n_test=len(req.test_X),
+            n_test=len(X_test),
             latency_ms=latency_ms,
             served_by=_replica_tag(),
         )
@@ -421,6 +537,7 @@ class TabctxService:
                 "batched_requests": self._predictor.batched_requests,
                 "engine_calls": self._predictor.engine_calls,
             },
+            "uploads": self._uploads.stats(),
             "real_gpu_memory": real_gpu_memory,
         }
 

@@ -16,6 +16,17 @@ from tabctx.memory.estimator import MemoryEstimator
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 
+def _rect_shape(X: ArrayLike) -> tuple[int, int] | None:
+    """(n_rows, n_cols) when X is a 2D array-with-shape (e.g. numpy) --
+    rectangular by construction, so the per-row Python loop below would
+    be pure waste (it matters: fit/predict-by-upload feeds 10^5-10^6-row
+    numpy arrays through here). None for plain nested sequences."""
+    shape = getattr(X, "shape", None)
+    if shape is not None and len(shape) == 2:
+        return int(shape[0]), int(shape[1])
+    return None
+
+
 def _row_lengths(X: ArrayLike) -> list[int]:
     return [len(row) for row in X]
 
@@ -32,6 +43,12 @@ def _validate_fit_input(X: ArrayLike, y: ArrayLike) -> int:
         raise InvalidInputError(
             f"train_X has {n_train} rows but train_y has {len(y)} labels"
         )
+    rect = _rect_shape(X)
+    if rect is not None:
+        n_features = rect[1]
+        if n_features == 0:
+            raise InvalidInputError("training rows must have at least one feature")
+        return n_features
     lengths = _row_lengths(X)
     n_features = lengths[0]
     if n_features == 0:
@@ -47,6 +64,14 @@ def _validate_fit_input(X: ArrayLike, y: ArrayLike) -> int:
 def _validate_predict_input(X_test: ArrayLike, n_features: int) -> None:
     if len(X_test) == 0:
         raise InvalidInputError("test_X must be non-empty")
+    rect = _rect_shape(X_test)
+    if rect is not None:
+        if rect[1] != n_features:
+            raise InvalidInputError(
+                f"test_X rows must have {n_features} features (matching the "
+                f"cached training context), got {rect[1]}"
+            )
+        return
     lengths = _row_lengths(X_test)
     if any(length != n_features for length in lengths):
         raise InvalidInputError(

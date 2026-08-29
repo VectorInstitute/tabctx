@@ -24,6 +24,9 @@ Environment variables:
   default, kept only as an escape hatch).
 - ``TABCTX_BATCH_WINDOW_MS``: coalescing window for same-context predict
   batching (see batching.py); default 5. 0 disables coalescing.
+- ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
+  (default 3600): size cap and expiry for the large-table upload path
+  (see serve/uploads.py).
 """
 
 from __future__ import annotations
@@ -50,6 +53,8 @@ BACKEND_ENV_VAR = "TABCTX_BACKEND"
 GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
+MAX_UPLOAD_BYTES_ENV_VAR = "TABCTX_MAX_UPLOAD_BYTES"
+UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 
 BackendKind = Literal["tabicl", "tabpfn", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
@@ -61,6 +66,8 @@ class ServeSettings:
     gpu_memory_fraction: float = 1.0
     kv_cache: KvCacheMode = "kv"
     batch_window_ms: float = 5.0
+    max_upload_bytes: int = 4 * 1024**3
+    upload_ttl_s: float = 3600.0
 
     @classmethod
     def from_env(cls) -> "ServeSettings":
@@ -98,11 +105,24 @@ class ServeSettings:
             raise ValueError(
                 f"{BATCH_WINDOW_MS_ENV_VAR} must be >= 0, got {batch_window_ms}"
             )
+        try:
+            max_upload_bytes = int(os.environ.get(MAX_UPLOAD_BYTES_ENV_VAR, str(4 * 1024**3)))
+            upload_ttl_s = float(os.environ.get(UPLOAD_TTL_S_ENV_VAR, "3600"))
+        except ValueError as e:
+            raise ValueError(
+                f"{MAX_UPLOAD_BYTES_ENV_VAR}/{UPLOAD_TTL_S_ENV_VAR} must be numeric"
+            ) from e
+        if max_upload_bytes <= 0 or upload_ttl_s <= 0:
+            raise ValueError(
+                f"{MAX_UPLOAD_BYTES_ENV_VAR} and {UPLOAD_TTL_S_ENV_VAR} must be positive"
+            )
         return cls(
             backend=backend,
             gpu_memory_fraction=fraction,
             kv_cache=kv_cache,
             batch_window_ms=batch_window_ms,
+            max_upload_bytes=max_upload_bytes,
+            upload_ttl_s=upload_ttl_s,
         )
 
 

@@ -38,6 +38,18 @@ class CacheCapacityError(TabctxError):
     cache's total capacity -- no amount of eviction would make room."""
 
 
+class UploadNotFoundError(TabctxError):
+    """Raised when fit()/predict() references an upload_id that isn't
+    present on this replica (never uploaded, expired, already consumed,
+    or -- in a multi-replica deployment -- uploaded without the session
+    affinity header, so it landed on a different replica)."""
+
+
+class UploadTooLargeError(TabctxError):
+    """Raised when a streamed upload exceeds the configured size cap,
+    before the excess is written to disk."""
+
+
 class BackendComputeError(TabctxError):
     """Wraps a backend-level compute failure (e.g. a CUDA OOM that slipped
     past admission control) so callers don't need to import torch to catch
