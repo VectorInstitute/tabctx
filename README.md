@@ -81,6 +81,18 @@ ready-to-run deployment (`fit`/`predict` endpoints, health checks, live
 memory-usage reporting). See `benchmarks/README.md` for how to measure it
 once it's running.
 
+**Talk to a deployment** with the bundled client (pure stdlib, sets the
+routing/tenancy headers for you, raises the same tabctx exceptions the
+in-process engine does):
+
+```python
+from tabctx.client import TabctxClient
+
+client = TabctxClient("http://localhost:8000", tenant_id="acme")
+client.fit(X_train, y_train, dataset_id="churn-v1")
+result = client.predict("churn-v1", X_test, return_proba=True)
+```
+
 ## Scaling out: multi-replica serving
 
 The context cache is in-process and per-replica, so at `num_replicas >= 2`

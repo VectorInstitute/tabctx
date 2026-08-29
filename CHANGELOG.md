@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ## [0.7.0] - 2026-08-29
+### Added
+- `tabctx.client.TabctxClient`: pure-stdlib HTTP client that makes the serving contracts impossible to get wrong -- it sends `x-session-id` (== dataset_id, required for correct multi-replica routing) and `x-tabctx-tenant-id` automatically, maps HTTP errors back to the same tabctx exception types the in-process engine raises, and retries 503 backpressure with exponential backoff (safe by construction under strict affinity). End-to-end tested against the local 2-replica deployment.
+
 ### Performance
 - **TabICL's kv-cache is now enabled by default** (`TabICLBackend(kv_cache="kv")`, env-tunable via `TABCTX_KV_CACHE=kv|repr|off`). tabicl defaults it OFF, and without it every `predict()` silently re-encodes the ENTIRE training set through all three transformer stages -- i.e. the exact repeat cost tabctx exists to eliminate. Found by tracing tabicl's `predict_proba` internals (`transform(mode="both")` re-concatenates train+test per call; with the cache, test rows only attend to fit-time-cached K/V). Verified on CPU that kv-cached predictions are identical to the uncached path (max probability diff ~1e-6) and warm predict is 2.9x faster even for a tiny 40-row context; the win grows with training-set size since the avoided re-encode is O(n_train^2). The cache's GPU memory cost lands inside `fit()`'s measured allocation delta, so cache accounting and the adaptive admission gate price it automatically.
 - **Pretrained backbone weights are loaded once per process and shared across fits** instead of `torch.load` + H2D-transferring hundreds of MB per fitted context (5.8x faster re-fit on CPU). Uses tabicl's own sanctioned sharing pattern (`_unsupervised`/`_finetune` do exactly this). Safe because the engine serializes every backend call behind its cache lock, so the shared module's per-call mutable state is never touched concurrently.

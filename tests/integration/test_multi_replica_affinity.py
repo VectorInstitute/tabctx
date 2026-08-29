@@ -21,35 +21,9 @@ import pytest
 ray = pytest.importorskip("ray")
 httpx = pytest.importorskip("httpx")
 
-from ray import serve  # noqa: E402
-
-SERVE_PORT = 18123
-BASE_URL = f"http://127.0.0.1:{SERVE_PORT}"
-NUM_REPLICAS = 2
+NUM_REPLICAS = 2  # keep in sync with conftest.py's deployment
 NUM_DATASETS = 16
 PREDICTS_PER_DATASET = 6
-
-
-@pytest.fixture(scope="module")
-def two_replica_service():
-    from tabctx.serve.app import TabctxService
-
-    ray.init(num_cpus=4, include_dashboard=False)
-    serve.start(http_options={"host": "127.0.0.1", "port": SERVE_PORT})
-    serve.run(
-        TabctxService.options(
-            num_replicas=NUM_REPLICAS,
-            ray_actor_options={
-                # Replicas are separate processes; the driver's env vars
-                # don't reach them implicitly. runtime_env is the
-                # explicit, reliable channel.
-                "runtime_env": {"env_vars": {"TABCTX_BACKEND": "fake"}},
-            },
-        ).bind()
-    )
-    yield BASE_URL
-    serve.shutdown()
-    ray.shutdown()
 
 
 def _train_body(seed: int, dataset_id: str | None = None) -> dict:
