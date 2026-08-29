@@ -184,9 +184,11 @@ def _replica_tag() -> str | None:
 class TabctxService:
     def __init__(self) -> None:
         settings = ServeSettings.from_env()
+        self._settings = settings
         built = build_engine(settings)
         self._engine = built.engine
         self._estimator = built.estimator
+        self._backend_name = built.backend.name
         self._device = built.device
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
@@ -349,6 +351,38 @@ class TabctxService:
     @fastapi_app.get("/healthz")
     def healthz(self):
         return {"status": "ok"}
+
+    @fastapi_app.get("/v1/tabctx/limits")
+    def limits(self):
+        """Capability discovery (inspired by PriorLabs' get_model_limits):
+        what will this deployment admit? Lets clients validate table
+        shapes BEFORE uploading data, instead of discovering a 413 the
+        expensive way. max_admissible_train_rows is derived live from
+        the admission gate at representative feature counts, so it
+        tightens/loosens as the adaptive estimator learns real costs."""
+        max_rows_by_features = {}
+        for n_features in (10, 50, 100, 200, 500):
+            lo, hi = 0, 2_000_000
+            while lo < hi:
+                mid = (lo + hi + 1) // 2
+                if self._estimator.admit(mid, 0, n_features):
+                    lo = mid
+                else:
+                    hi = mid - 1
+            max_rows_by_features[str(n_features)] = lo
+        return {
+            "backend": self._backend_name,
+            "cache_mode": self._settings.kv_cache,
+            "memory_ceiling_bytes": self._estimator.ceiling_bytes(),
+            "gpu_memory_fraction": self._settings.gpu_memory_fraction,
+            "max_admissible_train_rows_by_feature_count": max_rows_by_features,
+            "note": (
+                "Admission limits are per-replica, derived from the memory "
+                "estimator, and adaptive: they loosen for shapes similar to "
+                "ones this replica has actually served. A rejected fit "
+                "returns 413 with the same numbers."
+            ),
+        }
 
     @fastapi_app.get("/readyz")
     def readyz(self):

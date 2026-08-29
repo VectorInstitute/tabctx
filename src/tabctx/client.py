@@ -145,7 +145,15 @@ class TabctxClient:
 
     def ready(self) -> dict:
         """The deployment's /readyz payload (device, cache stats, ...)."""
-        req = urllib.request.Request(f"{self._base_url}/readyz")
+        return self._get("/readyz")
+
+    def limits(self) -> dict:
+        """Capability discovery: what shapes will this deployment admit?
+        Use it to validate a table client-side before uploading it."""
+        return self._get("/v1/tabctx/limits")
+
+    def _get(self, path: str) -> dict:
+        req = urllib.request.Request(f"{self._base_url}{path}")
         with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
             return json.loads(resp.read().decode())
 

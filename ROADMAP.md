@@ -95,7 +95,38 @@ cross-tenant traffic is still overhead-bound. Same-shape bucketing is a
 real but narrow win (tenants must share n_features and train_size);
 measure how often that actually co-occurs in-flight before building.
 
-## Priority 3: Cache durability
+## Priority 3: Large-table ingestion (learned from PriorLabs' API shape)
+
+Comparing tabctx's REST surface against PriorLabs' hosted TabPFN API
+(2026-08-29; recipe captured in `benchmarks/bench_vs_hosted_api.py`)
+showed the two converge on the same lifecycle — fit -> server-side
+context handle -> repeated predicts (their `fitted_train_set_id` is
+tabctx's `dataset_id`) — with two structural differences:
+
+1. **They separate data upload from orchestration** (`prepare_*_upload`
+   -> signed URLs -> PUT CSV, then fit/predict reference upload ids).
+   tabctx inlines tables as JSON in the request body, which is fine to
+   ~10^4 rows but is the binding constraint for "1M rows x 200 features"
+   scale (TabPFN-3's advertised ceiling): a 1M-row table as JSON is
+   multi-GB of payload and parse time, and Serve proxies buffer it. When
+   large-table support matters, add an upload path (multipart CSV or
+   presigned object-store URLs) feeding fit-by-reference. Until then,
+   inline JSON is a documented scale limit, not a bug.
+2. **They expose capability discovery** (`get_model_limits`). Adopted:
+   `/v1/tabctx/limits` now reports the live admission boundary
+   (max admissible train rows at representative feature counts, derived
+   from the estimator, adaptive over time) so clients can validate
+   shapes before uploading. `TabctxClient.limits()` wraps it.
+
+Benchmark context (`benchmarks/baselines/v0.7.0-vs-hosted-api-cpu.json`):
+on the fit-once-predict-many workload, tabctx warm predicts beat the
+hosted API 6-14x at p50 **even with the local side on a laptop CPU**
+(~139-233ms vs ~1.4-1.9s) because every hosted predict pays upload +
+network round trips; the hosted side wins cold-fit on larger tables when
+the local side lacks a GPU. This is a serving-architecture comparison,
+not a model-speed one — the baseline file says so explicitly.
+
+## Priority 4: Cache durability
 
 Unchanged from before: a replica restart silently drops every cached
 context; the failure mode is a clean 404 (caller re-fits), so this ranks

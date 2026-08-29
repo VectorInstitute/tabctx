@@ -81,9 +81,13 @@ def test_cache_modes_agree(data):
     p_fast = fast.predict(fast.fit(train_X, train_y, "classification"), test_X, True)
     p_cheap = cheap.predict(cheap.fit(train_X, train_y, "classification"), test_X, True)
     assert p_fast.predictions == p_cheap.predictions
+    # Unlike TabICL (bitwise-close, ~1e-6), TabPFN's kv-cache path stores
+    # the cache at reduced precision (`kv_cache_precision`), so
+    # probabilities drift by up to ~1e-2 while labels stay identical.
+    # Measured 0.011 max drift on this fixture (2026-08-29).
     assert np.abs(
         np.array(p_fast.probabilities) - np.array(p_cheap.probabilities)
-    ).max() < 1e-3
+    ).max() < 0.03
 
 
 def test_regression(data):
@@ -98,11 +102,14 @@ def test_regression(data):
 
 def test_pretraining_limits_surface_as_invalid_input():
     """TabPFN rejects tables beyond its pretraining limits; a caller's
-    oversized table must 422, not 500 (multi-tenant requirement)."""
+    oversized table must 422, not 500 (multi-tenant requirement).
+
+    2,100 features exceeds even the newer checkpoints' 2,000-feature
+    limit (v2-era models capped at 500; found empirically that 600 no
+    longer trips it -- see inference_config.MAX_NUMBER_OF_FEATURES)."""
     rng = np.random.default_rng(0)
-    # 600 features exceeds the v2 checkpoint's 500-feature limit.
-    X = rng.normal(size=(50, 600)).tolist()
-    y = ["a", "b"] * 25
+    X = rng.normal(size=(20, 2100)).tolist()
+    y = ["a", "b"] * 10
     backend = TabPFNBackend(device="cpu")
     with pytest.raises(InvalidInputError):
         backend.fit(X, y, "classification")

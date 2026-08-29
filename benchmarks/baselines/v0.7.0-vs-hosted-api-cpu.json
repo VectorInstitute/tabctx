@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-08-29T13:01:48.072181+00:00",
+  "note": "Serving-architecture comparison, not model-speed: local side ran on this machine's hardware (see 'local_hardware'), the API on PriorLabs' cloud. Warm predict is the tabctx use case (fit once, query repeatedly).",
+  "local_hardware": "cpu: arm64 (arm)",
+  "results": [
+    {
+      "n_train": 500,
+      "n_features": 15,
+      "n_test": 20,
+      "n_warm_predicts": 8,
+      "tabctx_local": {
+        "cold_fit_s": 1.706,
+        "warm_predict": {
+          "p50_s": 0.139,
+          "p95_s": 0.177,
+          "mean_s": 0.145,
+          "n": 8
+        }
+      },
+      "hosted_api": {
+        "cold_fit_s": 5.925,
+        "warm_predict": {
+          "p50_s": 1.931,
+          "p95_s": 2.657,
+          "mean_s": 1.82,
+          "n": 8
+        }
+      }
+    },
+    {
+      "n_train": 2000,
+      "n_features": 50,
+      "n_test": 20,
+      "n_warm_predicts": 8,
+      "tabctx_local": {
+        "cold_fit_s": 8.562,
+        "warm_predict": {
+          "p50_s": 0.233,
+          "p95_s": 0.266,
+          "mean_s": 0.236,
+          "n": 8
+        }
+      },
+      "hosted_api": {
+        "cold_fit_s": 6.513,
+        "warm_predict": {
+          "p50_s": 1.448,
+          "p95_s": 2.133,
+          "mean_s": 1.643,
+          "n": 8
+        }
+      }
+    }
+  ]
+}

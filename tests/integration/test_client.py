@@ -55,6 +55,16 @@ def test_one_shot_fit_predict(two_replica_service):
     assert result.predictions == ["y"]
 
 
+def test_limits_capability_discovery(two_replica_service):
+    limits = TabctxClient(two_replica_service).limits()
+    assert limits["backend"] == "fake"
+    assert limits["memory_ceiling_bytes"] > 0
+    by_features = limits["max_admissible_train_rows_by_feature_count"]
+    # More features -> fewer admissible rows, and the numbers must be
+    # consistent with the admission gate a fit would actually hit.
+    assert by_features["10"] > by_features["500"] > 0
+
+
 def test_ready(two_replica_service):
     ready = TabctxClient(two_replica_service).ready()
     assert ready["status"] == "ready"
