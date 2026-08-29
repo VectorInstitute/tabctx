@@ -59,3 +59,7 @@ def test_ready(two_replica_service):
     ready = TabctxClient(two_replica_service).ready()
     assert ready["status"] == "ready"
     assert "cache_stats" in ready
+    # Restart visibility: operators must be able to tell "this replica
+    # restarted and dropped its cache" apart from eviction.
+    assert ready["replica_uptime_s"] >= 0
+    assert ready["replica_started_at_unix"] > 0

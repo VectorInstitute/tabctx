@@ -128,10 +128,13 @@ serialization is *possible* if ever justified.
   steady state; recalibrate when convenient (fold into Priority 1's runs).
 - **Disk/CPU cache tiering** — only matters once deployments push the
   (per-replica, fraction-scaled) ceiling.
-- **PyPI publishing + docs site.** Matters for the "vLLM for tabular
-  models" ambition the moment anyone outside this org should try it. The
-  GKE deploy still ships a hand-built wheel via ConfigMap; that's fine
-  for testing, not for adoption.
+- **PyPI publishing + docs site.** The release workflow now exists
+  (`.github/workflows/release.yml`, tag-triggered, Trusted Publishing)
+  but needs the one-time human setup documented in its header (create
+  the PyPI project + trusted publisher + GitHub `pypi` environment)
+  before a `v*` tag actually publishes. A docs site is still unstarted.
+  The GKE deploy still ships a hand-built wheel via ConfigMap; that's
+  fine for testing, not for adoption.
 - **Custom CUDA/Triton kernels.** Still premature; nothing measured so
   far implicates raw kernel time.
 

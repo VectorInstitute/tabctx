@@ -193,6 +193,13 @@ class TabctxService:
         self._predictor = CoalescingPredictor(
             self._engine, window_s=settings.batch_window_ms / 1000.0
         )
+        # Restart visibility (ROADMAP "cache durability", first step): a
+        # replica restart silently drops every cached context, and the
+        # caller-visible symptom (404 -> re-fit) is indistinguishable
+        # from eviction. Exposing when this replica started lets
+        # operators and probes correlate a burst of 404s with a restart
+        # instead of chasing a phantom eviction/routing bug.
+        self._started_at = time.time()
         if "cuda" not in self._device and settings.backend == "tabicl":
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -367,6 +374,8 @@ class TabctxService:
             "device": self._device,
             "cuda_available": torch is not None and torch.cuda.is_available(),
             "replica": _replica_tag(),
+            "replica_started_at_unix": self._started_at,
+            "replica_uptime_s": round(time.time() - self._started_at, 1),
             "estimator_confidence": self._estimator.confidence(),
             "cache_stats": {
                 "n_cached_contexts": stats.n_cached_contexts,
