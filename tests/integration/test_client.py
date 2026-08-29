@@ -8,7 +8,10 @@ import pytest
 pytest.importorskip("ray")
 
 from tabctx.client import TabctxClient  # noqa: E402
-from tabctx.errors import DatasetNotFoundError, InvalidInputError  # noqa: E402
+from tabctx.errors import (  # noqa: E402
+    DatasetNotFoundError,
+    InvalidInputError,
+)
 
 TRAIN_X = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
 TEST_X = [[9.0, 9.0]]
@@ -53,6 +56,30 @@ def test_one_shot_fit_predict(two_replica_service):
     client = TabctxClient(two_replica_service)
     result = client.fit_predict(TRAIN_X, ["y", "y", "n"], TEST_X)
     assert result.predictions == ["y"]
+
+
+def test_model_discovery_and_selection(two_replica_service):
+    """Chat-completions-style model API: GET /v1/models lists exact
+    model ids; fit accepts one via `model` and echoes it back."""
+    client = TabctxClient(two_replica_service)
+    models = client.models()
+    assert [m["id"] for m in models] == ["fake"]
+    assert models[0]["default"] is True
+
+    resp = client._post(
+        "/v1/tabctx/fit",
+        {
+            "train_X": TRAIN_X,
+            "train_y": ["y", "y", "n"],
+            "dataset_id": "model-echo",
+            "model": "fake",
+        },
+        session_id="model-echo",
+    )
+    assert resp["model"] == "fake"
+
+    with pytest.raises(InvalidInputError, match="unknown backend"):
+        client.fit(TRAIN_X, ["y", "y", "n"], dataset_id="bad-model", model="gpt-4")
 
 
 def test_limits_capability_discovery(two_replica_service):

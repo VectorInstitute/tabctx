@@ -13,9 +13,22 @@
 
 Multi-tenant context caching and serving for tabular in-context-learning
 (ICL) foundation models: [TabICL](https://github.com/soda-inria/tabicl)
-and [TabPFN](https://github.com/PriorLabs/TabPFN) behind one engine,
-cache, and serving stack (`TABCTX_BACKEND=tabicl|tabpfn`), with a
-protocol seam (`backends/base.py`) for adding more.
+and [TabPFN](https://github.com/PriorLabs/TabPFN) behind **one standard
+endpoint**, chat-completions style -- requests pick a model by exact id
+(`"model": "tabicl-v2"` or `"tabpfn-3"`, discoverable via
+`GET /v1/models`), and all models on a GPU share one context cache and
+one memory budget. A protocol seam (`backends/base.py`) keeps adding
+models cheap.
+
+```python
+client = TabctxClient("http://localhost:8000")
+client.models()                                    # -> tabicl-v2, tabpfn-3
+client.fit(X, y, dataset_id="churn", model="tabpfn-3")
+client.predict("churn", X_test)                    # served by tabpfn-3
+```
+
+Deploy one model (`TABCTX_BACKEND=tabicl`) or several
+(`TABCTX_BACKEND=tabicl,tabpfn` -- first listed is the default model).
 
 ## Why does this exist?
 
