@@ -105,13 +105,18 @@ tabctx's `dataset_id`) — with two structural differences:
 
 1. **They separate data upload from orchestration** (`prepare_*_upload`
    -> signed URLs -> PUT CSV, then fit/predict reference upload ids).
-   tabctx inlines tables as JSON in the request body, which is fine to
-   ~10^4 rows but is the binding constraint for "1M rows x 200 features"
-   scale (TabPFN-3's advertised ceiling): a 1M-row table as JSON is
-   multi-GB of payload and parse time, and Serve proxies buffer it. When
-   large-table support matters, add an upload path (multipart CSV or
-   presigned object-store URLs) feeding fit-by-reference. Until then,
-   inline JSON is a documented scale limit, not a bug.
+   **SHIPPED in v0.8.0**, adapted for self-hosting: `POST
+   /v1/tabctx/upload` streams raw CSV to replica-local disk (no object
+   store needed) and fit/predict consume it by reference; the
+   x-session-id affinity contract is what makes replica-local uploads
+   correct at 2+ replicas. Validated live on the A100 deployment
+   (2026-08-29): a 91MB CSV streamed through the LB + Serve proxy at
+   ~62 MB/s with no buffering issues, fit-by-reference 5,000x50 in
+   1.3s, by-reference predicts pinned to the fit replica, reordered
+   test-CSV headers 422. **The binding constraint on truly large FITS
+   is now the admission gate, not transport** (200k x 60 uploads fine,
+   then 413s off the stale conservative calibration) -- which is
+   exactly Priority 1 above.
 2. **They expose capability discovery** (`get_model_limits`). Adopted:
    `/v1/tabctx/limits` now reports the live admission boundary
    (max admissible train rows at representative feature counts, derived
