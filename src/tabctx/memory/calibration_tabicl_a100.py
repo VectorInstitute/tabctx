@@ -80,6 +80,29 @@ A100_40GB_TABICL_KV_PEAK_GRID: tuple[Observation, ...] = (
     ),  # fit 66.37s, resident 8037728256
 )
 
+# Measured PREDICT peaks for the same shapes, at n_test=1000 test rows (chunking's quantity; see memory/adaptive.py).
+A100_40GB_TABICL_KV_PREDICT_PEAK_GRID: tuple[Observation, ...] = (
+    Observation(n_train=1000, n_features=10, real_bytes=290993664),
+    Observation(n_train=5000, n_features=10, real_bytes=176049152),
+    Observation(n_train=20000, n_features=10, real_bytes=173296640),
+    Observation(n_train=50000, n_features=10, real_bytes=175361024),
+    Observation(n_train=100000, n_features=10, real_bytes=173296640),
+    Observation(n_train=1000, n_features=50, real_bytes=1112127488),
+    Observation(n_train=5000, n_features=50, real_bytes=669047808),
+    Observation(n_train=20000, n_features=50, real_bytes=667376640),
+    Observation(n_train=50000, n_features=50, real_bytes=670161920),
+    Observation(n_train=100000, n_features=50, real_bytes=670161920),
+    Observation(n_train=1000, n_features=100, real_bytes=1290022400),
+    Observation(n_train=5000, n_features=100, real_bytes=1288646144),
+    Observation(n_train=20000, n_features=100, real_bytes=1290257408),
+    Observation(n_train=50000, n_features=100, real_bytes=1289705984),
+    Observation(n_train=100000, n_features=100, real_bytes=1288646144),
+    Observation(n_train=1000, n_features=200, real_bytes=2521649664),
+    Observation(n_train=5000, n_features=200, real_bytes=2520384512),
+    Observation(n_train=20000, n_features=200, real_bytes=2522380288),
+    Observation(n_train=50000, n_features=200, real_bytes=2521649664),
+)
+
 # mode='repr': measured 2026-08-29T15:08:02.156104+00:00 on NVIDIA A100-SXM4-40GB (42404806656 bytes), torch 2.9.1+cu129.
 A100_40GB_TABICL_REPR_PEAK_GRID: tuple[Observation, ...] = (
     Observation(
@@ -118,4 +141,20 @@ A100_40GB_TABICL_REPR_PEAK_GRID: tuple[Observation, ...] = (
     Observation(
         n_train=50000, n_features=200, real_bytes=21090801152
     ),  # fit 42.34s, resident 815792128
+)
+
+# Measured PREDICT peaks for the same shapes, at n_test=1000 test rows (chunking's quantity; see memory/adaptive.py).
+A100_40GB_TABICL_REPR_PREDICT_PEAK_GRID: tuple[Observation, ...] = (
+    Observation(n_train=20000, n_features=10, real_bytes=1321876992),
+    Observation(n_train=100000, n_features=10, real_bytes=6243958272),
+    Observation(n_train=300000, n_features=10, real_bytes=14568504320),
+    Observation(n_train=500000, n_features=10, real_bytes=10885301248),
+    Observation(n_train=20000, n_features=50, real_bytes=1322516992),
+    Observation(n_train=100000, n_features=50, real_bytes=6244598272),
+    Observation(n_train=200000, n_features=50, real_bytes=12382601728),
+    Observation(n_train=20000, n_features=100, real_bytes=1323316736),
+    Observation(n_train=100000, n_features=100, real_bytes=6243431936),
+    Observation(n_train=1000, n_features=200, real_bytes=2520830464),
+    Observation(n_train=20000, n_features=200, real_bytes=2520176640),
+    Observation(n_train=50000, n_features=200, real_bytes=3168116736),
 )

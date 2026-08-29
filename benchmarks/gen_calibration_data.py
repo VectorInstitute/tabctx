@@ -18,6 +18,11 @@ GRID_NAMES = {
     "repr": "A100_40GB_TABICL_REPR_PEAK_GRID",
     "off": "A100_40GB_TABICL_OFF_PEAK_GRID",
 }
+PREDICT_GRID_NAMES = {
+    "kv": "A100_40GB_TABICL_KV_PREDICT_PEAK_GRID",
+    "repr": "A100_40GB_TABICL_REPR_PREDICT_PEAK_GRID",
+    "off": "A100_40GB_TABICL_OFF_PREDICT_PEAK_GRID",
+}
 
 
 def _emit_grid(mode: str, data: dict) -> str:
@@ -38,6 +43,20 @@ def _emit_grid(mode: str, data: dict) -> str:
             f"n_features={r['n_features']}, "
             f"real_bytes={int(r['peak_fit_bytes'])}),"
             f"  # fit {r['fit_s']}s, resident {int(r['resident_context_bytes'])}"
+        )
+    lines.append(")")
+    lines.append("")
+    lines.append(
+        f"# Measured PREDICT peaks for the same shapes, at n_test="
+        f"{ok[0].get('n_test', 1000)} test rows (chunking's quantity;"
+        " see memory/adaptive.py)."
+    )
+    lines.append(f"{PREDICT_GRID_NAMES[mode]}: tuple[Observation, ...] = (")
+    for r in sorted(ok, key=lambda r: (r["n_features"], r["n_train"])):
+        lines.append(
+            f"    Observation(n_train={r['n_train']}, "
+            f"n_features={r['n_features']}, "
+            f"real_bytes={int(r['peak_predict_bytes'])}),"
         )
     lines.append(")")
     return "\n".join(lines)

@@ -196,19 +196,28 @@ class TabctxEngine:
             # hardware: a fourth ~13GB-peak fit OOMed an A100 with three
             # ~8GB contexts resident, exactly the state this drains.
             estimated = estimator.estimate_bytes(n_train, 0, n_features)
+            # Feasibility FIRST, against an EMPTY cache's headroom: a fit
+            # that can never be admitted must be rejected before evicting
+            # anything -- otherwise one oversized request drains every
+            # tenant's context on its way to a 413 (observed live: a
+            # 200k x 60 request spilled 30 contexts and then failed).
+            if estimated > estimator.admission_headroom_bytes(0):
+                raise AdmissionRejected(
+                    f"training shape ({n_train} rows x {n_features} "
+                    f"features) is estimated to need {estimated} bytes at "
+                    f"peak, exceeding this replica's "
+                    f"{estimator.admission_headroom_bytes(0)} byte maximum "
+                    "admission headroom (even with an empty cache)"
+                )
             while True:
                 headroom = estimator.admission_headroom_bytes(
                     self._cache.stats().used_bytes
                 )
                 if estimated <= headroom:
                     break
-                if self._cache.evict_one() is None:
-                    raise AdmissionRejected(
-                        f"training shape ({n_train} rows x {n_features} "
-                        f"features) is estimated to need {estimated} bytes "
-                        f"at peak, exceeding the {headroom} byte admission "
-                        "headroom even with the cache fully drained"
-                    )
+                # Feasible but blocked by warm contexts: evict-ahead.
+                # Guaranteed to terminate at the feasibility bound above.
+                self._cache.evict_one()
             payload = chosen.fit(X, y, task)
             est_bytes = chosen.context_bytes_hint(n_train, n_features)
             if est_bytes is None:
@@ -268,11 +277,14 @@ class TabctxEngine:
         estimator = self._estimators[context.backend_name]
 
         n_test = len(X_test)
+        # Chunk against the usage-aware transient headroom (what the
+        # device can actually take on top of resident contexts), not the
+        # cache-capacity ceiling -- the same quantity fit admission uses.
         chunk_rows = choose_chunk_rows(
             estimator,
             context.n_train,
             context.n_features,
-            estimator.ceiling_bytes(),
+            estimator.admission_headroom_bytes(self._cache.stats().used_bytes),
         )
         chunks = split_rows(X_test, chunk_rows) if chunk_rows < n_test else [X_test]
 

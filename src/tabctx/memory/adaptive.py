@@ -35,6 +35,10 @@ from dataclasses import dataclass
 
 from tabctx.memory.estimator import MemoryEstimator
 
+# The n_test basis at which calibration predict-peaks were measured
+# (benchmarks/calibrate_memory.py's N_TEST_ROWS).
+PREDICT_OBS_N_TEST = 1_000
+
 
 @dataclass(frozen=True)
 class Observation:
@@ -57,6 +61,7 @@ class AdaptiveMemoryEstimator:
         safety_margin: float = 1.5,
         max_observations: int = 500,
         preloaded: tuple[Observation, ...] = (),
+        preloaded_predict: tuple[Observation, ...] = (),
         preloaded_margin: float = 1.1,
         # 0.85, not higher: on a real A100 a fit admitted with ~400MB of
         # nominal slack at 0.9 still OOMed -- allocator fragmentation and
@@ -88,6 +93,13 @@ class AdaptiveMemoryEstimator:
         self._safety_margin = safety_margin
         self._max_observations = max_observations
         self._preloaded: tuple[Observation, ...] = tuple(preloaded)
+        # Measured predict-time peaks at PREDICT_OBS_N_TEST test rows for
+        # the same shapes -- what chunking (n_test > 0 queries) needs.
+        # Without these, predict estimates fall back to the conservative
+        # formula, which for shapes only admissible via calibration
+        # degrades chunking to 1-row chunks (a 2000-row predict became
+        # 2000 sequential GPU calls on a real A100 -- the bug this fixes).
+        self._preloaded_predict: tuple[Observation, ...] = tuple(preloaded_predict)
         self._preloaded_margin = preloaded_margin
         self._transient_capacity_fraction = transient_capacity_fraction
         self._observations: list[Observation] = []
@@ -121,16 +133,24 @@ class AdaptiveMemoryEstimator:
         return min(candidates, key=lambda pair: pair[0].cells)
 
     def estimate_bytes(self, n_train: int, n_test: int, n_features: int) -> int:
-        # Only fit-time queries (n_test == 0) can use a learned
-        # observation -- predict()-time chunking (n_test > 0) needs to
-        # account for active test-row memory we have no measurement of
-        # yet, so it always uses the (conservative) fallback unchanged.
         if n_test == 0:
             best = self._best_dominating_observation(n_train, n_features)
             if best is not None:
                 obs, is_preloaded = best
                 margin = self._preloaded_margin if is_preloaded else self._safety_margin
                 return math.ceil(obs.real_bytes * margin)
+        else:
+            # Predict-time (chunking) query: use a measured predict peak
+            # when a dominating one exists, scaled linearly in n_test
+            # from its measurement basis (attention query rows scale
+            # linearly; sublinear fixed costs make this conservative).
+            candidates = [
+                o for o in self._preloaded_predict if o.dominates(n_train, n_features)
+            ]
+            if candidates:
+                obs = min(candidates, key=lambda o: o.cells)
+                scale = max(1.0, n_test / PREDICT_OBS_N_TEST)
+                return math.ceil(obs.real_bytes * scale * self._preloaded_margin)
         return self._fallback.estimate_bytes(n_train, n_test, n_features)
 
     def admit(self, n_train: int, n_test: int, n_features: int) -> bool:

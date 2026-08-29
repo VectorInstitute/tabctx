@@ -174,18 +174,20 @@ class BuiltEngine:
         return self.backends[self.default]
 
 
-def _preloaded_observations(kind: BackendKind, kv_cache: KvCacheMode) -> tuple:
+def _preloaded_observations(
+    kind: BackendKind, kv_cache: KvCacheMode
+) -> tuple[tuple, tuple]:
     """Factory-installed calibration grid matching one model + cache mode
     (see memory/calibration_tabicl_a100.py), so admission rests on real
     measurements from the first request onward. Only TabICL-on-A100
     grids exist so far; other configurations start with no preload and
     learn from their own fits."""
     if kind != "tabicl":
-        return ()
+        return (), ()
     try:
         from tabctx.memory import calibration_tabicl_a100 as grids
     except ImportError:  # generated module absent (pre-calibration tree)
-        return ()
+        return (), ()
     return {
         "kv": getattr(grids, "A100_40GB_TABICL_KV_PEAK_GRID", ()),
         "repr": getattr(grids, "A100_40GB_TABICL_REPR_PEAK_GRID", ()),
@@ -208,9 +210,11 @@ def build_estimator(
         hard_ceiling_bytes=int(DEFAULT_HARD_CEILING_BYTES * fraction),
         gpu_capacity_bytes=int(DEFAULT_GPU_CAPACITY_BYTES * fraction),
     )
+    fit_grid, predict_grid = _preloaded_observations(kind, settings.kv_cache)
     return AdaptiveMemoryEstimator(
         fallback=fallback,
-        preloaded=_preloaded_observations(kind, settings.kv_cache),
+        preloaded=fit_grid,
+        preloaded_predict=predict_grid,
     )
 
 

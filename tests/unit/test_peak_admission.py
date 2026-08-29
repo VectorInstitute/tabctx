@@ -139,18 +139,56 @@ class TestUsageAwareHeadroom:
         with pytest.raises(DatasetNotFoundError):
             engine.predict("big-resident", TRAIN_X[:1])
 
-    def test_rejects_only_when_draining_everything_is_not_enough(self):
-        estimator = AdaptiveMemoryEstimator(
-            fallback=_fallback(),
-            preloaded=(Observation(100_000, 50, 60_000_000_000),),  # > device
-        )
+    def test_infeasible_fit_rejected_without_draining_the_cache(self):
+        """An oversized request that can NEVER fit must be rejected
+        against the empty-cache bound BEFORE any eviction -- otherwise
+        one bad request flushes every tenant's context on its way to a
+        413 (observed live: a 200k x 60 request spilled 30 contexts and
+        then failed anyway)."""
+        estimator = AdaptiveMemoryEstimator(fallback=_fallback())
         cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
         engine = TabctxEngine(
             backend=FakeBackend(bytes_hint=1), cache=cache, estimator=estimator
         )
-        with pytest.raises(AdmissionRejected, match="fully drained"):
+        engine.fit(TRAIN_X, TRAIN_Y, dataset_id="innocent-bystander")
+        # 200k x 50: formula estimates ~85GB -- infeasible on any A100.
+        row = [1.0] * 50
+        with pytest.raises(AdmissionRejected, match="empty cache"):
             engine.fit(
-                [[1.0] * 20 for _ in range(50_000)],
-                ["a"] * 50_000,
+                [row] * 200_000,
+                ["a"] * 200_000,
                 dataset_id="never",
             )
+        # The bystander must still be resident -- nothing was drained.
+        assert engine.predict("innocent-bystander", TRAIN_X[:1]).predictions
+
+
+class TestPredictChunkEstimates:
+    def test_predict_estimate_uses_measured_predict_peaks(self):
+        estimator = AdaptiveMemoryEstimator(
+            fallback=_fallback(),
+            preloaded=(Observation(50_000, 100, 32_000_000_000),),
+            preloaded_predict=(Observation(50_000, 100, 1_300_000_000),),
+        )
+        # 1000 test rows (the measurement basis): predict peak x 1.1,
+        # NOT the fit peak and NOT the formula (which for this shape
+        # would exceed the whole ceiling and force 1-row chunks -- the
+        # live timeout bug this fixes).
+        est = estimator.estimate_bytes(50_000, 1_000, 100)
+        assert est == math.ceil(1_300_000_000 * 1.1)
+        # 2000 rows scale linearly from the basis.
+        assert estimator.estimate_bytes(50_000, 2_000, 100) == math.ceil(
+            1_300_000_000 * 2.0 * 1.1
+        )
+        # Fewer rows than the basis stay at the basis cost (conservative).
+        assert estimator.estimate_bytes(50_000, 10, 100) == est
+
+    def test_predict_estimate_falls_back_without_dominating_measurement(self):
+        estimator = AdaptiveMemoryEstimator(
+            fallback=_fallback(),
+            preloaded_predict=(Observation(1_000, 10, 200_000_000),),
+        )
+        fallback = _fallback()
+        assert estimator.estimate_bytes(50_000, 1_000, 100) == fallback.estimate_bytes(
+            50_000, 1_000, 100
+        )

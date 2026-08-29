@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-29
+### Fixed
+Two bugs found by the dedicated GKE stress run (a fresh single-replica A100 deployment of v0.9.0 with both models and spillover):
+- **One oversized request could flush every tenant's context.** Evict-ahead-of-fit drained the ENTIRE cache (spilling 30 contexts) making room for a 200k x 60 fit that could never be admitted, then 413'd anyway -- observed live via `/readyz` (cache 0 contexts, spill tier at capacity). Feasibility is now checked against the empty-cache headroom BEFORE any eviction: infeasible fits reject immediately and warm contexts stay put.
+- **Predicts against calibration-admitted shapes degraded to 1-row chunks.** Chunking still estimated with the stale conservative formula against the cache ceiling, so a 2,000-row predict on a 50k x 100 context became 2,000 sequential GPU calls and timed out (the shape 413'd instantly before v0.9.0, so this path had never run). The calibration sweep's measured predict-time peaks now ship as a second preloaded grid (`*_PREDICT_PEAK_GRID`, scaled linearly in n_test from the 1,000-row measurement basis), and chunking budgets against the same usage-aware headroom admission uses.
+
 ## [0.9.0] - 2026-08-29
 ### Changed
 - **Standard multi-model endpoint (chat-completions style).** One deployment now serves several models over ONE shared context cache and GPU budget: `TABCTX_BACKEND=tabicl,tabpfn` (first listed = default), requests select a model via `"model": "<exact id>"` (`tabicl-v2`, `tabpfn-3` -- named for the checkpoints actually loaded), `GET /v1/models` lists what's served. Contexts remember which model fit them, so predict dispatches automatically; a single shared budget is the point -- two separate deployments on one GPU would each be blind to the other's memory use. Single-model deployments are unchanged. Requires Python >= 3.12.
