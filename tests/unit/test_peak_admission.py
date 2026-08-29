@@ -192,3 +192,24 @@ class TestPredictChunkEstimates:
         assert estimator.estimate_bytes(50_000, 1_000, 100) == fallback.estimate_bytes(
             50_000, 1_000, 100
         )
+
+
+class TestNoAdmissionFlapping:
+    def test_successful_fit_does_not_make_its_own_shape_inadmissible(self):
+        """Seen live on an A100: a boundary shape admitted off its 1.1x
+        calibration estimate succeeded, recorded a runtime peak whose
+        1.5x margin exceeded headroom, and the SAME shape then got 413.
+        The minimum effective estimate across measurements prevents it."""
+        estimator = AdaptiveMemoryEstimator(
+            fallback=_fallback(),
+            preloaded=(Observation(50_000, 100, 32_000_000_000),),
+        )
+        before = estimator.estimate_bytes(50_000, 0, 100)
+        assert before == math.ceil(32e9 * 1.1)
+        # The fit succeeds and reports a slightly higher measured peak.
+        estimator.record_observation(50_000, 100, 34_000_000_000)
+        after = estimator.estimate_bytes(50_000, 0, 100)
+        assert after == before, (
+            f"estimate flapped {before} -> {after} after a SUCCESSFUL fit "
+            "of the same shape"
+        )

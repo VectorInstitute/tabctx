@@ -117,28 +117,32 @@ class AdaptiveMemoryEstimator:
             if len(self._observations) > self._max_observations:
                 self._observations.pop(0)
 
-    def _best_dominating_observation(
-        self, n_train: int, n_features: int
-    ) -> tuple[Observation, bool] | None:
-        """Returns (observation, is_preloaded) for the tightest
-        dominating measurement, or None."""
+    def _best_fit_estimate(self, n_train: int, n_features: int) -> int | None:
+        """The MINIMUM effective estimate (measurement x its margin)
+        across dominating measurements, or None.
+
+        Minimum, not tightest-cells-first: every dominating measurement
+        x margin is independently a valid upper bound for this query, so
+        the smallest bound wins. Anything else causes admission FLAPPING,
+        seen live on an A100: a boundary shape's own successful fit
+        recorded a runtime peak whose 1.5x margin exceeded headroom, so
+        the very shape that just succeeded became inadmissible."""
         with self._lock:
             runtime = [
                 o for o in self._observations if o.dominates(n_train, n_features)
             ]
         preloaded = [o for o in self._preloaded if o.dominates(n_train, n_features)]
-        candidates = [(o, False) for o in runtime] + [(o, True) for o in preloaded]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda pair: pair[0].cells)
+        estimates = [math.ceil(o.real_bytes * self._safety_margin) for o in runtime]
+        estimates += [
+            math.ceil(o.real_bytes * self._preloaded_margin) for o in preloaded
+        ]
+        return min(estimates) if estimates else None
 
     def estimate_bytes(self, n_train: int, n_test: int, n_features: int) -> int:
         if n_test == 0:
-            best = self._best_dominating_observation(n_train, n_features)
+            best = self._best_fit_estimate(n_train, n_features)
             if best is not None:
-                obs, is_preloaded = best
-                margin = self._preloaded_margin if is_preloaded else self._safety_margin
-                return math.ceil(obs.real_bytes * margin)
+                return best
         else:
             # Predict-time (chunking) query: use a measured predict peak
             # when a dominating one exists, scaled linearly in n_test
