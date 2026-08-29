@@ -1,0 +1,87 @@
+{
+  "recorded_at": "2026-08-29T01:38:26.412709+00:00",
+  "shape": {
+    "n_train": 500,
+    "n_test": 20,
+    "n_features": 15
+  },
+  "cold_fit_latency_ms": null,
+  "concurrency_levels": [],
+  "feature_count_sweep": [
+    {
+      "n_train": 500,
+      "n_test": 20,
+      "n_features": 15,
+      "fit_status": 200,
+      "fit_latency_ms": 836.4,
+      "warm_predict_latency_ms": {
+        "p50": 234.57208392210305,
+        "p95": 336.9789160788059,
+        "p99": 336.9789160788059,
+        "mean": 247.73355727666058,
+        "max": 336.9789160788059
+      },
+      "real_gpu_allocated_mb_after": 5361.128448
+    },
+    {
+      "n_train": 500,
+      "n_test": 20,
+      "n_features": 100,
+      "fit_status": 200,
+      "fit_latency_ms": 1922.5,
+      "warm_predict_latency_ms": {
+        "p50": 296.65254103019834,
+        "p95": 435.383667005226,
+        "p99": 435.383667005226,
+        "mean": 310.5662551242858,
+        "max": 435.383667005226
+      },
+      "real_gpu_allocated_mb_after": 5475.549184
+    },
+    {
+      "n_train": 500,
+      "n_test": 20,
+      "n_features": 300,
+      "fit_status": 200,
+      "fit_latency_ms": 4522.5,
+      "warm_predict_latency_ms": {
+        "p50": 490.8409998752177,
+        "p95": 580.5567088536918,
+        "p99": 580.5567088536918,
+        "mean": 505.9533229796216,
+        "max": 580.5567088536918
+      },
+      "real_gpu_allocated_mb_after": 5587.872768
+    },
+    {
+      "n_train": 500,
+      "n_test": 20,
+      "n_features": 500,
+      "fit_status": 200,
+      "fit_latency_ms": 7333.3,
+      "warm_predict_latency_ms": {
+        "p50": 643.4447499923408,
+        "p95": 751.8155828583986,
+        "p99": 751.8155828583986,
+        "mean": 657.3065885459073,
+        "max": 751.8155828583986
+      },
+      "real_gpu_allocated_mb_after": 5699.147776
+    },
+    {
+      "n_train": 500,
+      "n_test": 20,
+      "n_features": 700,
+      "fit_status": 200,
+      "fit_latency_ms": 9821.1,
+      "warm_predict_latency_ms": {
+        "p50": 847.5612499751151,
+        "p95": 949.5392921380699,
+        "p99": 949.5392921380699,
+        "mean": 858.181890565902,
+        "max": 949.5392921380699
+      },
+      "real_gpu_allocated_mb_after": 5809.374208
+    }
+  ]
+}
