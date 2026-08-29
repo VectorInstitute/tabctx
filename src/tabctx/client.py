@@ -66,19 +66,14 @@ class TabctxClient:
         self,
         base_url: str,
         tenant_id: str | None = None,
-        api_key: str | None = None,
         timeout_s: float = 120.0,
         max_retries: int = 3,
         retry_backoff_s: float = 0.25,
     ) -> None:
-        """api_key: sent as 'Authorization: Bearer <key>' -- required
-        against deployments running in API-key mode (TABCTX_API_KEYS),
-        where the server derives the tenant from the key. max_retries
-        applies only to 503 backpressure (safe to retry by construction);
-        every other error propagates immediately."""
+        """max_retries applies only to 503 backpressure (safe to retry by
+        construction); every other error propagates immediately."""
         self._base_url = base_url.rstrip("/")
         self._tenant_id = tenant_id
-        self._api_key = api_key
         self._timeout_s = timeout_s
         self._max_retries = max_retries
         self._retry_backoff_s = retry_backoff_s
@@ -224,8 +219,6 @@ class TabctxClient:
             headers["x-session-id"] = session_id
         if self._tenant_id is not None:
             headers["x-tabctx-tenant-id"] = self._tenant_id
-        if self._api_key is not None:
-            headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
     def _post(self, path: str, body: dict, session_id: str | None) -> dict:

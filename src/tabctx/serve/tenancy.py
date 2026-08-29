@@ -25,18 +25,24 @@ Deployment modes (env var TABCTX_REQUIRE_TENANT):
   the only way to reach a context is to present the same tenant id that
   fit it.
 
-Trust model: by default tenant identity is CALLER-SUPPLIED and NOT
-verified -- that protects against accidental cross-tenant access and
-guessed dataset_ids, but not against a malicious caller presenting
-another tenant's id. For VERIFIED identity, set ``TABCTX_API_KEYS`` to a
-comma-separated ``key:tenant`` map (inject via a k8s Secret in real
-deployments): every /v1/tabctx request must then carry
-``Authorization: Bearer <key>``, and the tenant is derived from the key
-(401 for a missing/unknown key). A tenant header may still be sent but
-must agree with the key's tenant. One tenant may own several keys;
-rotating a key is adding the new one and dropping the old. Stronger
-schemes (OIDC, mTLS) still belong in a fronting proxy -- this covers the
-common shared-secret case without one.
+Trust model, stated plainly: tabctx treats the tenant header as
+ALREADY-AUTHENTICATED identity and deliberately does no verification of
+its own -- authentication belongs at the gateway, the same place it
+lives for every other backend service (tabctx is an inference engine,
+not an auth system). The deployment pattern for real security:
+
+    client --(API key / OIDC / mTLS)--> gateway --> tabctx
+                                        |
+                                        authenticates the caller,
+                                        SETS x-tabctx-tenant-id itself,
+                                        and STRIPS any client-supplied
+                                        value of that header
+
+With that in place (plus TABCTX_REQUIRE_TENANT=true so nothing unscoped
+exists), the header is trustworthy by construction. Without a gateway,
+the header protects against accidental cross-tenant access and guessed
+dataset_ids, not against a caller who deliberately asserts another
+tenant's id.
 
 Interplay with session affinity (serve/affinity.py): the routing key
 stays the *unscoped* dataset_id, which is fine -- routing only needs to
@@ -56,7 +62,6 @@ from tabctx.errors import InvalidInputError, TabctxError
 
 TENANT_HEADER = "x-tabctx-tenant-id"
 REQUIRE_TENANT_ENV_VAR = "TABCTX_REQUIRE_TENANT"
-API_KEYS_ENV_VAR = "TABCTX_API_KEYS"
 
 # Conservative charset: forbids the scoping separator (":") by
 # construction, plus anything that would make ids annoying in logs/URLs.
@@ -76,12 +81,6 @@ class TenantRequiredError(TabctxError):
 
 class InvalidTenantIdError(InvalidInputError):
     """The tenant id doesn't match the allowed pattern."""
-
-
-class InvalidApiKeyError(TabctxError):
-    """API-key mode is on and the request's bearer key is missing,
-    unknown, or contradicts a tenant header. Mapped to HTTP 401. The
-    message never confirms whether a presented key exists."""
 
 
 def tenant_required() -> bool:
@@ -117,68 +116,15 @@ def tenant_id_from_headers(headers: Mapping[str, str]) -> str | None:
     return None
 
 
-def api_key_map() -> dict[str, str] | None:
-    """Parse TABCTX_API_KEYS ("key:tenant,key2:tenant2"); None when the
-    deployment doesn't use API-key mode. Malformed entries fail loudly at
-    call time rather than silently dropping a key."""
-    raw = os.environ.get(API_KEYS_ENV_VAR, "").strip()
-    if not raw:
-        return None
-    mapping: dict[str, str] = {}
-    for entry in raw.split(","):
-        key, sep, tenant = entry.strip().partition(":")
-        if not sep or not key or not _TENANT_ID_RE.match(tenant):
-            raise ValueError(
-                f"{API_KEYS_ENV_VAR} entries must be 'key:tenant' with a "
-                f"valid tenant id; got {entry.strip()!r}"
-            )
-        mapping[key] = tenant
-    return mapping
-
-
-def _bearer_key(headers: Mapping[str, str]) -> str | None:
-    for k, v in headers.items():
-        if k.lower() == "authorization":
-            scheme, _, key = v.partition(" ")
-            if scheme.lower() == "bearer" and key.strip():
-                return key.strip()
-            return None
-    return None
-
-
 def resolve_tenant_id(headers: Mapping[str, str]) -> str | None:
-    """The request's tenant, per the deployment's mode:
-
-    - API-key mode (TABCTX_API_KEYS set): tenant is DERIVED from the
-      verified bearer key -- the only mode where identity is trustworthy.
-      A tenant header may accompany it but must agree.
-    - Required-header mode (TABCTX_REQUIRE_TENANT=true): caller-supplied
-      header, mandatory.
-    - Default: caller-supplied header, optional (unscoped when absent).
-    """
-    keys = api_key_map()
-    header_tenant = tenant_id_from_headers(headers)
-    if keys is not None:
-        key = _bearer_key(headers)
-        if key is None or key not in keys:
-            raise InvalidApiKeyError(
-                "this deployment requires 'Authorization: Bearer <api key>' "
-                "on every /v1/tabctx request, and the key was missing or "
-                "not recognized"
-            )
-        tenant_id = keys[key]
-        if header_tenant is not None and header_tenant != tenant_id:
-            raise InvalidApiKeyError(
-                f"{TENANT_HEADER!r} header does not match the tenant this "
-                "API key belongs to"
-            )
-        return tenant_id
-    if header_tenant is None and tenant_required():
+    """tenant_id_from_headers plus enforcement of the deployment mode."""
+    tenant_id = tenant_id_from_headers(headers)
+    if tenant_id is None and tenant_required():
         raise TenantRequiredError(
             f"this deployment requires a {TENANT_HEADER!r} header on every "
             "/v1/tabctx request (TABCTX_REQUIRE_TENANT=true)"
         )
-    return header_tenant
+    return tenant_id
 
 
 def scope_dataset_id(tenant_id: str | None, dataset_id: str) -> str:

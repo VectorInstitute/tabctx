@@ -49,7 +49,6 @@ from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
 from tabctx.serve.uploads import UploadStore
 from tabctx.serve.tenancy import (
-    InvalidApiKeyError,
     TenantRequiredError,
     resolve_tenant_id,
     scope_dataset_id,
@@ -145,7 +144,7 @@ class TabctxPredictResponse(BaseModel):
     served_by: str | None = None
 
 
-_AUTH_ERRORS = (TenantRequiredError, InvalidApiKeyError)
+_AUTH_ERRORS = (TenantRequiredError,)
 _INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)

@@ -27,6 +27,9 @@ Environment variables:
 - ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
   (default 3600): size cap and expiry for the large-table upload path
   (see serve/uploads.py).
+- ``TABCTX_SPILL_DIR`` (default unset = spillover off) and
+  ``TABCTX_SPILL_CAPACITY_BYTES`` (default 50GiB): disk spillover tier
+  for capacity-evicted contexts (see cache/spill.py).
 """
 
 from __future__ import annotations
@@ -54,6 +57,8 @@ GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
 MAX_UPLOAD_BYTES_ENV_VAR = "TABCTX_MAX_UPLOAD_BYTES"
+SPILL_DIR_ENV_VAR = "TABCTX_SPILL_DIR"
+SPILL_CAPACITY_ENV_VAR = "TABCTX_SPILL_CAPACITY_BYTES"
 UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 
 BackendKind = Literal["tabicl", "tabpfn", "fake"]
@@ -68,6 +73,8 @@ class ServeSettings:
     batch_window_ms: float = 5.0
     max_upload_bytes: int = 4 * 1024**3
     upload_ttl_s: float = 3600.0
+    spill_dir: str | None = None
+    spill_capacity_bytes: int = 50 * 1024**3
 
     @classmethod
     def from_env(cls) -> "ServeSettings":
@@ -116,6 +123,15 @@ class ServeSettings:
             raise ValueError(
                 f"{MAX_UPLOAD_BYTES_ENV_VAR} and {UPLOAD_TTL_S_ENV_VAR} must be positive"
             )
+        spill_dir = os.environ.get(SPILL_DIR_ENV_VAR) or None
+        try:
+            spill_capacity = int(
+                os.environ.get(SPILL_CAPACITY_ENV_VAR, str(50 * 1024**3))
+            )
+        except ValueError as e:
+            raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be an int") from e
+        if spill_capacity <= 0:
+            raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
         return cls(
             backend=backend,
             gpu_memory_fraction=fraction,
@@ -123,6 +139,8 @@ class ServeSettings:
             batch_window_ms=batch_window_ms,
             max_upload_bytes=max_upload_bytes,
             upload_ttl_s=upload_ttl_s,
+            spill_dir=spill_dir,
+            spill_capacity_bytes=spill_capacity,
         )
 
 
@@ -195,7 +213,23 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     settings = settings or ServeSettings.from_env()
     backend, device = _build_backend(settings)
     estimator = build_estimator(settings)
-    cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
+    spill_store = None
+    if settings.spill_dir:
+        from tabctx.cache.spill import DiskSpillStore
+
+        # Backends may provide backbone-aware serialization; pickle is
+        # the default for those that don't (see cache/spill.py).
+        kwargs = {}
+        if hasattr(backend, "dumps_payload"):
+            kwargs = {"dumps": backend.dumps_payload, "loads": backend.loads_payload}
+        spill_store = DiskSpillStore(
+            settings.spill_dir,
+            capacity_bytes=settings.spill_capacity_bytes,
+            **kwargs,
+        )
+    cache = ContextCacheManager(
+        capacity_bytes=estimator.ceiling_bytes(), spill_store=spill_store
+    )
     engine = TabctxEngine(backend=backend, cache=cache, estimator=estimator)
     return BuiltEngine(
         engine=engine, estimator=estimator, backend=backend, device=device

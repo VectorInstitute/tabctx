@@ -47,15 +47,32 @@ class ContextCacheManager:
         self,
         capacity_bytes: int,
         policy: EvictionPolicy | None = None,
+        spill_store: Any | None = None,
     ) -> None:
+        """spill_store: optional disk tier (cache/spill.py). When set,
+        capacity-pressure evictions spill instead of dropping, and get()
+        transparently reloads spilled contexts. Explicit evict() (caller
+        intent, re-fit overwrite) never spills."""
         self._capacity_bytes = capacity_bytes
         self._policy = policy or LRUEvictionPolicy()
         self._entries: dict[str, CachedContext] = {}
+        self._spill = spill_store
         self._lock = threading.RLock()
 
     def get(self, dataset_id: str) -> CachedContext | None:
         with self._lock:
-            return self._entries.get(dataset_id)
+            entry = self._entries.get(dataset_id)
+            if entry is not None or self._spill is None:
+                return entry
+            # Miss with a spill tier: try reloading. Re-admitting evicts
+            # via the normal policy to make room (RLock, so the nested
+            # put() is fine); what it displaces may itself spill.
+            restored = self._spill.load(dataset_id)
+            if restored is None:
+                return None
+            restored.last_accessed_at = time.monotonic()
+            self.put(restored)
+            return restored
 
     def touch(self, dataset_id: str) -> None:
         with self._lock:
@@ -74,7 +91,9 @@ class ContextCacheManager:
                 victim_id = self._policy.select_victim(list(self._entries.values()))
                 if victim_id is None:
                     break
-                del self._entries[victim_id]
+                victim = self._entries.pop(victim_id)
+                if self._spill is not None:
+                    self._spill.spill(victim)  # best-effort by contract
                 evicted.append(victim_id)
         return evicted
 

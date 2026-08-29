@@ -198,3 +198,40 @@ class TabICLBackend:
         """Transient high-water memory of the most recent fit() -- the
         admission-relevant quantity (see fit()); None on CPU/after OOM."""
         return self._last_fit_peak_bytes
+
+    # ---- spillover serialization (see cache/spill.py) ----------------
+
+    def dumps_payload(self, payload: Any) -> bytes:
+        """Pickle a fitted estimator for the disk spill tier WITHOUT the
+        shared pretrained backbone (hundreds of MB, identical across all
+        contexts, unpicklable anyway once _load_model is shadowed with a
+        lambda): strip the shared attributes, pickle, restore."""
+        import pickle
+
+        stripped = {}
+        for attr in ("model_", "_load_model"):
+            if attr in payload.__dict__:
+                stripped[attr] = payload.__dict__.pop(attr)
+        try:
+            return pickle.dumps(payload)
+        finally:
+            payload.__dict__.update(stripped)
+
+    def loads_payload(self, data: bytes) -> Any:
+        """Inverse of dumps_payload: unpickle and re-attach this
+        process's shared backbone (loading it first if this replica has
+        never fit this task type -- e.g. right after a restart)."""
+        import pickle
+
+        model = pickle.loads(data)
+        task: Task = "classification" if hasattr(model, "predict_proba") else "regression"
+        if task not in self._shared_backbones:
+            # Cold restore on a fresh replica: borrow a throwaway
+            # estimator's load path to populate the shared backbone.
+            probe = self._make_estimator(task)
+            probe._load_model()
+            self._stash_backbone(task, probe)
+        for attr, value in self._shared_backbones[task].items():
+            setattr(model, attr, value)
+        model._load_model = lambda: None
+        return model
