@@ -24,15 +24,22 @@ python3 benchmarks/bench_concurrency.py \
 
 ## Why this exists
 
-v1 serializes all GPU work per replica via one coarse lock (see the top-level
-README's Gaps section). Unlike an LLM engine's continuous batching,
-throughput here is **not** expected to scale with concurrency past c=1; if
-anything it should plateau or degrade as concurrency grows. That's the
-headline number this benchmark tracks: re-run it after any future
+tabctx serializes all GPU work per replica via one coarse lock. Unlike an
+LLM engine's continuous batching, throughput here is **not** expected to
+scale with concurrency past c=1 within one replica (same-context requests
+coalesce -- see `batching.py` -- but the sweep deliberately uses distinct
+tenants); it should plateau as concurrency grows. That's the headline
+number this benchmark tracks: re-run it after any future
 concurrency-model change and diff against a saved baseline in
 `baselines/` to prove whether it actually improved, the same way
 `inference-platform`'s LLM benchmarks compare confirmed before/after
 numbers for a config change.
+
+**Comparability warning:** baselines older than v0.7.0 were measured with
+tabicl's kv-cache OFF (every predict re-encoded the training set -- see
+CHANGELOG 0.7.0) and single-replica. Treat them as historical, not as a
+current reference. All tabctx-native requests now send the `x-session-id`
+affinity header, so the sweep stays valid at `num_replicas >= 2`.
 
 ## Baselines
 

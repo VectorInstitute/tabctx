@@ -170,6 +170,17 @@ Not yet on PyPI; install from a clone for now (see [Roadmap](ROADMAP.md)).
   replica, the failure mode this library exists partly to prevent (the
   naive one-shot wrapper it replaces did crash this way; see
   [CHANGELOG](CHANGELOG.md)).
+- **TabICL's kv-cache, actually on**: tabicl ships with its fit-time
+  context cache disabled, which makes every `predict()` re-encode the
+  whole training set. tabctx enables it by default
+  (`TABCTX_KV_CACHE=kv|repr|off`), with predictions verified identical
+  to the uncached path -- and loads the pretrained backbone once per
+  process instead of per fit.
+- **Same-context coalescing** (`CoalescingPredictor`): concurrent
+  requests against one cached context are packed into a single GPU call
+  within a ~5ms window and split back per caller, amortizing per-call
+  overhead without ever running concurrent GPU work (the memory budget's
+  single-in-flight-call assumption is preserved).
 
 ## Validated at scale (real A100-40GB, not simulated)
 

@@ -9,185 +9,168 @@ where to start. Update this file as priorities change; don't let it go stale.
 ## How we got here (context for the ranking below)
 
 v1 (v0.1.0-v0.5.0) built and validated a working multi-tenant context cache
-for TabICLv2 on a real A100-40GB: cache-reuse works, admission control
-prevents the OOM that crashed the naive wrapper this replaced, and three
-real bugs were found and fixed via extensive load testing (a ~14x
-cache-accounting overestimate, a missing input-validation gate, and a
-misleading throughput metric in the benchmark tool itself). Full detail in
-`CHANGELOG.md`. The two benchmark baselines in `benchmarks/baselines/`
-(`v0.5.0.json`, the concurrency sweep, and `v0.5.0-feature-sweep.json`, the
-column-count sweep) are real, measured numbers, not estimates. Treat them
-as ground truth for "did a change actually help," and re-run them after
-any change that touches concurrency or the estimator.
+for TabICLv2 on a real A100-40GB. The overnight session of 2026-08-28/29
+(v0.6.0-v0.7.0) then closed the top three items of the previous roadmap:
 
-## Priority 1: Multi-replica correctness (do this first)
+- **Multi-replica correctness (was Priority 1): DONE.** Ray 2.58's
+  experimental consistent-hash router is wired into the deployment with
+  strict affinity, with the contract `x-session-id` header == dataset_id
+  (`serve/affinity.py`). Proven by a local 2-replica integration test
+  (`tests/integration/test_multi_replica_affinity.py`, also in CI) and by
+  `probe_multi_replica.py` against a real 2-replica GKE deployment
+  sharing one A100.
+- **Tenant boundary (was Priority 2): DONE at the namespacing level.**
+  `serve/tenancy.py` scopes dataset_ids by the `x-tabctx-tenant-id`
+  header; `TABCTX_REQUIRE_TENANT=true` removes the unscoped namespace.
+  Deliberately NOT done: verifying tenant identity — that belongs in an
+  authenticating proxy in front (API key -> tenant id); the module
+  docstring states the trust model precisely.
+- **Batching feasibility (was Priority 3): INVESTIGATED, and the
+  investigation found something bigger** — see "The kv-cache finding"
+  below. Same-context coalescing is implemented (`batching.py`);
+  cross-context batching feasibility is now precisely mapped (below).
 
-**The problem:** tabctx's cache is in-process, per-replica. The benchmark
-data shows single-replica throughput plateaus at ~9-9.4 ops/sec (see
-`benchmarks/baselines/v0.5.0.json`), so the obvious next move is "add more
-Ray Serve replicas." **That doesn't work today.** Ray Serve's default
-request routing has no session affinity (confirmed: `request_router_config`
-in this org's existing Helm charts only sets a stats timeout, no affinity
-strategy). With 2+ replicas, a `predict()` call for an existing
-`dataset_id` has no guarantee of landing on the replica that `fit()` it, so
-callers would see intermittent, spurious 404s as traffic bounces between
-replicas that don't share state. **The current architecture only works
-correctly as exactly one replica.** This wasn't caught until deep into
-scale-testing this session, so don't repeat that: any capacity-planning
-advice involving replica count is wrong without this fixed first.
+## The kv-cache finding (v0.7.0, the important one)
 
-**Why this ranks above everything else:** it's not a missing feature, it's
-a correctness bug hiding behind the obvious scaling path. Shipping this
-today as "just add replicas" would cause real, confusing failures for real
-users.
+Tracing tabicl's `predict_proba` internals revealed that tabicl ships
+with `kv_cache=False`, so every predict was **re-encoding the entire
+training set through all three transformer stages** — the exact repeat
+cost this library exists to eliminate. tabctx now enables it by default
+(`TABCTX_KV_CACHE`), verified prediction-identical to the uncached path.
+Also: backbone weights now load once per process (tabicl's own
+`_unsupervised`/`_finetune` sharing pattern) instead of per fit.
 
-**Where to start:**
-- Ray Serve supports custom request routing (`request_router_config` and
-  `RequestRouter`; this org's charts already expose the config key, just
-  unused for affinity). Investigate whether a custom router can hash
-  `dataset_id` to a consistent replica (sticky routing) without needing
-  Ray internals expertise from scratch.
-- Alternative worth evaluating: don't route by `dataset_id` at the Serve
-  layer at all. Instead, on a cache miss (`DatasetNotFoundError`), have
-  the replica try fetching/re-fitting rather than immediately 404ing.
-  Re-fitting defeats the caching benefit, but a request-level fallback
-  might be simpler to ship correctly than custom routing, at the cost of
-  the exact throughput this library exists to protect. Only sensible as a
-  stopgap if custom routing turns out to be a bigger lift than expected.
-- Whatever you build, add an explicit multi-replica test to
-  `tests/gke-tabicl-test/` (in `inference-platform`, not this repo; see
-  "Where things live" below) that deploys 2+ replicas and confirms
-  `fit()` on one request followed by `predict()` on a *different* request
-  against the same `dataset_id` succeeds regardless of which replica each
-  lands on. This is the regression test that would have caught the gap
-  immediately.
+Consequence for anyone reading old numbers: **every pre-v0.7.0 benchmark
+baseline (`benchmarks/baselines/v0.5.0*.json`) is historical**. The 3-10x
+"cache reuse" speedup previously reported was measured with the model
+secretly re-encoding training data per predict; re-baseline before
+drawing any new conclusions.
 
-## Priority 2: Tenant / authz boundary
+## Priority 1: Re-baseline performance and recalibrate memory data
 
-**The problem:** `dataset_id` is a flat, unauthenticated, guessable
-namespace. Any caller who knows or guesses another tenant's `dataset_id`
-can `predict()` against their cached model. This is a data-leakage risk,
-not just a missing nicety, so rank it above pure performance work for that
-reason.
+v0.7.0 changed the performance and memory profile fundamentally
+(kv-cache tensors now live in each cached context; warm predicts are
+much cheaper; `max_ongoing_requests` went 2 -> 8; same-context
+coalescing exists). The v0.5.0 baselines no longer describe the system.
 
-**Where to start:** the minimal fix is namespacing, not a full auth system.
-Thread an API-key or tenant-id through requests (header or request field),
-and internally scope `dataset_id` as `f"{tenant_id}:{dataset_id}"` before
-it ever touches `ContextCacheManager`. `TabctxEngine`'s public API
-(`fit`/`predict`) would need a `tenant_id` parameter; `serve/app.py`'s
-Pydantic request models would need a field for it, populated from a header
-in practice. Decide whether tenant identity is caller-supplied (simple, but
-trusts the caller) or verified against some external identity source
-(more real security, more scope). That's a product decision, not
-something to guess at.
+**Where to start:** run `benchmarks/bench_concurrency.py` (it already
+sends affinity headers) against a current deployment, save
+`benchmarks/baselines/v0.7.0-*.json`, and update README's "Validated at
+scale" numbers. Watch specifically: (a) whether the kv cache's
+per-context GPU memory (visible in fit()'s measured delta) changes how
+many tenants fit under the ceiling — the adaptive estimator prices it
+automatically, but the static calibration in `memory/calibration_data.py`
+predates kv-cache and is now doubly stale; (b) whether throughput past
+c=4 improves now that requests queue on a lock guarding much shorter GPU
+calls.
 
-## Priority 3: Cross-request batching, but investigate feasibility before committing
+## Priority 2: Cross-context batching (feasibility now precisely known)
 
-**The problem this targets:** the concurrency benchmark shows throughput
-plateauing around c=2-4, not scaling further. Naively relaxing the coarse
-lock to allow concurrent GPU calls is **unsafe as-is**: the memory
-estimator's admission ceiling was derived assuming exactly one in-flight
-backend call, so N concurrent calls near that ceiling could jointly exceed
-real GPU capacity even though each individually passed admission control.
-Don't do this without first re-deriving the ceiling as a function of max
-concurrent in-flight calls.
+A deep read of tabicl's model internals (2026-08-29) established:
 
-**The more promising angle:** per-request latency (~200ms for a tiny
-300-row table) looks dominated by fixed overhead, not GPU compute
-saturation; an A100 is nowhere near busy processing one small table.
-This suggests **batching multiple concurrent requests into fewer, larger
-GPU calls** (the CRUMB-style batching this library has always listed as
-out-of-scope, arXiv 2606.11473) is likely higher-leverage than raw
-concurrency, and safer to reason about (one bigger call's memory need is
-easier to bound than N overlapping ones).
+- The model's batch dim is over **tables** (`TabICL.forward`, B = number
+  of tables); the sklearn wrapper just happens to use it for ensemble
+  members of one table. With a kv cache, test rows attend only to
+  fit-time-cached K/V — **no test-to-test attention** — so batching
+  different contexts' test rows into one forward is *numerically exact*.
+- `TabICLCache.concat` works today for contexts that agree on
+  `(n_feature_groups, train_size, dtype)`; `num_classes` must be handled
+  by slicing per-context. So **wrapper-level cross-context batching is
+  feasible if you bucket contexts by shape** — you must call
+  `model_.forward_with_cache` directly (bypassing
+  `_batch_forward_with_cache`, which re-splits by `batch_size=8`), and
+  each context contributes `n_estimators` batch entries per norm method.
+- **Cross-shape batching requires model changes**: the encoder stacks
+  don't thread `key_padding_mask` (the leaf attention supports it), and
+  — the trap — SSMax scales attention by a single scalar `src_len` for
+  the whole batch, so padding `train_size` **silently degrades accuracy**
+  rather than crashing. Do not pad the train dimension without fixing
+  ssmax's per-element `n` first.
 
-**Before building anything:** check whether TabICL's API can even support
-this. `TabICLClassifier.predict()` operates on one fitted context at a
-time; batching predict() calls against the *same* cached context (pack
-multiple requests' test rows into one call, split results back) is
-straightforward and worth doing regardless. Batching across *different*
-tenants' contexts in one GPU call is the harder, higher-value case and may
-require the model to support batched/grouped attention across contexts,
-which nothing so far has confirmed is possible. Spend a half-day
-investigating TabICL's internals before committing to a design.
+**Whether to build it:** only after Priority 1's re-baseline shows
+cross-tenant traffic is still overhead-bound. Same-shape bucketing is a
+real but narrow win (tenants must share n_features and train_size);
+measure how often that actually co-occurs in-flight before building.
 
-**How to validate whatever you build:** re-run
-`benchmarks/bench_concurrency.py` and diff against `baselines/v0.5.0.json`.
-If ops/sec doesn't meaningfully improve past c=4, the change didn't work.
-Don't ship it based on intuition alone.
+## Priority 3: Cache durability
 
-## Priority 4: Cache durability
-
-**The problem:** a replica restart silently drops every cached context.
-Lower urgency than #1/#2 because the failure mode is a clean 404 (caller
-re-fits), not silent corruption or a security hole, but it's still real
-for production reliability, especially once autoscaling or rolling
-deploys are in play.
-
-**Where to start:** this doesn't need full persistence. Even a simple
-"has this replica restarted recently" signal in `/readyz`, or a
-best-effort disk-backed spillover for evicted-but-still-referenced
-contexts, would help. Full persistence (serializing GPU tensors to disk
-and reloading) is a bigger, possibly not-worth-it lift, so scope this
-carefully before overbuilding.
+Unchanged from before: a replica restart silently drops every cached
+context; the failure mode is a clean 404 (caller re-fits), so this ranks
+below performance truth-telling but is real for production (autoscaling,
+rolling deploys). Sticky routing adds a wrinkle worth knowing: after a
+replica set change, the hash ring remaps some dataset_ids, so a fraction
+of tenants see one 404 + re-fit even without a restart. A "has this
+replica restarted recently" signal in `/readyz`, or best-effort disk
+spillover for evicted contexts, are still the right-sized first steps.
+Full GPU-tensor persistence is likely not worth it; tabicl's kv cache
+retains dtype and auto-upcasts on reload (see its docstring), so
+serialization is *possible* if ever justified.
 
 ## Lower priority (don't start here)
 
-These are real, documented gaps, but none of them block correctness or
-security the way #1/#2 do, and none are proven to be the throughput
-bottleneck the way #3 might be:
-
 - **TabPFN backend.** `TabularICLBackend` (protocol in `backends/base.py`)
-  is designed to support a second backend without touching the engine,
-  cache, or estimator. Real work, but breadth, not depth, so do this once
-  the multi-tenant story (1-3 above) is solid, not before.
-- **Memory estimator's static fallback is low-confidence** (4 calibration
-  points, one GPU type, one backend; see `memory/estimator.py`'s
-  docstring). `AdaptiveMemoryEstimator` (v0.4.0) already reduces reliance
-  on this for shapes the service has actually served; the fallback only
-  matters for genuinely novel/larger shapes. More calibration data would
-  help but isn't urgent.
-- **Disk/CPU cache tiering** for contexts that would otherwise get
-  evicted. Only matters once real deployments are pushing the ~25.7GB
-  ceiling harder than anything tested so far.
-- **Custom CUDA/Triton kernels.** Premature: nothing so far suggests
-  kernel-level optimization is the bottleneck (the throughput plateau
-  looks like a concurrency/overhead problem, not a raw-compute one; see
-  the linear column-scaling result in `benchmarks/baselines/v0.5.0-feature-sweep.json`,
-  which suggests the model's own compute is well-behaved).
-- **PyPI publishing.** The GKE deploy still ships a hand-built wheel via
-  ConfigMap (see "Where things live" below), which is fine for now, but a
-  real distribution story matters once this has users outside this org.
+  was designed for this. Breadth, not depth — do it once 1-2 above are
+  settled. Note TabPFN has its own fit-context caching flag
+  (`fit_mode="fit_with_cache"` in TabPFN v2); the kv-cache lesson above
+  says check its default before assuming it's on.
+- **Verified tenant identity** (API keys -> tenant id at a proxy, or in
+  tabctx itself). The namespacing boundary exists; making identity
+  trustworthy is product/deployment work.
+- **Memory estimator's static fallback** — 4 calibration points, one GPU,
+  one backend, and now pre-kv-cache. The adaptive estimator masks this in
+  steady state; recalibrate when convenient (fold into Priority 1's runs).
+- **Disk/CPU cache tiering** — only matters once deployments push the
+  (per-replica, fraction-scaled) ceiling.
+- **PyPI publishing + docs site.** Matters for the "vLLM for tabular
+  models" ambition the moment anyone outside this org should try it. The
+  GKE deploy still ships a hand-built wheel via ConfigMap; that's fine
+  for testing, not for adoption.
+- **Custom CUDA/Triton kernels.** Still premature; nothing measured so
+  far implicates raw kernel time.
 
 ## Where things live (so you don't have to rediscover this)
 
-- This repo (`tabctx`): the library itself: engine, cache, estimator,
-  backends, the Ray Serve app.
+- This repo (`tabctx`): the library — engine, cache, estimator, backends
+  (`backends/`), affinity/tenancy/factory (`serve/`), coalescing
+  (`batching.py`), the Ray Serve app (`serve/app.py`).
 - `VectorInstitute/inference-platform`, branch `test/tabicl-gke-onboard`,
   directory `tests/gke-tabicl-test/`: the GKE deployment/test harness
   (`onboard.sh`, `probe.py`, `probe_cache.py`, `probe_extensive.py`,
-  `probe_scale.py`) and the Helm values overlay
+  `probe_scale.py`, `probe_multi_replica.py`) and the Helm values overlay
   (`helm-charts/ray-llm-app/values/tabicl-gke-test-values.yaml`) that
-  deploys tabctx via a ConfigMap-mounted wheel plus `runtime_env.pip` (no
-  custom image, no PyPI needed; see that overlay's comments for exactly
-  why the wheel filename can't be renamed). That branch is **not merged to
-  main**, it's a validated proof of concept, not production config.
-  `onboard.sh` supports `KEEP_ALIVE=true` to leave the cluster up for
-  interactive testing instead of auto-tearing-down.
-- GCP project `agentic-ai-evaluation-bootcamp`, zone `us-central1-f`: where
-  all real-hardware testing happened. Confirmed reliable on-demand
-  A100-40GB capacity there as of 2026-08-28 (a different zone,
-  `us-central1-c`, hit a capacity stockout, so `us-central1-f` is the
-  known-good choice). **Check `gcloud container clusters list` before
-  assuming nothing is running**, since ephemeral test clusters cost real
-  money while alive.
+  deploys tabctx via a ConfigMap-mounted wheel plus `runtime_env.pip`.
+  The overlay runs `num_replicas: 2` at `num_gpus: 0.5` each with
+  `TABCTX_GPU_MEMORY_FRACTION: "0.45"`. That branch is **not merged to
+  main**. `onboard.sh` supports `KEEP_ALIVE=true`. Gotchas learned the
+  hard way: the wheel ConfigMap must keep the real wheel filename; after
+  replacing the ConfigMap in place, wait for kubelet propagation (compare
+  sha256 inside the pod) AND bump `TABCTX_DEPLOY_NONCE` in the overlay —
+  Serve won't retry a DEPLOY_FAILED runtime_env until the serve config
+  changes. Two more, both found the hard way on 2026-08-29: (1) a rolling
+  update deadlocks when resources exactly fit (old replicas hold the GPU
+  the new ones need — scale to 1 and back to 2 to break it); (2) **Ray
+  Serve does not apply `request_router_config` changes to live proxies**:
+  the router property in `ray/serve/_private/router.py` only constructs a
+  router `if not self._request_router`, so `update_deployment_config`
+  swaps the class attribute but a proxy that predates the config keeps
+  its old (power-of-two) router until restarted. Symptom: session
+  affinity works on a fresh cluster and silently doesn't after an
+  in-place upgrade from a pre-router version — ~half of sticky predicts
+  404 on 2 replicas. Fix: restart the Ray pods (proxies rebuild with the
+  config present). Worth filing upstream against Ray.
+- GCP project `agentic-ai-evaluation-bootcamp`, zone `us-central1-f`:
+  where all real-hardware testing happened (us-central1-c had an A100
+  stockout). **Check `gcloud container clusters list` before assuming
+  nothing is running** — ephemeral test clusters cost real money while
+  alive, and their `expiry_epoch` label caps them at 8h.
 
 ## A note on process, not just content
 
-Every fix in this project's history so far came from actually load-testing
-against real hardware, not from reasoning about the code in the abstract:
-the ~14x cache-accounting bug, the missing input validation, and the
-misleading benchmark metric were all found this way. Keep doing that.
-Before believing a change helped, deploy it and re-run the relevant
-benchmark or probe script against a real GPU, and diff the result against
-a saved baseline.
+Every significant fix in this project's history came from actually
+testing against real systems, not reasoning in the abstract: the ~14x
+cache-accounting bug, the missing input validation, the misleading
+benchmark metric, the multi-replica routing gap — and now the kv-cache
+finding, which came from reading the model's actual source rather than
+trusting its API surface. Keep doing both: read the internals, then
+deploy and measure against a saved baseline before believing anything
+helped.
