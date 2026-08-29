@@ -7,10 +7,7 @@ remainder, and gets deleted when it empties.
 
 ## Remaining
 
-1. **PyPI release** (`v0.9.0`): `publish.yml` is live (Trusted
-   Publishing, `pypi` environment, tag-triggered); the PyPI-side trusted
-   publisher is being configured. Tag `v0.9.0` once it is.
-2. **Post-release: ephemeral GKE stress run + researcher deployment**
+1. **Post-release: ephemeral GKE stress run + researcher deployment**
    (deliberately sequenced after the release). Everything is staged in
    `VectorInstitute/inference-platform` branch `test/tabicl-gke-onboard`:
    the research overlay (`tabctx-research-values.yaml`: both models, one
@@ -19,11 +16,11 @@ remainder, and gets deleted when it empties.
    battery), and a parameterized `onboard.sh`
    (`OVERLAY=... RELEASE=tabctx-research TABPFN_TOKEN=... KEEP_ALIVE=true`).
    The prod inference-platform deployment for Vector researchers follows.
-3. **TabPFN memory calibration grid**: the preloaded admission grid is
+2. **TabPFN memory calibration grid**: the preloaded admission grid is
    TabICL data; TabPFN deployments fall back to the conservative formula
    plus runtime learning. Run `benchmarks/calibrate_memory.py`-style
    sweeps through `TabPFNBackend` on an A100 and add the grid.
-4. **Docs site**: README carries the full story today; a docs site
+3. **Docs site**: README carries the full story today; a docs site
    matters as external adoption starts.
 
 ## Standing process note

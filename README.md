@@ -78,15 +78,15 @@ deployment is exactly fast enough.
 backend stands in for TabICL):
 
 ```bash
-git clone https://github.com/VectorInstitute/tabctx.git && cd tabctx
-pip install -e .
-python examples/local_fit_predict.py
+pip install tabctx
+curl -sO https://raw.githubusercontent.com/VectorInstitute/tabctx/main/examples/local_fit_predict.py
+python local_fit_predict.py
 ```
 
 **Use it for real**, with TabICL doing the actual predicting:
 
 ```bash
-pip install -e ".[tabicl]"
+pip install "tabctx[tabicl]"
 ```
 
 ```python
@@ -221,15 +221,13 @@ never another tenant's model.
 Requires Python ≥ 3.12.
 
 ```bash
-pip install -e .                 # core library only (FakeBackend, no GPU deps)
-pip install -e ".[tabicl]"       # + real TabICL backend (torch, tabicl)
-pip install -e ".[tabpfn]"       # + TabPFN backend (weights license-gated:
+pip install tabctx               # core library (FakeBackend, no GPU deps)
+pip install "tabctx[tabicl]"     # + real TabICL backend (torch, tabicl)
+pip install "tabctx[tabpfn]"     # + TabPFN backend (weights license-gated:
                                  #   ux.priorlabs.ai + export TABPFN_TOKEN)
-pip install -e ".[serve]"        # + Ray Serve deployment (ray[serve], fastapi)
-pip install -e ".[dev]"          # + test dependencies
+pip install "tabctx[serve]"      # + Ray Serve deployment (ray[serve], fastapi)
+pip install "tabctx[dev]"        # + test dependencies
 ```
-
-Not yet on PyPI; install from a clone for now (see [Roadmap](ROADMAP.md)).
 
 ## How it works
 
