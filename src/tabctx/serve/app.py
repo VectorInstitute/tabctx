@@ -33,7 +33,11 @@ from tabctx import (
     TabctxEngine,
 )
 from tabctx.backends.tabicl import TabICLBackend
-from tabctx.memory import A100_40GB_TABICL_CALIBRATION, PowerLawMemoryEstimator
+from tabctx.memory import (
+    A100_40GB_TABICL_CALIBRATION,
+    AdaptiveMemoryEstimator,
+    PowerLawMemoryEstimator,
+)
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -123,16 +127,24 @@ class TabctxService:
         if self._device != "cuda":
             logger.warning("No CUDA device visible -- running tabctx on CPU")
 
-        estimator = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-        cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
-        self._engine = TabctxEngine(
-            backend=TabICLBackend(device=self._device), cache=cache, estimator=estimator
+        # AdaptiveMemoryEstimator wraps the static formula as a fallback for
+        # shapes never seen before, but uses real per-fit measurements (fed
+        # back via engine.fit() -> record_observation()) for the admission
+        # gate whenever a past fit at least as large has been observed --
+        # see memory/adaptive.py. This is why confidence() is queried fresh
+        # per /readyz call below rather than cached at startup: it changes
+        # as the replica accumulates real operational observations.
+        self._estimator = AdaptiveMemoryEstimator(
+            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
         )
-        self._estimator_confidence = estimator.confidence()
+        cache = ContextCacheManager(capacity_bytes=self._estimator.ceiling_bytes())
+        self._engine = TabctxEngine(
+            backend=TabICLBackend(device=self._device), cache=cache, estimator=self._estimator
+        )
         logger.info(
             "TabctxService initialized (device=%s). %s",
             self._device,
-            self._estimator_confidence,
+            self._estimator.confidence(),
         )
 
     # ---- legacy one-shot endpoint (regression-compatible with the old app.py) ----
@@ -251,7 +263,7 @@ class TabctxService:
             "status": "ready",
             "device": self._device,
             "cuda_available": torch.cuda.is_available(),
-            "estimator_confidence": self._estimator_confidence,
+            "estimator_confidence": self._estimator.confidence(),
             "cache_stats": {
                 "n_cached_contexts": stats.n_cached_contexts,
                 "used_bytes": stats.used_bytes,

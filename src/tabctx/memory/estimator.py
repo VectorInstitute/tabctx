@@ -38,6 +38,14 @@ class MemoryEstimator(Protocol):
 
     def confidence(self) -> str: ...
 
+    def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
+        """Called by the engine after a successful fit() whenever the
+        backend reported a real measured cost (see backends/tabicl.py).
+        Implementations that can't learn from this (like this module's
+        static PowerLawMemoryEstimator) should no-op; AdaptiveMemoryEstimator
+        (adaptive.py) is what actually uses it."""
+        ...
+
 
 class PowerLawMemoryEstimator:
     """estimate_bytes ~= a * cells^b, fit by OLS in log-log space over the
@@ -57,6 +65,8 @@ class PowerLawMemoryEstimator:
         train + 2,000 test rows x 100 features) reserved 40.77GB on a
         ~40.5GB card -- essentially the entire device, with zero headroom.
         A request that barely fits with nothing left over is not a request
+        this estimator should admit again; the ceiling exists precisely to
+        stay clear of that edge, not to reproduce it.
 
     KNOWN LIMITATION (found via testing, not just theorized): the
     calibration range only covers 6,000-5,200,000 cells. Below that range
@@ -69,8 +79,11 @@ class PowerLawMemoryEstimator:
     but is unnecessarily conservative for small, typical requests -- exactly
     the case tabctx's multi-tenancy is supposed to make cheap. Worth a
     piecewise or additive-intercept model once more calibration data exists.
-        this estimator should admit again; the ceiling exists precisely to
-        stay clear of that edge, not to reproduce it.
+
+    NOTE (v0.4.0): this class is normally used as the fallback prior inside
+    an AdaptiveMemoryEstimator (see adaptive.py) rather than directly, so
+    real operational measurements can progressively override its
+    conservative guesses for shapes the service has actually seen.
     """
 
     def __init__(
@@ -112,6 +125,11 @@ class PowerLawMemoryEstimator:
 
     def ceiling_bytes(self) -> int:
         return self._effective_ceiling
+
+    def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
+        # Static/fixed-calibration estimator: intentionally does not learn
+        # from live traffic. See AdaptiveMemoryEstimator for that.
+        del n_train, n_features, real_bytes
 
     def confidence(self) -> str:
         oom_note = ""

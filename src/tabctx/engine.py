@@ -69,6 +69,12 @@ class TabctxEngine:
             est_bytes = self._backend.context_bytes_hint(n_train, n_features)
             if est_bytes is None:
                 est_bytes = self._estimator.estimate_bytes(n_train, 0, n_features)
+            else:
+                # A real measurement, not a guess -- feed it back so the
+                # PRE-FIT admission gate can use it (safely, as a bound for
+                # smaller/equal future shapes) for requests that haven't
+                # happened yet. See memory/adaptive.py.
+                self._estimator.record_observation(n_train, n_features, est_bytes)
             context = CachedContext(
                 dataset_id=resolved_id,
                 backend_name=self._backend.name,
