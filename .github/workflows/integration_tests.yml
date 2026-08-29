@@ -1,0 +1,52 @@
+name: integration tests
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/integration_tests.yml
+      - '**.py'
+      - uv.lock
+      - pyproject.toml
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/integration_tests.yml
+      - '**.py'
+      - uv.lock
+      - pyproject.toml
+
+jobs:
+  # Boots a real local 2-replica Ray Serve cluster (fake backend, no GPU)
+  # and proves the serving contracts end to end: session affinity, tenant
+  # scoping, upload/fit-by-reference, the client SDK. Heavier than unit
+  # tests (installs ray[serve]) -- kept as its own job on purpose.
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the project (serve extra)
+        run: |
+          uv venv && uv pip install -e ".[serve,dev]"
+
+      - name: Run integration tests
+        run: uv run pytest tests/integration -q

@@ -55,7 +55,9 @@ def test_picks_tightest_dominating_observation_not_just_any():
 
 def test_predict_time_queries_never_use_observations():
     est = make_adaptive()
-    est.record_observation(n_train=17_000, n_features=50, real_bytes=1)  # absurdly low on purpose
+    est.record_observation(
+        n_train=17_000, n_features=50, real_bytes=1
+    )  # absurdly low on purpose
     fallback = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
     # n_test > 0 must always defer to the fallback, even with a dominating
     # observation on record -- predict-time active memory is a different
@@ -68,9 +70,13 @@ def test_admit_uses_adaptive_estimate():
     est = make_adaptive(safety_margin=1.0)
     huge_train, huge_features = 900_000, 50
     fallback = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-    assert fallback.admit(huge_train, 0, huge_features) is False  # rejected by the static formula
+    assert (
+        fallback.admit(huge_train, 0, huge_features) is False
+    )  # rejected by the static formula
     # Record a real observation dominating that shape, comfortably under the ceiling.
-    est.record_observation(n_train=huge_train, n_features=huge_features, real_bytes=200_000_000)
+    est.record_observation(
+        n_train=huge_train, n_features=huge_features, real_bytes=200_000_000
+    )
     assert est.admit(huge_train, 0, huge_features) is True
 
 

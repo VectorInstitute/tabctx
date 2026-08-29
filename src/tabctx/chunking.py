@@ -37,7 +37,10 @@ def choose_chunk_rows(
     """
     candidate = _FALLBACK_CHUNK_ROWS
     while candidate > min_chunk_rows:
-        if estimator.estimate_bytes(n_train, candidate, n_features) <= remaining_budget_bytes:
+        if (
+            estimator.estimate_bytes(n_train, candidate, n_features)
+            <= remaining_budget_bytes
+        ):
             return candidate
         candidate //= 2
     return min_chunk_rows

@@ -36,9 +36,9 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Iterable, Iterator
 
 from tabctx.errors import UploadNotFoundError, UploadTooLargeError
 
@@ -77,7 +77,7 @@ class UploadStore:
     def max_upload_bytes(self) -> int:
         return self._max_upload_bytes
 
-    def begin(self) -> "_UploadWriter":
+    def begin(self) -> _UploadWriter:
         """Start a streamed upload. The caller feeds chunks with
         .write() (sync or from an async loop -- writes are plain file
         appends) and finishes with .commit(tenant_id) or .abort().
@@ -87,7 +87,9 @@ class UploadStore:
         upload_id = uuid.uuid4().hex
         return _UploadWriter(self, upload_id, self._dir / upload_id)
 
-    def put(self, chunks: Iterable[bytes], tenant_id: str | None = None) -> UploadRecord:
+    def put(
+        self, chunks: Iterable[bytes], tenant_id: str | None = None
+    ) -> UploadRecord:
         """Convenience over begin(): stream an iterable of chunks."""
         writer = self.begin()
         try:
@@ -165,7 +167,7 @@ class _UploadWriter:
         self._store = store
         self.upload_id = upload_id
         self._path = path
-        self._file = open(path, "wb")
+        self._file = open(path, "wb")  # noqa: SIM115 -- lifecycle is commit()/abort(), not a with-block
         self._n_bytes = 0
         self._open = True
 

@@ -80,7 +80,7 @@ class TestCoalescing:
         with ThreadPoolExecutor(max_workers=len(sizes)) as pool:
             outcomes = list(pool.map(call, sizes))
 
-        for n, outcome in zip(sizes, outcomes):
+        for n, outcome in zip(sizes, outcomes, strict=False):
             assert len(outcome.predictions) == n
             assert outcome.probabilities is not None
             assert len(outcome.probabilities) == n

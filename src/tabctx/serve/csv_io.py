@@ -32,7 +32,7 @@ from tabctx.types import Task
 
 
 def _read_header(path: Path) -> list[str]:
-    with open(path, "r", encoding="utf-8-sig") as f:
+    with open(path, encoding="utf-8-sig") as f:
         first = f.readline().strip()
     if not first:
         raise InvalidInputError("CSV is empty (expected a header row)")
@@ -96,13 +96,14 @@ def parse_train_csv(
 
     if len(y) != X.shape[0]:
         raise InvalidInputError(
-            f"target column has {len(y)} values but features have "
-            f"{X.shape[0]} rows"
+            f"target column has {len(y)} values but features have {X.shape[0]} rows"
         )
     return X, y, feature_names
 
 
-def parse_features_csv(path: Path, expected_features: list[str] | None = None) -> np.ndarray:
+def parse_features_csv(
+    path: Path, expected_features: list[str] | None = None
+) -> np.ndarray:
     """Returns a float32 2D array of all columns. When expected_features
     is given (from the training upload), the header must match it -- a
     silently reordered or missing column would produce garbage

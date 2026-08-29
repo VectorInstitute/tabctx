@@ -46,7 +46,10 @@ _FIT_MODES = {
 
 
 class TabPFNBackend:
-    name = "tabpfn"
+    # The exact model id callers select via the API's `model` field --
+    # named for the checkpoint the OSS package loads locally
+    # (tabpfn-v3-*-v3_default.ckpt, i.e. PriorLabs' "TabPFN-3").
+    name = "tabpfn-3"
 
     def __init__(self, device: str | None = None, cache_mode: str = "kv") -> None:
         import torch

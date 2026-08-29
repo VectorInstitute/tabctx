@@ -1,8 +1,6 @@
 """Unit tests for the disk spillover tier (cache/spill.py + its
 ContextCacheManager integration)."""
 
-import pytest
-
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.cache.spill import DiskSpillStore

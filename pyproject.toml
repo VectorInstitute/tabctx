@@ -43,6 +43,34 @@ tabpfn = ["tabpfn", "torch"]
 serve = ["ray[serve]>=2.58.0", "fastapi", "uvicorn[standard]", "jinja2"]
 dev = ["pytest>=7.0", "httpx"]
 
+[dependency-groups]
+# uv-managed dev environment (CI uses `uv sync --dev`); the [dev] extra
+# below stays for plain-pip users.
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "httpx",
+    "pre-commit",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",    # long lines: docstrings/comments carry measured numbers and URLs
+    "SIM105",  # contextlib.suppress reads worse than try/except here
+    "B008",    # FastAPI Depends-style call defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Probes/benchmarks favor top-of-file constants and prints over structure.
+"benchmarks/*" = ["E402"]
+"tests/*" = ["E402"]  # importorskip before imports is the pytest idiom
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/tabctx"]
 

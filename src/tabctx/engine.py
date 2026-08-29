@@ -82,15 +82,67 @@ def _validate_predict_input(X_test: ArrayLike, n_features: int) -> None:
 
 
 class TabctxEngine:
+    """Orchestrates one or more backends over a single shared context
+    cache and GPU budget. Multi-backend serving (e.g. TabICL and TabPFN
+    behind one endpoint) works because every cached context remembers
+    which backend fit it (CachedContext.backend_name): fit() picks a
+    backend, predict() dispatches to whichever one owns the context.
+    Memory estimates are per-backend (models peak differently for the
+    same shape) while admission headroom is global (they share the
+    device)."""
+
     def __init__(
         self,
-        backend: TabularICLBackend,
-        cache: ContextCacheManager,
-        estimator: MemoryEstimator,
+        backend: TabularICLBackend | None = None,
+        cache: ContextCacheManager | None = None,
+        estimator: MemoryEstimator | None = None,
+        backends: dict[str, TabularICLBackend] | None = None,
+        estimators: dict[str, MemoryEstimator] | None = None,
+        default_backend: str | None = None,
     ) -> None:
-        self._backend = backend
+        """Single-backend form: TabctxEngine(backend=, cache=, estimator=).
+        Multi-backend form: TabctxEngine(backends={name: b}, cache=,
+        estimators={name: e}, default_backend=name)."""
+        if cache is None:
+            raise ValueError("cache is required")
+        if backends is None:
+            if backend is None or estimator is None:
+                raise ValueError("provide backend+estimator, or backends+estimators")
+            backends = {backend.name: backend}
+            estimators = {backend.name: estimator}
+            default_backend = backend.name
+        if estimators is None or default_backend not in backends:
+            raise ValueError(
+                "multi-backend form needs estimators and a default_backend "
+                "that is one of backends"
+            )
+        if set(estimators) != set(backends):
+            raise ValueError("backends and estimators must share keys")
+        self._backends = backends
+        self._estimators = estimators
+        self._default_backend = default_backend
         self._cache = cache
-        self._estimator = estimator
+
+    @property
+    def backend_names(self) -> list[str]:
+        return list(self._backends)
+
+    @property
+    def default_backend(self) -> str:
+        return self._default_backend
+
+    def estimator_for(self, backend: str | None = None) -> MemoryEstimator:
+        return self._estimators[backend or self._default_backend]
+
+    def _resolve_backend(self, backend: str | None) -> tuple[str, TabularICLBackend]:
+        name = backend or self._default_backend
+        b = self._backends.get(name)
+        if b is None:
+            raise InvalidInputError(
+                f"unknown backend {name!r}; this deployment serves "
+                f"{sorted(self._backends)}"
+            )
+        return name, b
 
     def fit(
         self,
@@ -98,6 +150,7 @@ class TabctxEngine:
         y: ArrayLike,
         task: Task = "classification",
         dataset_id: str | None = None,
+        backend: str | None = None,
     ) -> str:
         """Encode and cache a training context. Returns a dataset_id to pass
         to predict() -- generated automatically unless the caller supplies
@@ -124,6 +177,8 @@ class TabctxEngine:
         """
         n_train = len(X)
         n_features = _validate_fit_input(X, y)
+        backend_name, chosen = self._resolve_backend(backend)
+        estimator = self._estimators[backend_name]
 
         # Usage-aware admission (v0.9.0): what OOMs is the fit's transient
         # PEAK on top of everything already resident, so the estimated
@@ -135,10 +190,8 @@ class TabctxEngine:
         # nearly-full cache can reject a fit that evicting cold contexts
         # would have made room for -- evict-ahead-of-fit is a possible
         # future refinement.
-        estimated = self._estimator.estimate_bytes(n_train, 0, n_features)
-        headroom = self._estimator.admission_headroom_bytes(
-            self._cache.stats().used_bytes
-        )
+        estimated = estimator.estimate_bytes(n_train, 0, n_features)
+        headroom = estimator.admission_headroom_bytes(self._cache.stats().used_bytes)
         if estimated > headroom:
             raise AdmissionRejected(
                 f"training shape ({n_train} rows x {n_features} features) "
@@ -149,10 +202,10 @@ class TabctxEngine:
 
         resolved_id = dataset_id or str(uuid.uuid4())
         with self._cache.lock:
-            payload = self._backend.fit(X, y, task)
-            est_bytes = self._backend.context_bytes_hint(n_train, n_features)
+            payload = chosen.fit(X, y, task)
+            est_bytes = chosen.context_bytes_hint(n_train, n_features)
             if est_bytes is None:
-                est_bytes = self._estimator.estimate_bytes(n_train, 0, n_features)
+                est_bytes = estimator.estimate_bytes(n_train, 0, n_features)
             else:
                 # Feed a real measurement back so the PRE-FIT admission
                 # gate can use it (safely, as a bound for smaller/equal
@@ -161,14 +214,14 @@ class TabctxEngine:
                 # OOMs), so prefer the peak hint when the backend reports
                 # one; the resident size is only a (low) fallback for
                 # backends without peak measurement.
-                peak_hint = getattr(self._backend, "fit_peak_bytes_hint", None)
+                peak_hint = getattr(chosen, "fit_peak_bytes_hint", None)
                 peak_bytes = peak_hint() if callable(peak_hint) else None
-                self._estimator.record_observation(
+                estimator.record_observation(
                     n_train, n_features, peak_bytes if peak_bytes else est_bytes
                 )
             context = CachedContext(
                 dataset_id=resolved_id,
-                backend_name=self._backend.name,
+                backend_name=backend_name,
                 task=task,
                 n_train=n_train,
                 n_features=n_features,
@@ -195,13 +248,24 @@ class TabctxEngine:
                 "(the cache has no durability across process restarts)"
             )
         _validate_predict_input(X_test, context.n_features)
+        # Dispatch to whichever backend fit this context (multi-backend
+        # deployments serve several models over one cache).
+        backend = self._backends.get(context.backend_name)
+        if backend is None:
+            raise DatasetNotFoundError(
+                f"context for {dataset_id!r} was fit by backend "
+                f"{context.backend_name!r}, which this deployment no longer "
+                "serves -- re-fit with one of "
+                f"{sorted(self._backends)}"
+            )
+        estimator = self._estimators[context.backend_name]
 
         n_test = len(X_test)
         chunk_rows = choose_chunk_rows(
-            self._estimator,
+            estimator,
             context.n_train,
             context.n_features,
-            self._estimator.ceiling_bytes(),
+            estimator.ceiling_bytes(),
         )
         chunks = split_rows(X_test, chunk_rows) if chunk_rows < n_test else [X_test]
 
@@ -211,7 +275,7 @@ class TabctxEngine:
         with self._cache.lock:
             self._cache.touch(dataset_id)
             for chunk in chunks:
-                outcome = self._backend.predict(
+                outcome = backend.predict(
                     context.payload, chunk, return_proba=return_proba
                 )
                 all_predictions.extend(outcome.predictions)

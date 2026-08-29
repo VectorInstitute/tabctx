@@ -47,14 +47,19 @@ class DiskSpillStore:
         self,
         directory: str | Path,
         capacity_bytes: int = DEFAULT_SPILL_CAPACITY_BYTES,
-        dumps: Callable[[object], bytes] = pickle.dumps,
-        loads: Callable[[bytes], object] = pickle.loads,
+        serializers: dict[
+            str, tuple[Callable[[object], bytes], Callable[[bytes], object]]
+        ]
+        | None = None,
     ) -> None:
+        """serializers: per-backend-name (dumps, loads) pairs; backends
+        absent from the map use pickle. Dispatch happens on the
+        context's backend_name (multi-model deployments spill each
+        model's contexts with that model's serializer)."""
         self._dir = Path(directory)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._capacity_bytes = capacity_bytes
-        self._dumps = dumps
-        self._loads = loads
+        self._serializers = serializers or {}
         self._lock = threading.Lock()
         # dataset_id -> (meta, last_used monotonic) for entries this
         # process knows about; rebuilt lazily from disk for entries a
@@ -73,21 +78,28 @@ class DiskSpillStore:
         """Serialize an evicted context to disk. Returns False (and
         leaves no partial files) on any failure -- best-effort."""
         meta_path, payload_path = self._paths(context.dataset_id)
+        dumps, _ = self._serializers.get(
+            context.backend_name, (pickle.dumps, pickle.loads)
+        )
         try:
-            blob = self._dumps(context.payload)
+            blob = dumps(context.payload)
         except Exception:  # noqa: BLE001 -- unpicklable payloads downgrade
             return False
         try:
             self._make_room(len(blob))
             payload_path.write_bytes(blob)
-            meta_path.write_text(json.dumps({
-                "dataset_id": context.dataset_id,
-                "backend_name": context.backend_name,
-                "task": context.task,
-                "n_train": context.n_train,
-                "n_features": context.n_features,
-                "est_bytes": context.est_bytes,
-            }))
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "dataset_id": context.dataset_id,
+                        "backend_name": context.backend_name,
+                        "task": context.task,
+                        "n_train": context.n_train,
+                        "n_features": context.n_features,
+                        "est_bytes": context.est_bytes,
+                    }
+                )
+            )
         except OSError:
             payload_path.unlink(missing_ok=True)
             meta_path.unlink(missing_ok=True)
@@ -103,7 +115,10 @@ class DiskSpillStore:
         meta_path, payload_path = self._paths(dataset_id)
         try:
             meta = json.loads(meta_path.read_text())
-            payload = self._loads(payload_path.read_bytes())
+            _, loads = self._serializers.get(
+                meta["backend_name"], (pickle.dumps, pickle.loads)
+            )
+            payload = loads(payload_path.read_bytes())
         except Exception:  # noqa: BLE001 -- absent or corrupt == miss
             return None
         finally:
@@ -138,9 +153,7 @@ class DiskSpillStore:
 
     @property
     def used_bytes(self) -> int:
-        return sum(
-            p.stat().st_size for p in self._dir.glob("*.payload") if p.exists()
-        )
+        return sum(p.stat().st_size for p in self._dir.glob("*.payload") if p.exists())
 
     def stats(self) -> dict:
         with self._lock:

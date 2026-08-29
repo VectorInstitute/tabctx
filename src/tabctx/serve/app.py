@@ -47,12 +47,12 @@ from tabctx.batching import CoalescingPredictor
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
-from tabctx.serve.uploads import UploadStore
 from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
     scope_dataset_id,
 )
+from tabctx.serve.uploads import UploadStore
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -107,6 +107,10 @@ class FitRequest(BaseModel):
     target_column: str | None = None  # default: the CSV's last column
     task: Literal["classification", "regression"] = "classification"
     dataset_id: str | None = None
+    # Which model serves this dataset (chat-completions style): an exact
+    # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3"). Default:
+    # the deployment's first-listed model.
+    model: str | None = None
 
 
 class UploadResponse(BaseModel):
@@ -117,6 +121,7 @@ class UploadResponse(BaseModel):
 
 class FitResponse(BaseModel):
     dataset_id: str
+    model: str
     n_train: int
     n_features: int
     # Which replica served this -- lets clients and probes verify that
@@ -207,7 +212,7 @@ class TabctxService:
         built = build_engine(settings)
         self._engine = built.engine
         self._estimator = built.estimator
-        self._backend_name = built.backend.name
+        self._backend_name = built.backend.name  # default model id
         self._device = built.device
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
@@ -233,12 +238,12 @@ class TabctxService:
         # operators and probes correlate a burst of 404s with a restart
         # instead of chasing a phantom eviction/routing bug.
         self._started_at = time.time()
-        if "cuda" not in self._device and settings.backend == "tabicl":
+        if "cuda" not in self._device and "fake" not in settings.backends:
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
             "TabctxService initialized (backend=%s, device=%s, "
             "gpu_memory_fraction=%s, replica=%s). %s",
-            settings.backend,
+            ",".join(settings.backends),
             self._device,
             settings.gpu_memory_fraction,
             _replica_tag(),
@@ -270,7 +275,12 @@ class TabctxService:
                 task=req.task,
                 return_proba=req.return_proba,
             )
-        except (*_INVALID_INPUT_ERRORS, *_ADMISSION_ERRORS, *_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
+        except (
+            *_INVALID_INPUT_ERRORS,
+            *_ADMISSION_ERRORS,
+            *_NOT_FOUND_ERRORS,
+            *_COMPUTE_ERRORS,
+        ) as e:
             logger.error("[%s] %s: %s", request_id, type(e).__name__, e)
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
@@ -283,7 +293,12 @@ class TabctxService:
             )
         logger.info(
             "[%s] legacy predict train=%d test=%d feats=%d latency_ms=%.1f gpu=%s",
-            request_id, n_train, n_test, n_features, latency_ms, gpu_memory,
+            request_id,
+            n_train,
+            n_test,
+            n_features,
+            latency_ms,
+            gpu_memory,
         )
         return LegacyPredictResponse(
             request_id=request_id,
@@ -329,7 +344,9 @@ class TabctxService:
     @fastapi_app.post("/v1/tabctx/fit", response_model=FitResponse)
     async def tabctx_fit(self, req: FitRequest, request: Request) -> FitResponse:
         session_id = session_id_from_headers(request.headers)
-        return await run_in_threadpool(self._fit_sync, req, dict(request.headers), session_id)
+        return await run_in_threadpool(
+            self._fit_sync, req, dict(request.headers), session_id
+        )
 
     def _resolve_train_table(
         self, req: FitRequest, tenant_id: str | None
@@ -344,9 +361,7 @@ class TabctxService:
         if req.train_upload_id is not None:
             path = self._uploads.consume(req.train_upload_id, tenant_id)
             try:
-                X, y, feature_names = parse_train_csv(
-                    path, req.task, req.target_column
-                )
+                X, y, feature_names = parse_train_csv(path, req.task, req.target_column)
             finally:
                 self._uploads.discard(path)
             return X, y, feature_names
@@ -373,7 +388,10 @@ class TabctxService:
                 uuid.uuid4()
             )
             scoped_id = scope_dataset_id(tenant_id, dataset_id)
-            self._engine.fit(X, y, task=req.task, dataset_id=scoped_id)
+            model_id = req.model or self._engine.default_backend
+            self._engine.fit(
+                X, y, task=req.task, dataset_id=scoped_id, backend=model_id
+            )
             if feature_names is not None:
                 self._feature_names[scoped_id] = feature_names
             else:
@@ -388,6 +406,7 @@ class TabctxService:
             raise _map_error(e) from e
         return FitResponse(
             dataset_id=dataset_id,
+            model=model_id,
             n_train=n_train,
             n_features=n_features,
             served_by=_replica_tag(),
@@ -468,6 +487,22 @@ class TabctxService:
     def healthz(self):
         return {"status": "ok"}
 
+    @fastapi_app.get("/v1/models")
+    def models(self):
+        """Which models this deployment serves (chat-completions style
+        discovery): pass one of these ids as `model` in fit requests.
+        The first is the default."""
+        return {
+            "data": [
+                {
+                    "id": name,
+                    "object": "model",
+                    "default": name == self._engine.default_backend,
+                }
+                for name in self._engine.backend_names
+            ]
+        }
+
     @fastapi_app.get("/v1/tabctx/limits")
     def limits(self):
         """Capability discovery (inspired by PriorLabs' get_model_limits):
@@ -489,7 +524,8 @@ class TabctxService:
                     hi = mid - 1
             max_rows_by_features[str(n_features)] = lo
         return {
-            "backend": self._backend_name,
+            "models": self._engine.backend_names,
+            "default_model": self._engine.default_backend,
             "cache_mode": self._settings.kv_cache,
             "memory_ceiling_bytes": self._estimator.ceiling_bytes(),
             "admission_headroom_bytes": headroom,

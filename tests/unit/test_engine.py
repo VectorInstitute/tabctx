@@ -47,7 +47,9 @@ def test_predict_unknown_dataset_id_raises():
     [
         pytest.param([], [], id="empty_train_X"),
         pytest.param([[1.0, 2.0]], ["a", "b"], id="mismatched_lengths_y_longer"),
-        pytest.param([[1.0, 2.0], [3.0, 4.0]], ["a"], id="mismatched_lengths_y_shorter"),
+        pytest.param(
+            [[1.0, 2.0], [3.0, 4.0]], ["a"], id="mismatched_lengths_y_shorter"
+        ),
         pytest.param([[1.0, 2.0], [3.0]], ["a", "b"], id="ragged_rows"),
         pytest.param([[], []], ["a", "b"], id="zero_features"),
     ],
@@ -56,7 +58,9 @@ def test_fit_rejects_malformed_input(train_X, train_y):
     engine, backend = make_engine()
     with pytest.raises(InvalidInputError):
         engine.fit(train_X, train_y)
-    assert backend.fit_calls == 0, "malformed input must be rejected before reaching the backend"
+    assert backend.fit_calls == 0, (
+        "malformed input must be rejected before reaching the backend"
+    )
 
 
 def test_predict_rejects_empty_test_X():
@@ -142,7 +146,9 @@ def test_fit_rejects_oversized_training_shape_before_calling_backend():
     huge_y = ["a"] * 90_000
     with pytest.raises(AdmissionRejected):
         engine.fit(huge_X, huge_y)
-    assert backend.fit_calls == 0, "admission control must reject before touching the backend"
+    assert backend.fit_calls == 0, (
+        "admission control must reject before touching the backend"
+    )
 
 
 def test_predict_chunks_large_test_sets_transparently():

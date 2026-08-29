@@ -39,7 +39,9 @@ class FakeBackend:
         fit_delay_s: float = 0.0,
         predict_delay_s: float = 0.0,
         peak_bytes_hint: int | None = None,
+        name: str = "fake",
     ) -> None:
+        self.name = name  # instance override (tests deploy several fakes)
         self._bytes_hint = bytes_hint
         self._peak_bytes_hint = peak_bytes_hint
         self._fit_delay_s = fit_delay_s

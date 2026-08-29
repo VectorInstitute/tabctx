@@ -39,7 +39,7 @@ import os
 import statistics
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 from sklearn.datasets import make_classification
@@ -188,38 +188,55 @@ def main():
 
     token = os.environ.get("TABPFN_TOKEN")
     if not token:
-        print("export TABPFN_TOKEN first (https://ux.priorlabs.ai/account)", file=sys.stderr)
+        print(
+            "export TABPFN_TOKEN first (https://ux.priorlabs.ai/account)",
+            file=sys.stderr,
+        )
         return 1
 
     results = []
     for seed, (n_train, n_features) in enumerate(SHAPES):
         X_train, y_train, X_test = make_data(n_train, n_features, seed)
-        print(f"\n=== shape: {n_train} rows x {n_features} features, "
-              f"{N_TEST} test rows, {N_WARM_PREDICTS} warm predicts ===")
+        print(
+            f"\n=== shape: {n_train} rows x {n_features} features, "
+            f"{N_TEST} test rows, {N_WARM_PREDICTS} warm predicts ==="
+        )
 
         local_fit_s, local_lat = bench_local(X_train, y_train, X_test)
-        print(f"  tabctx local  cold_fit={local_fit_s:6.2f}s  "
-              f"warm p50={_pct(local_lat, .5):6.3f}s  p95={_pct(local_lat, .95):6.3f}s")
+        print(
+            f"  tabctx local  cold_fit={local_fit_s:6.2f}s  "
+            f"warm p50={_pct(local_lat, 0.5):6.3f}s  p95={_pct(local_lat, 0.95):6.3f}s"
+        )
 
         api_fit_s, api_lat = bench_api(token, X_train, y_train, X_test, n_features)
-        print(f"  hosted API    cold_fit={api_fit_s:6.2f}s  "
-              f"warm p50={_pct(api_lat, .5):6.3f}s  p95={_pct(api_lat, .95):6.3f}s")
+        print(
+            f"  hosted API    cold_fit={api_fit_s:6.2f}s  "
+            f"warm p50={_pct(api_lat, 0.5):6.3f}s  p95={_pct(api_lat, 0.95):6.3f}s"
+        )
 
         ratio = _pct(api_lat, 0.5) / max(_pct(local_lat, 0.5), 1e-9)
         print(f"  warm-predict p50 ratio (API/local): {ratio:.1f}x")
 
-        results.append({
-            "n_train": n_train, "n_features": n_features,
-            "n_test": N_TEST, "n_warm_predicts": N_WARM_PREDICTS,
-            "tabctx_local": {"cold_fit_s": round(local_fit_s, 3),
-                             "warm_predict": _summarize(local_lat)},
-            "hosted_api": {"cold_fit_s": round(api_fit_s, 3),
-                           "warm_predict": _summarize(api_lat)},
-        })
+        results.append(
+            {
+                "n_train": n_train,
+                "n_features": n_features,
+                "n_test": N_TEST,
+                "n_warm_predicts": N_WARM_PREDICTS,
+                "tabctx_local": {
+                    "cold_fit_s": round(local_fit_s, 3),
+                    "warm_predict": _summarize(local_lat),
+                },
+                "hosted_api": {
+                    "cold_fit_s": round(api_fit_s, 3),
+                    "warm_predict": _summarize(api_lat),
+                },
+            }
+        )
 
     if args.save_baseline:
         payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "note": (
                 "Serving-architecture comparison, not model-speed: local side "
                 "ran on this machine's hardware (see 'local_hardware'), the "

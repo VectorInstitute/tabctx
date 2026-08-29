@@ -145,4 +145,4 @@ def unscope_dataset_id(tenant_id: str | None, scoped_id: str) -> str:
         raise ValueError(
             f"scoped id {scoped_id!r} does not belong to tenant {tenant_id!r}"
         )
-    return scoped_id[len(prefix):]
+    return scoped_id[len(prefix) :]

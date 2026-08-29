@@ -137,7 +137,9 @@ class CoalescingPredictor:
         try:
             with self._lock:
                 self.engine_calls += 1
-            outcome = self._engine.predict(dataset_id, merged, return_proba=return_proba)
+            outcome = self._engine.predict(
+                dataset_id, merged, return_proba=return_proba
+            )
         except InvalidInputError:
             # One member's malformed rows (e.g. wrong feature count) can
             # fail the whole merged call -- retry individually so only

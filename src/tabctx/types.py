@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Sequence, Union
+from typing import Any, Literal
 
 Task = Literal["classification", "regression"]
 
 # Accept anything array-like (list-of-lists, numpy array, etc.) at the API
 # boundary; backends are responsible for coercing to whatever they need.
-ArrayLike = Union[Sequence[Sequence[float]], Sequence[float], Any]
+ArrayLike = Sequence[Sequence[float]] | Sequence[float] | Any
 
 
 @dataclass(frozen=True)

@@ -31,7 +31,7 @@ import argparse
 import json
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 
@@ -74,8 +74,10 @@ def calibrate(grid, out_path: str, kv_cache: str = "kv") -> int:
     backend.fit(Xw, yw, "classification")
     gpu(torch.cuda.empty_cache)
     backbone_bytes = gpu(torch.cuda.memory_allocated)
-    print(f"[info] backbone resident: {backbone_bytes/1e6:.0f}MB "
-          f"(measured once, excluded from per-shape numbers)")
+    print(
+        f"[info] backbone resident: {backbone_bytes / 1e6:.0f}MB "
+        f"(measured once, excluded from per-shape numbers)"
+    )
 
     for n_features, n_train_grid in grid:
         for n_train in n_train_grid:
@@ -90,15 +92,19 @@ def calibrate(grid, out_path: str, kv_cache: str = "kv") -> int:
                 payload = backend.fit(X, y, "classification")
             except Exception as e:  # noqa: BLE001 -- OOM is a *result* here
                 is_oom = "out of memory" in str(e).lower() or "OOM" in str(e)
-                rec.update({
-                    "outcome": "oom" if is_oom else "error",
-                    "error": f"{type(e).__name__}: {str(e)[:200]}",
-                    "peak_fit_bytes": gpu(torch.cuda.max_memory_allocated) - before,
-                    "peak_fit_reserved_bytes": gpu(torch.cuda.max_memory_reserved),
-                })
+                rec.update(
+                    {
+                        "outcome": "oom" if is_oom else "error",
+                        "error": f"{type(e).__name__}: {str(e)[:200]}",
+                        "peak_fit_bytes": gpu(torch.cuda.max_memory_allocated) - before,
+                        "peak_fit_reserved_bytes": gpu(torch.cuda.max_memory_reserved),
+                    }
+                )
                 records.append(rec)
-                print(f"[{'oom' if is_oom else 'ERR'}] {n_train}x{n_features}: "
-                      f"{rec['error'][:100]}")
+                print(
+                    f"[{'oom' if is_oom else 'ERR'}] {n_train}x{n_features}: "
+                    f"{rec['error'][:100]}"
+                )
                 gpu(torch.cuda.empty_cache)
                 if is_oom:
                     break  # larger n_train at this width will OOM too
@@ -115,21 +121,25 @@ def calibrate(grid, out_path: str, kv_cache: str = "kv") -> int:
             predict_s = time.monotonic() - start
             predict_peak = gpu(torch.cuda.max_memory_allocated)
 
-            rec.update({
-                "outcome": "ok",
-                "fit_s": round(fit_s, 2),
-                "peak_fit_bytes": peak - before,
-                "peak_fit_reserved_bytes": peak_reserved,
-                "resident_context_bytes": resident - before,
-                "n_test": N_TEST_ROWS,
-                "predict_s": round(predict_s, 2),
-                "peak_predict_bytes": predict_peak - resident,
-            })
+            rec.update(
+                {
+                    "outcome": "ok",
+                    "fit_s": round(fit_s, 2),
+                    "peak_fit_bytes": peak - before,
+                    "peak_fit_reserved_bytes": peak_reserved,
+                    "resident_context_bytes": resident - before,
+                    "n_test": N_TEST_ROWS,
+                    "predict_s": round(predict_s, 2),
+                    "peak_predict_bytes": predict_peak - resident,
+                }
+            )
             records.append(rec)
-            print(f"[ok]  {n_train}x{n_features}: fit={fit_s:6.1f}s "
-                  f"peak={rec['peak_fit_bytes']/1e9:6.2f}GB "
-                  f"resident={rec['resident_context_bytes']/1e9:6.3f}GB "
-                  f"predict_peak={rec['peak_predict_bytes']/1e9:6.3f}GB")
+            print(
+                f"[ok]  {n_train}x{n_features}: fit={fit_s:6.1f}s "
+                f"peak={rec['peak_fit_bytes'] / 1e9:6.2f}GB "
+                f"resident={rec['resident_context_bytes'] / 1e9:6.3f}GB "
+                f"predict_peak={rec['peak_predict_bytes'] / 1e9:6.3f}GB"
+            )
 
             del payload
             gpu(torch.cuda.empty_cache)
@@ -147,7 +157,7 @@ def _write(out_path, records, backbone_bytes, cuda, kv_cache="kv"):
     import torch
 
     env = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "device": torch.cuda.get_device_name(0) if cuda else "cpu",
         "total_gpu_bytes": (
             torch.cuda.get_device_properties(0).total_memory if cuda else 0
@@ -168,10 +178,17 @@ def _write(out_path, records, backbone_bytes, cuda, kv_cache="kv"):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--out", default="calibration.json")
-    p.add_argument("--quick", action="store_true",
-                   help="tiny smoke grid (CPU ok; memory numbers meaningless)")
-    p.add_argument("--kv-cache", default="kv", choices=["kv", "repr", "off"],
-                   help="TabICL context-cache mode to calibrate (see backends/tabicl.py)")
+    p.add_argument(
+        "--quick",
+        action="store_true",
+        help="tiny smoke grid (CPU ok; memory numbers meaningless)",
+    )
+    p.add_argument(
+        "--kv-cache",
+        default="kv",
+        choices=["kv", "repr", "off"],
+        help="TabICL context-cache mode to calibrate (see backends/tabicl.py)",
+    )
     args = p.parse_args()
     return calibrate(
         QUICK_GRID if args.quick else DEFAULT_GRID, args.out, kv_cache=args.kv_cache

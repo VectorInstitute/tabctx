@@ -99,7 +99,9 @@ class TestUsageAwareHeadroom:
         estimator = AdaptiveMemoryEstimator(fallback=_fallback())
         full = estimator.admission_headroom_bytes(0)
         assert full == int(_fallback().gpu_capacity_bytes * 0.9)
-        assert estimator.admission_headroom_bytes(10_000_000_000) == full - 10_000_000_000
+        assert (
+            estimator.admission_headroom_bytes(10_000_000_000) == full - 10_000_000_000
+        )
         assert estimator.admission_headroom_bytes(full + 1) == 0
 
     def test_static_estimator_headroom_ignores_usage(self):

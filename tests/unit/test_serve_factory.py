@@ -17,16 +17,16 @@ class TestServeSettings:
         monkeypatch.delenv(BACKEND_ENV_VAR, raising=False)
         monkeypatch.delenv(GPU_MEMORY_FRACTION_ENV_VAR, raising=False)
         settings = ServeSettings.from_env()
-        assert settings.backend == "tabicl"
+        assert settings.backends == ("tabicl",)
         assert settings.gpu_memory_fraction == 1.0
 
     def test_fake_backend(self, monkeypatch):
         monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
-        assert ServeSettings.from_env().backend == "fake"
+        assert ServeSettings.from_env().backends == ("fake",)
 
     def test_backend_whitespace_and_case_tolerated(self, monkeypatch):
         monkeypatch.setenv(BACKEND_ENV_VAR, "  Fake ")
-        assert ServeSettings.from_env().backend == "fake"
+        assert ServeSettings.from_env().backends == ("fake",)
 
     def test_unknown_backend_rejected(self, monkeypatch):
         monkeypatch.setenv(BACKEND_ENV_VAR, "xgboost")
@@ -35,7 +35,7 @@ class TestServeSettings:
 
     def test_tabpfn_is_a_known_backend(self, monkeypatch):
         monkeypatch.setenv(BACKEND_ENV_VAR, "tabpfn")
-        assert ServeSettings.from_env().backend == "tabpfn"
+        assert ServeSettings.from_env().backends == ("tabpfn",)
 
     @pytest.mark.parametrize("bad", ["0", "-0.5", "1.5", "abc"])
     def test_bad_fraction_rejected(self, monkeypatch, bad):
@@ -50,19 +50,21 @@ class TestServeSettings:
 
 class TestBuildEstimator:
     def test_fraction_scales_ceiling(self):
-        full = build_estimator(ServeSettings(backend="fake"))
+        full = build_estimator(ServeSettings(backends=("fake",)))
         half = build_estimator(
-            ServeSettings(backend="fake", gpu_memory_fraction=0.5)
+            ServeSettings(backends=("fake",), gpu_memory_fraction=0.5)
         )
-        assert half.ceiling_bytes() == pytest.approx(full.ceiling_bytes() * 0.5, rel=0.01)
+        assert half.ceiling_bytes() == pytest.approx(
+            full.ceiling_bytes() * 0.5, rel=0.01
+        )
         assert half.ceiling_bytes() < full.ceiling_bytes()
 
     def test_fraction_tightens_admission(self):
         # A shape that squeaks past the full-budget gate must be rejected
         # under a small fraction of that budget.
-        full = build_estimator(ServeSettings(backend="fake"))
+        full = build_estimator(ServeSettings(backends=("fake",)))
         tiny = build_estimator(
-            ServeSettings(backend="fake", gpu_memory_fraction=0.01)
+            ServeSettings(backends=("fake",), gpu_memory_fraction=0.01)
         )
         n_train, n_features = 5_000, 50
         assert full.admit(n_train, 0, n_features)
@@ -71,7 +73,7 @@ class TestBuildEstimator:
 
 class TestBuildEngine:
     def test_fake_backend_end_to_end(self):
-        built = build_engine(ServeSettings(backend="fake"))
+        built = build_engine(ServeSettings(backends=("fake",)))
         assert isinstance(built.backend, FakeBackend)
         assert "fake" in built.device
 
@@ -80,7 +82,5 @@ class TestBuildEngine:
         assert len(outcome.predictions) == 1
 
     def test_cache_capacity_matches_estimator_ceiling(self):
-        built = build_engine(
-            ServeSettings(backend="fake", gpu_memory_fraction=0.5)
-        )
+        built = build_engine(ServeSettings(backends=("fake",), gpu_memory_fraction=0.5))
         assert built.engine.stats().capacity_bytes == built.estimator.ceiling_bytes()

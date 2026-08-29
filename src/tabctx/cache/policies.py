@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 
 class EvictionPolicy(Protocol):
-    def select_victim(self, entries: list["CachedContext"]) -> str | None:
+    def select_victim(self, entries: list[CachedContext]) -> str | None:
         """Return the dataset_id to evict next, or None if entries is empty."""
         ...
 
@@ -22,7 +22,7 @@ class EvictionPolicy(Protocol):
 class LRUEvictionPolicy:
     """Evicts the least-recently-accessed context."""
 
-    def select_victim(self, entries: list["CachedContext"]) -> str | None:
+    def select_victim(self, entries: list[CachedContext]) -> str | None:
         if not entries:
             return None
         oldest = min(entries, key=lambda c: c.last_accessed_at)

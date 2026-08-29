@@ -7,10 +7,13 @@ same construction logic.
 
 Environment variables:
 
-- ``TABCTX_BACKEND``: ``"tabicl"`` (default; requires torch + tabicl),
-  ``"tabpfn"`` (requires torch + tabpfn), or ``"fake"`` (deterministic
-  stand-in with no GPU/torch dependency -- what makes multi-replica
-  routing testable on a laptop or in CI).
+- ``TABCTX_BACKEND``: comma-separated list of models to serve behind the
+  one endpoint (requests pick one via their ``model`` field; the FIRST
+  listed is the default). Known kinds: ``"tabicl"`` (default; requires
+  torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"fake"``
+  (deterministic stand-in, no GPU/torch -- what makes serving testable
+  on a laptop or in CI). E.g. ``TABCTX_BACKEND=tabicl,tabpfn`` serves
+  both models over one shared cache and GPU budget.
 - ``TABCTX_GPU_MEMORY_FRACTION``: fraction of the calibrated GPU budget
   this engine may use, in (0, 1]; default 1.0. Set below 1.0 when
   several replicas share one physical GPU (e.g. two replicas at
@@ -67,7 +70,7 @@ KvCacheMode = Literal["kv", "repr", "off"]
 
 @dataclass(frozen=True)
 class ServeSettings:
-    backend: BackendKind = "tabicl"
+    backends: tuple[BackendKind, ...] = ("tabicl",)
     gpu_memory_fraction: float = 1.0
     kv_cache: KvCacheMode = "kv"
     batch_window_ms: float = 5.0
@@ -77,13 +80,18 @@ class ServeSettings:
     spill_capacity_bytes: int = 50 * 1024**3
 
     @classmethod
-    def from_env(cls) -> "ServeSettings":
-        backend = os.environ.get(BACKEND_ENV_VAR, "tabicl").strip().lower()
-        if backend not in ("tabicl", "tabpfn", "fake"):
+    def from_env(cls) -> ServeSettings:
+        raw_backends = os.environ.get(BACKEND_ENV_VAR, "tabicl")
+        backends = tuple(
+            b.strip().lower() for b in raw_backends.split(",") if b.strip()
+        )
+        if not backends or any(b not in ("tabicl", "tabpfn", "fake") for b in backends):
             raise ValueError(
-                f"{BACKEND_ENV_VAR}={backend!r} is not a known backend "
-                "(expected 'tabicl', 'tabpfn', or 'fake')"
+                f"{BACKEND_ENV_VAR}={raw_backends!r} must be a comma-separated "
+                "subset of: tabicl, tabpfn, fake"
             )
+        if len(set(backends)) != len(backends):
+            raise ValueError(f"{BACKEND_ENV_VAR} lists a backend twice")
         raw_fraction = os.environ.get(GPU_MEMORY_FRACTION_ENV_VAR, "1.0")
         try:
             fraction = float(raw_fraction)
@@ -113,7 +121,9 @@ class ServeSettings:
                 f"{BATCH_WINDOW_MS_ENV_VAR} must be >= 0, got {batch_window_ms}"
             )
         try:
-            max_upload_bytes = int(os.environ.get(MAX_UPLOAD_BYTES_ENV_VAR, str(4 * 1024**3)))
+            max_upload_bytes = int(
+                os.environ.get(MAX_UPLOAD_BYTES_ENV_VAR, str(4 * 1024**3))
+            )
             upload_ttl_s = float(os.environ.get(UPLOAD_TTL_S_ENV_VAR, "3600"))
         except ValueError as e:
             raise ValueError(
@@ -133,7 +143,7 @@ class ServeSettings:
         if spill_capacity <= 0:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
         return cls(
-            backend=backend,
+            backends=backends,
             gpu_memory_fraction=fraction,
             kv_cache=kv_cache,
             batch_window_ms=batch_window_ms,
@@ -147,18 +157,29 @@ class ServeSettings:
 @dataclass(frozen=True)
 class BuiltEngine:
     engine: TabctxEngine
-    estimator: MemoryEstimator
-    backend: TabularICLBackend
+    # Keyed by model/backend name; `default` names the first-listed model.
+    estimators: dict[str, MemoryEstimator]
+    backends: dict[str, TabularICLBackend]
+    default: str
     device: str
 
+    # Single-model conveniences (the common deployment):
+    @property
+    def estimator(self) -> MemoryEstimator:
+        return self.estimators[self.default]
 
-def _preloaded_observations(settings: ServeSettings) -> tuple:
-    """Factory-installed calibration grid matching this deployment's
-    backend + cache mode (see memory/calibration_tabicl_a100.py), so
-    admission rests on real measurements from the first request onward.
-    Only TabICL-on-A100 grids exist so far; other configurations start
-    with no preload and learn from their own fits."""
-    if settings.backend != "tabicl":
+    @property
+    def backend(self) -> TabularICLBackend:
+        return self.backends[self.default]
+
+
+def _preloaded_observations(kind: BackendKind, kv_cache: KvCacheMode) -> tuple:
+    """Factory-installed calibration grid matching one model + cache mode
+    (see memory/calibration_tabicl_a100.py), so admission rests on real
+    measurements from the first request onward. Only TabICL-on-A100
+    grids exist so far; other configurations start with no preload and
+    learn from their own fits."""
+    if kind != "tabicl":
         return ()
     try:
         from tabctx.memory import calibration_tabicl_a100 as grids
@@ -168,13 +189,18 @@ def _preloaded_observations(settings: ServeSettings) -> tuple:
         "kv": getattr(grids, "A100_40GB_TABICL_KV_PEAK_GRID", ()),
         "repr": getattr(grids, "A100_40GB_TABICL_REPR_PEAK_GRID", ()),
         "off": getattr(grids, "A100_40GB_TABICL_OFF_PEAK_GRID", ()),
-    }[settings.kv_cache]
+    }[kv_cache]
 
 
-def build_estimator(settings: ServeSettings) -> AdaptiveMemoryEstimator:
-    """Adaptive estimator over the calibrated static fallback, with both
-    ceilings scaled by the configured GPU-memory fraction and the
-    matching measured calibration grid preloaded (v0.9.0)."""
+def build_estimator(
+    settings: ServeSettings, kind: BackendKind | None = None
+) -> AdaptiveMemoryEstimator:
+    """Adaptive estimator for one model: the calibrated static fallback
+    with ceilings scaled by the GPU-memory fraction, plus that model's
+    measured calibration grid preloaded (v0.9.0). Each model gets its
+    own estimator (they peak differently for the same shape) even though
+    all share one device budget."""
+    kind = kind or settings.backends[0]
     fraction = settings.gpu_memory_fraction
     fallback = PowerLawMemoryEstimator(
         A100_40GB_TABICL_CALIBRATION,
@@ -182,14 +208,17 @@ def build_estimator(settings: ServeSettings) -> AdaptiveMemoryEstimator:
         gpu_capacity_bytes=int(DEFAULT_GPU_CAPACITY_BYTES * fraction),
     )
     return AdaptiveMemoryEstimator(
-        fallback=fallback, preloaded=_preloaded_observations(settings)
+        fallback=fallback,
+        preloaded=_preloaded_observations(kind, settings.kv_cache),
     )
 
 
-def _build_backend(settings: ServeSettings) -> tuple[TabularICLBackend, str]:
-    """Returns (backend, device). Imports torch/tabicl only on the path
-    that needs them, so the fake backend runs with core deps alone."""
-    if settings.backend == "fake":
+def _build_backend(
+    kind: BackendKind, settings: ServeSettings
+) -> tuple[TabularICLBackend, str]:
+    """Returns (backend, device). Imports torch/tabicl/tabpfn only on the
+    paths that need them, so the fake backend runs with core deps alone."""
+    if kind == "fake":
         from tabctx.backends.fake import FakeBackend
 
         return FakeBackend(), "cpu (fake backend)"
@@ -197,7 +226,7 @@ def _build_backend(settings: ServeSettings) -> tuple[TabularICLBackend, str]:
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    if settings.backend == "tabpfn":
+    if kind == "tabpfn":
         from tabctx.backends.tabpfn import TabPFNBackend
 
         # TABCTX_KV_CACHE maps onto TabPFN's fit_mode (see backends/tabpfn.py).
@@ -211,26 +240,50 @@ def _build_backend(settings: ServeSettings) -> tuple[TabularICLBackend, str]:
 
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     settings = settings or ServeSettings.from_env()
-    backend, device = _build_backend(settings)
-    estimator = build_estimator(settings)
+    backends: dict[str, TabularICLBackend] = {}
+    estimators: dict[str, MemoryEstimator] = {}
+    device = "cpu"
+    for kind in settings.backends:
+        backend, device = _build_backend(kind, settings)
+        backends[backend.name] = backend
+        estimators[backend.name] = build_estimator(settings, kind)
+    default = (
+        settings.backends[0]
+        if settings.backends[0] in backends
+        else next(iter(backends))
+    )
+
     spill_store = None
     if settings.spill_dir:
         from tabctx.cache.spill import DiskSpillStore
 
         # Backends may provide backbone-aware serialization; pickle is
         # the default for those that don't (see cache/spill.py).
-        kwargs = {}
-        if hasattr(backend, "dumps_payload"):
-            kwargs = {"dumps": backend.dumps_payload, "loads": backend.loads_payload}
+        serializers = {
+            name: (b.dumps_payload, b.loads_payload)
+            for name, b in backends.items()
+            if hasattr(b, "dumps_payload")
+        }
         spill_store = DiskSpillStore(
             settings.spill_dir,
             capacity_bytes=settings.spill_capacity_bytes,
-            **kwargs,
+            serializers=serializers,
         )
+    # ONE cache and budget shared by every model on the device -- the
+    # whole point of serving them behind one endpoint (see engine.py).
     cache = ContextCacheManager(
-        capacity_bytes=estimator.ceiling_bytes(), spill_store=spill_store
+        capacity_bytes=estimators[default].ceiling_bytes(), spill_store=spill_store
     )
-    engine = TabctxEngine(backend=backend, cache=cache, estimator=estimator)
+    engine = TabctxEngine(
+        backends=backends,
+        estimators=estimators,
+        cache=cache,
+        default_backend=default,
+    )
     return BuiltEngine(
-        engine=engine, estimator=estimator, backend=backend, device=device
+        engine=engine,
+        estimators=estimators,
+        backends=backends,
+        default=default,
+        device=device,
     )

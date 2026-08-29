@@ -57,7 +57,8 @@ def test_one_shot_fit_predict(two_replica_service):
 
 def test_limits_capability_discovery(two_replica_service):
     limits = TabctxClient(two_replica_service).limits()
-    assert limits["backend"] == "fake"
+    assert limits["models"] == ["fake"]
+    assert limits["default_model"] == "fake"
     assert limits["memory_ceiling_bytes"] > 0
     by_features = limits["max_admissible_train_rows_by_feature_count"]
     # More features -> fewer admissible rows, and the numbers must be

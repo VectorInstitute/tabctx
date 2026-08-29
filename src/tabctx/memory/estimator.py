@@ -9,8 +9,9 @@ blunt about how little data this is calibrated from.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol, Sequence
+from typing import Literal, Protocol
 
 import numpy as np
 
@@ -48,7 +49,9 @@ class MemoryEstimator(Protocol):
 
     def confidence(self) -> str: ...
 
-    def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
+    def record_observation(
+        self, n_train: int, n_features: int, real_bytes: int
+    ) -> None:
         """Called by the engine after a successful fit() whenever the
         backend reported a real measured cost (see backends/tabicl.py).
         Implementations that can't learn from this (like this module's
@@ -140,7 +143,9 @@ class PowerLawMemoryEstimator:
         )
 
     def admit(self, n_train: int, n_test: int, n_features: int) -> bool:
-        return self.estimate_bytes(n_train, n_test, n_features) <= self._effective_ceiling
+        return (
+            self.estimate_bytes(n_train, n_test, n_features) <= self._effective_ceiling
+        )
 
     def ceiling_bytes(self) -> int:
         return self._effective_ceiling
@@ -158,7 +163,9 @@ class PowerLawMemoryEstimator:
         del used_bytes
         return self._effective_ceiling
 
-    def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
+    def record_observation(
+        self, n_train: int, n_features: int, real_bytes: int
+    ) -> None:
         # Static/fixed-calibration estimator: intentionally does not learn
         # from live traffic. See AdaptiveMemoryEstimator for that.
         del n_train, n_features, real_bytes
@@ -176,7 +183,11 @@ class PowerLawMemoryEstimator:
         return (
             f"LOW confidence: fitted from {len(self._ok_points)} successful "
             f"calibration points"
-            + (f" + {len(self._oom_points)} known-OOM boundary" if self._oom_points else "")
+            + (
+                f" + {len(self._oom_points)} known-OOM boundary"
+                if self._oom_points
+                else ""
+            )
             + ", single A100-40GB card, single backend (TabICL). The fit's "
             "local log-log slope is not constant across the calibration "
             "range, so this power-law fit is a smoothing convenience, not a "

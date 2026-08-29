@@ -86,6 +86,7 @@ class TabctxClient:
         y: ArrayLike,
         task: Task = "classification",
         dataset_id: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Encode and cache a training context; returns its dataset_id.
 
@@ -96,6 +97,8 @@ class TabctxClient:
         body = {"train_X": X, "train_y": y, "task": task}
         if dataset_id is not None:
             body["dataset_id"] = dataset_id
+        if model is not None:
+            body["model"] = model
         resp = self._post("/v1/tabctx/fit", body, session_id=dataset_id)
         return resp["dataset_id"]
 
@@ -127,6 +130,7 @@ class TabctxClient:
         dataset_id: str,
         task: Task = "classification",
         target_column: str | None = None,
+        model: str | None = None,
     ) -> str:
         """Fit-by-reference: consume a prior upload_csv() of a CSV whose
         columns are the features plus one target column (target_column,
@@ -138,6 +142,7 @@ class TabctxClient:
                 "target_column": target_column,
                 "task": task,
                 "dataset_id": dataset_id,
+                "model": model,
             },
             session_id=dataset_id,
         )
@@ -200,6 +205,10 @@ class TabctxClient:
     def ready(self) -> dict:
         """The deployment's /readyz payload (device, cache stats, ...)."""
         return self._get("/readyz")
+
+    def models(self) -> list[dict]:
+        """The models this deployment serves; pass an id as fit(model=...)."""
+        return self._get("/v1/models")["data"]
 
     def limits(self) -> dict:
         """Capability discovery: what shapes will this deployment admit?

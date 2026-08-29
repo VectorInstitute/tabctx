@@ -89,7 +89,9 @@ class AdaptiveMemoryEstimator:
         self._observations: list[Observation] = []
         self._lock = threading.Lock()
 
-    def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
+    def record_observation(
+        self, n_train: int, n_features: int, real_bytes: int
+    ) -> None:
         with self._lock:
             self._observations.append(Observation(n_train, n_features, real_bytes))
             # Bounded FIFO -- simple, avoids unbounded growth over a long-
@@ -105,7 +107,9 @@ class AdaptiveMemoryEstimator:
         """Returns (observation, is_preloaded) for the tightest
         dominating measurement, or None."""
         with self._lock:
-            runtime = [o for o in self._observations if o.dominates(n_train, n_features)]
+            runtime = [
+                o for o in self._observations if o.dominates(n_train, n_features)
+            ]
         preloaded = [o for o in self._preloaded if o.dominates(n_train, n_features)]
         candidates = [(o, False) for o in runtime] + [(o, True) for o in preloaded]
         if not candidates:
@@ -139,9 +143,7 @@ class AdaptiveMemoryEstimator:
         capacity = getattr(self._fallback, "gpu_capacity_bytes", None)
         if capacity is None:
             return self._fallback.admission_headroom_bytes(used_bytes)
-        return max(
-            0, int(capacity * self._transient_capacity_fraction) - used_bytes
-        )
+        return max(0, int(capacity * self._transient_capacity_fraction) - used_bytes)
 
     def confidence(self) -> str:
         with self._lock:

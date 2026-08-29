@@ -4,7 +4,9 @@ from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.errors import CacheCapacityError
 
 
-def make_context(dataset_id: str, est_bytes: int, last_accessed_at: float | None = None):
+def make_context(
+    dataset_id: str, est_bytes: int, last_accessed_at: float | None = None
+):
     ctx = CachedContext(
         dataset_id=dataset_id,
         backend_name="fake",

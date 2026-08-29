@@ -58,7 +58,9 @@ from tabctx.types import ArrayLike, PredictOutcome, Task
 
 
 class TabICLBackend:
-    name = "tabicl"
+    # The exact model id callers select via the API's `model` field --
+    # named for the checkpoint actually loaded (tabicl-classifier-v2-*).
+    name = "tabicl-v2"
 
     def __init__(self, device: str | None = None, kv_cache: bool | str = "kv") -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
@@ -224,7 +226,9 @@ class TabICLBackend:
         import pickle
 
         model = pickle.loads(data)
-        task: Task = "classification" if hasattr(model, "predict_proba") else "regression"
+        task: Task = (
+            "classification" if hasattr(model, "predict_proba") else "regression"
+        )
         if task not in self._shared_backbones:
             # Cold restore on a fresh replica: borrow a throwaway
             # estimator's load path to populate the shared backbone.

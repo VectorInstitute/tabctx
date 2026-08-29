@@ -53,7 +53,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sklearn.datasets import make_classification
 
@@ -88,8 +88,11 @@ def _get(url, timeout):
 
 def _make_tenant_data(seed, n_train=N_TRAIN, n_test=N_TEST, n_features=N_FEATURES):
     X, y = make_classification(
-        n_samples=n_train + n_test, n_features=n_features,
-        n_informative=max(2, n_features // 2), n_classes=2, random_state=seed,
+        n_samples=n_train + n_test,
+        n_features=n_features,
+        n_informative=max(2, n_features // 2),
+        n_classes=2,
+        random_state=seed,
     )
     return X[:n_train].tolist(), y[:n_train].tolist(), X[n_train:].tolist()
 
@@ -104,8 +107,11 @@ def _percentiles(values):
         return s[idx]
 
     return {
-        "p50": pct(0.50), "p95": pct(0.95), "p99": pct(0.99),
-        "mean": statistics.mean(s), "max": max(s),
+        "p50": pct(0.50),
+        "p95": pct(0.95),
+        "p99": pct(0.99),
+        "mean": statistics.mean(s),
+        "max": max(s),
     }
 
 
@@ -123,15 +129,20 @@ def measure_cold_fit_latency(base_url, timeout, tenant_seed_offset, n_samples=5)
         status, _ = _post_status(
             f"{base_url}/v1/tabctx/fit",
             {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
-            timeout, session_id=dataset_id,
+            timeout,
+            session_id=dataset_id,
         )
         latencies.append((time.monotonic() - start) * 1000)
         if status != 200:
-            print(f"[warn] cold fit sample {i} returned status {status}", file=sys.stderr)
+            print(
+                f"[warn] cold fit sample {i} returned status {status}", file=sys.stderr
+            )
     return _percentiles(latencies)
 
 
-def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_seed_offset):
+def run_concurrency_level(
+    base_url, timeout, concurrency, duration_s, tenant_seed_offset
+):
     """Pre-warms `concurrency` distinct tenant contexts, then hammers
     predict() against them (one dedicated tenant per worker thread) for
     duration_s, measuring steady-state warm-predict throughput/latency."""
@@ -143,7 +154,8 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
         status, _ = _post_status(
             f"{base_url}/v1/tabctx/fit",
             {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
-            timeout, session_id=dataset_id,
+            timeout,
+            session_id=dataset_id,
         )
         if status != 200:
             raise RuntimeError(f"warmup fit failed for tenant {i}: status {status}")
@@ -170,7 +182,8 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
                 status, _ = _post_status(
                     f"{base_url}/v1/tabctx/predict",
                     {"dataset_id": dataset_ids[idx], "test_X": test_sets[idx]},
-                    timeout, session_id=dataset_ids[idx],
+                    timeout,
+                    session_id=dataset_ids[idx],
                 )
                 elapsed_ms = (time.monotonic() - start) * 1000
                 if status == 200:
@@ -198,10 +211,14 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
         "duration_s": round(wall_s, 2),
         "n_successful_requests": len(success_latencies),
         "n_attempted_requests": total_attempts,
-        "warm_predict_ops_per_sec": round(len(success_latencies) / wall_s, 3) if wall_s else 0,
+        "warm_predict_ops_per_sec": round(len(success_latencies) / wall_s, 3)
+        if wall_s
+        else 0,
         "warm_predict_latency_ms": _percentiles(success_latencies),
         "backpressure_503": total_backpressure,
-        "backpressure_rate": round(total_backpressure / total_attempts, 3) if total_attempts else 0,
+        "backpressure_rate": round(total_backpressure / total_attempts, 3)
+        if total_attempts
+        else 0,
         "errors": total_errors,
     }
 
@@ -221,12 +238,19 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
     status, body = _post_status(
         f"{base_url}/v1/tabctx/fit",
         {"train_X": train_X, "train_y": train_y, "dataset_id": dataset_id},
-        timeout, session_id=dataset_id,
+        timeout,
+        session_id=dataset_id,
     )
     fit_ms = (time.monotonic() - fit_start) * 1000
     if status != 200:
-        return {"n_train": n_train, "n_test": n_test, "n_features": n_features,
-                "fit_status": status, "fit_error": body, "fit_latency_ms": fit_ms}
+        return {
+            "n_train": n_train,
+            "n_test": n_test,
+            "n_features": n_features,
+            "fit_status": status,
+            "fit_error": body,
+            "fit_latency_ms": fit_ms,
+        }
 
     predict_latencies = []
     for _ in range(n_samples):
@@ -234,18 +258,23 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
         status, body = _post_status(
             f"{base_url}/v1/tabctx/predict",
             {"dataset_id": dataset_id, "test_X": test_X},
-            timeout, session_id=dataset_id,
+            timeout,
+            session_id=dataset_id,
         )
         predict_latencies.append((time.monotonic() - start) * 1000)
         if status != 200:
-            print(f"[warn] shape ({n_train},{n_features}) predict returned {status}: {body}",
-                  file=sys.stderr)
+            print(
+                f"[warn] shape ({n_train},{n_features}) predict returned {status}: {body}",
+                file=sys.stderr,
+            )
 
     readyz = _get(f"{base_url}/readyz", timeout)
     real_gpu = readyz.get("real_gpu_memory") or {}
 
     return {
-        "n_train": n_train, "n_test": n_test, "n_features": n_features,
+        "n_train": n_train,
+        "n_test": n_test,
+        "n_features": n_features,
         "fit_status": 200,
         "fit_latency_ms": round(fit_ms, 1),
         "warm_predict_latency_ms": _percentiles(predict_latencies),
@@ -254,21 +283,29 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
 
 
 def run_shape_sweep(base_url, timeout, n_train, n_test, feature_counts):
-    print(f"\n=== Shape sweep: n_train={n_train}, n_test={n_test}, "
-          f"n_features in {feature_counts} (concurrency=1, isolates column-count effect) ===")
-    print(f"{'n_features':>10} {'fit_ms':>9} {'pred_p50_ms':>12} {'pred_p95_ms':>12} "
-          f"{'pred_max_ms':>12} {'real_gpu_mb':>12}")
+    print(
+        f"\n=== Shape sweep: n_train={n_train}, n_test={n_test}, "
+        f"n_features in {feature_counts} (concurrency=1, isolates column-count effect) ==="
+    )
+    print(
+        f"{'n_features':>10} {'fit_ms':>9} {'pred_p50_ms':>12} {'pred_p95_ms':>12} "
+        f"{'pred_max_ms':>12} {'real_gpu_mb':>12}"
+    )
     results = []
     for i, n_features in enumerate(feature_counts):
-        r = run_shape_point(base_url, timeout, n_train, n_test, n_features, seed=800_000 + i)
+        r = run_shape_point(
+            base_url, timeout, n_train, n_test, n_features, seed=800_000 + i
+        )
         results.append(r)
         if r["fit_status"] != 200:
             print(f"{n_features:>10}   FIT FAILED: {r.get('fit_error')}")
             continue
         lat = r["warm_predict_latency_ms"]
-        print(f"{n_features:>10} {r['fit_latency_ms']:>9.1f} {lat['p50']:>12.1f} "
-              f"{lat['p95']:>12.1f} {lat['max']:>12.1f} "
-              f"{r['real_gpu_allocated_mb_after']:>12.1f}")
+        print(
+            f"{n_features:>10} {r['fit_latency_ms']:>9.1f} {lat['p50']:>12.1f} "
+            f"{lat['p95']:>12.1f} {lat['max']:>12.1f} "
+            f"{r['real_gpu_allocated_mb_after']:>12.1f}"
+        )
     return results
 
 
@@ -277,46 +314,80 @@ def main():
     p.add_argument("--base-url", required=True)
     p.add_argument("--timeout", type=int, default=60)
     p.add_argument("--concurrency", type=int, nargs="+", default=[1, 2, 4, 8, 16])
-    p.add_argument("--duration", type=int, default=20, help="seconds per concurrency level")
-    p.add_argument("--skip-concurrency-sweep", action="store_true",
-                   help="skip the concurrency sweep (useful when only --sweep-features is wanted)")
-    p.add_argument("--sweep-features", type=int, nargs="+", default=None,
-                   help="if given, also run a column-count sweep at concurrency=1 "
-                        "(e.g. --sweep-features 15 100 300 500)")
-    p.add_argument("--sweep-train-rows", type=int, default=500,
-                   help="n_train held fixed during --sweep-features")
-    p.add_argument("--sweep-test-rows", type=int, default=20,
-                   help="n_test held fixed during --sweep-features")
+    p.add_argument(
+        "--duration", type=int, default=20, help="seconds per concurrency level"
+    )
+    p.add_argument(
+        "--skip-concurrency-sweep",
+        action="store_true",
+        help="skip the concurrency sweep (useful when only --sweep-features is wanted)",
+    )
+    p.add_argument(
+        "--sweep-features",
+        type=int,
+        nargs="+",
+        default=None,
+        help="if given, also run a column-count sweep at concurrency=1 "
+        "(e.g. --sweep-features 15 100 300 500)",
+    )
+    p.add_argument(
+        "--sweep-train-rows",
+        type=int,
+        default=500,
+        help="n_train held fixed during --sweep-features",
+    )
+    p.add_argument(
+        "--sweep-test-rows",
+        type=int,
+        default=20,
+        help="n_test held fixed during --sweep-features",
+    )
     p.add_argument("--save-baseline", default=None, help="path to write JSON results")
     args = p.parse_args()
 
     readyz = _get(f"{args.base_url}/readyz", args.timeout)
-    print(f"[info] target: device={readyz.get('device')} "
-          f"cache_stats={readyz.get('cache_stats')}")
+    print(
+        f"[info] target: device={readyz.get('device')} "
+        f"cache_stats={readyz.get('cache_stats')}"
+    )
 
     cold_fit = None
     levels = []
     if not args.skip_concurrency_sweep:
-        print("\n=== cold_fit_latency_ms (TTFT-equivalent: onboarding a new tenant) ===")
-        cold_fit = measure_cold_fit_latency(args.base_url, args.timeout, tenant_seed_offset=900_000)
-        print(f"  p50={cold_fit['p50']:.1f}  p95={cold_fit['p95']:.1f}  "
-              f"p99={cold_fit['p99']:.1f}  mean={cold_fit['mean']:.1f}  max={cold_fit['max']:.1f}")
+        print(
+            "\n=== cold_fit_latency_ms (TTFT-equivalent: onboarding a new tenant) ==="
+        )
+        cold_fit = measure_cold_fit_latency(
+            args.base_url, args.timeout, tenant_seed_offset=900_000
+        )
+        print(
+            f"  p50={cold_fit['p50']:.1f}  p95={cold_fit['p95']:.1f}  "
+            f"p99={cold_fit['p99']:.1f}  mean={cold_fit['mean']:.1f}  max={cold_fit['max']:.1f}"
+        )
 
-        print(f"\n{'concurrency':>11} {'ops/sec':>9} {'p50_ms':>9} {'p95_ms':>9} "
-              f"{'p99_ms':>9} {'max_ms':>9} {'success':>8} {'503_rate':>9} {'errors':>7}")
+        print(
+            f"\n{'concurrency':>11} {'ops/sec':>9} {'p50_ms':>9} {'p95_ms':>9} "
+            f"{'p99_ms':>9} {'max_ms':>9} {'success':>8} {'503_rate':>9} {'errors':>7}"
+        )
         for i, c in enumerate(args.concurrency):
             result = run_concurrency_level(
-                args.base_url, args.timeout, c, args.duration, tenant_seed_offset=i * 100_000
+                args.base_url,
+                args.timeout,
+                c,
+                args.duration,
+                tenant_seed_offset=i * 100_000,
             )
             lat = result["warm_predict_latency_ms"]
             p50 = f"{lat['p50']:.1f}" if lat["p50"] is not None else "n/a"
             p95 = f"{lat['p95']:.1f}" if lat["p95"] is not None else "n/a"
             p99 = f"{lat['p99']:.1f}" if lat["p99"] is not None else "n/a"
             mx = f"{lat['max']:.1f}" if lat["max"] is not None else "n/a"
-            print(f"{c:>11} {result['warm_predict_ops_per_sec']:>9.2f} "
-                  f"{p50:>9} {p95:>9} {p99:>9} {mx:>9} "
-                  f"{result['n_successful_requests']:>8} {result['backpressure_rate']:>9.1%} "
-                  f"{result['errors']:>7}")
+            print(
+                f"{c:>11} {result['warm_predict_ops_per_sec']:>9.2f} "
+                f"{p50:>9} {p95:>9} {p99:>9} {mx:>9} "
+                f"{result['n_successful_requests']:>8} {result['backpressure_rate']:>9.1%} "
+                f"{result['errors']:>7}"
+            )
             levels.append(result)
 
         # ops/sec ONLY counts successful requests (see run_concurrency_level's
@@ -324,24 +395,36 @@ def main():
         # overloaded, not fast, even if its ops/sec number looks fine in
         # isolation. Only consider levels with a low rejection rate as
         # candidates for "peak" throughput.
-        healthy_levels = [lv for lv in levels if lv["backpressure_rate"] < 0.05] or levels
+        healthy_levels = [
+            lv for lv in levels if lv["backpressure_rate"] < 0.05
+        ] or levels
         peak = max(healthy_levels, key=lambda r: r["warm_predict_ops_per_sec"])
-        print(f"\n[info] peak warm_predict_ops_per_sec={peak['warm_predict_ops_per_sec']} "
-              f"at concurrency={peak['concurrency']}")
-        if levels[-1]["warm_predict_ops_per_sec"] < levels[0]["warm_predict_ops_per_sec"] * 1.2:
-            print("[info] throughput did NOT scale meaningfully with concurrency -- consistent "
-                  "with v1's documented single coarse lock serializing GPU work per replica. "
-                  "This is the number to watch for improvement after any future concurrency work.")
+        print(
+            f"\n[info] peak warm_predict_ops_per_sec={peak['warm_predict_ops_per_sec']} "
+            f"at concurrency={peak['concurrency']}"
+        )
+        if (
+            levels[-1]["warm_predict_ops_per_sec"]
+            < levels[0]["warm_predict_ops_per_sec"] * 1.2
+        ):
+            print(
+                "[info] throughput did NOT scale meaningfully with concurrency -- consistent "
+                "with v1's documented single coarse lock serializing GPU work per replica. "
+                "This is the number to watch for improvement after any future concurrency work."
+            )
 
     shape_sweep_results = None
     if args.sweep_features:
         shape_sweep_results = run_shape_sweep(
-            args.base_url, args.timeout,
-            args.sweep_train_rows, args.sweep_test_rows, args.sweep_features,
+            args.base_url,
+            args.timeout,
+            args.sweep_train_rows,
+            args.sweep_test_rows,
+            args.sweep_features,
         )
 
     payload = {
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "recorded_at": datetime.now(UTC).isoformat(),
         "shape": {"n_train": N_TRAIN, "n_test": N_TEST, "n_features": N_FEATURES},
         "cold_fit_latency_ms": cold_fit,
         "concurrency_levels": levels,

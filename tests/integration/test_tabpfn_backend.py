@@ -59,7 +59,7 @@ def test_engine_stack_with_tabpfn(data, monkeypatch):
     monkeypatch.setenv("TABCTX_BACKEND", "tabpfn")
     train_X, train_y, test_X = data
     built = build_engine()
-    assert built.backend.name == "tabpfn"
+    assert built.backend.name == "tabpfn-3"
 
     dataset_id = built.engine.fit(train_X, train_y, task="classification")
     outcome = built.engine.predict(dataset_id, test_X, return_proba=True)
@@ -85,9 +85,10 @@ def test_cache_modes_agree(data):
     # the cache at reduced precision (`kv_cache_precision`), so
     # probabilities drift by up to ~1e-2 while labels stay identical.
     # Measured 0.011 max drift on this fixture (2026-08-29).
-    assert np.abs(
-        np.array(p_fast.probabilities) - np.array(p_cheap.probabilities)
-    ).max() < 0.03
+    assert (
+        np.abs(np.array(p_fast.probabilities) - np.array(p_cheap.probabilities)).max()
+        < 0.03
+    )
 
 
 def test_regression(data):

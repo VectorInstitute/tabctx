@@ -28,7 +28,7 @@ def _train_csv(n_rows: int, n_features: int, seed: int = 0) -> bytes:
     y = ["hot"] * (n_rows * 2 // 3) + ["cold"] * (n_rows - n_rows * 2 // 3)
     header = ",".join([f"f{i}" for i in range(n_features)] + ["label"])
     lines = [header]
-    for row, label in zip(X, y):
+    for row, label in zip(X, y, strict=False):
         lines.append(",".join(f"{v:.4f}" for v in row) + f",{label}")
     return ("\n".join(lines) + "\n").encode()
 
@@ -46,7 +46,9 @@ def test_upload_fit_predict_50k_rows(two_replica_service):
     dataset_id = "upload-large"
 
     upload_id = client.upload_csv(_train_csv(50_000, 12), dataset_id)
-    assert client.fit_uploaded(upload_id, dataset_id, target_column="label") == dataset_id
+    assert (
+        client.fit_uploaded(upload_id, dataset_id, target_column="label") == dataset_id
+    )
 
     # Predict by reference too, repeatedly -- affinity must hold across
     # upload -> fit -> predict on 2 replicas (zero 404s).
