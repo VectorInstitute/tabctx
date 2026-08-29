@@ -145,7 +145,16 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
         test_sets.append(test_X)
 
     def worker(idx):
-        latencies = []
+        # Only successful (200) requests count as completed work for
+        # throughput/latency purposes -- a 503 backpressure rejection
+        # returns almost instantly (Ray Serve rejects it before any GPU
+        # work starts), so counting it as a "fast op" would inflate
+        # ops/sec and deflate latency percentiles, making an overloaded,
+        # mostly-rejecting concurrency level look BETTER than a healthy
+        # one. Found by inspection: an early version of this script did
+        # exactly that at high concurrency and produced a misleading
+        # "peak throughput" number driven almost entirely by rejections.
+        success_latencies = []
         backpressure = 0
         errors = 0
         end_at = time.monotonic() + duration_s
@@ -156,31 +165,36 @@ def run_concurrency_level(base_url, timeout, concurrency, duration_s, tenant_see
                     f"{base_url}/v1/tabctx/predict",
                     {"dataset_id": dataset_ids[idx], "test_X": test_sets[idx]}, timeout,
                 )
-                if status == 503:
+                elapsed_ms = (time.monotonic() - start) * 1000
+                if status == 200:
+                    success_latencies.append(elapsed_ms)
+                elif status == 503:
                     backpressure += 1
-                elif status != 200:
+                else:
                     errors += 1
             except Exception:  # noqa: BLE001
                 errors += 1
-            latencies.append((time.monotonic() - start) * 1000)
-        return latencies, backpressure, errors
+        return success_latencies, backpressure, errors
 
     wall_start = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
         results = list(pool.map(worker, range(concurrency)))
     wall_s = time.monotonic() - wall_start
 
-    all_latencies = [lat for lats, _, _ in results for lat in lats]
+    success_latencies = [lat for lats, _, _ in results for lat in lats]
     total_backpressure = sum(bp for _, bp, _ in results)
     total_errors = sum(err for _, _, err in results)
+    total_attempts = len(success_latencies) + total_backpressure + total_errors
 
     return {
         "concurrency": concurrency,
         "duration_s": round(wall_s, 2),
-        "n_requests": len(all_latencies),
-        "warm_predict_ops_per_sec": round(len(all_latencies) / wall_s, 3) if wall_s else 0,
-        "warm_predict_latency_ms": _percentiles(all_latencies),
+        "n_successful_requests": len(success_latencies),
+        "n_attempted_requests": total_attempts,
+        "warm_predict_ops_per_sec": round(len(success_latencies) / wall_s, 3) if wall_s else 0,
+        "warm_predict_latency_ms": _percentiles(success_latencies),
         "backpressure_503": total_backpressure,
+        "backpressure_rate": round(total_backpressure / total_attempts, 3) if total_attempts else 0,
         "errors": total_errors,
     }
 
@@ -204,19 +218,30 @@ def main():
           f"p99={cold_fit['p99']:.1f}  mean={cold_fit['mean']:.1f}  max={cold_fit['max']:.1f}")
 
     print(f"\n{'concurrency':>11} {'ops/sec':>9} {'p50_ms':>9} {'p95_ms':>9} "
-          f"{'p99_ms':>9} {'max_ms':>9} {'backpressure':>13} {'errors':>7}")
+          f"{'p99_ms':>9} {'max_ms':>9} {'success':>8} {'503_rate':>9} {'errors':>7}")
     levels = []
     for i, c in enumerate(args.concurrency):
         result = run_concurrency_level(
             args.base_url, args.timeout, c, args.duration, tenant_seed_offset=i * 100_000
         )
         lat = result["warm_predict_latency_ms"]
+        p50 = f"{lat['p50']:.1f}" if lat["p50"] is not None else "n/a"
+        p95 = f"{lat['p95']:.1f}" if lat["p95"] is not None else "n/a"
+        p99 = f"{lat['p99']:.1f}" if lat["p99"] is not None else "n/a"
+        mx = f"{lat['max']:.1f}" if lat["max"] is not None else "n/a"
         print(f"{c:>11} {result['warm_predict_ops_per_sec']:>9.2f} "
-              f"{lat['p50']:>9.1f} {lat['p95']:>9.1f} {lat['p99']:>9.1f} {lat['max']:>9.1f} "
-              f"{result['backpressure_503']:>13} {result['errors']:>7}")
+              f"{p50:>9} {p95:>9} {p99:>9} {mx:>9} "
+              f"{result['n_successful_requests']:>8} {result['backpressure_rate']:>9.1%} "
+              f"{result['errors']:>7}")
         levels.append(result)
 
-    peak = max(levels, key=lambda r: r["warm_predict_ops_per_sec"])
+    # ops/sec ONLY counts successful requests (see run_concurrency_level's
+    # worker() docstring) -- a level with a high backpressure_rate is
+    # overloaded, not fast, even if its ops/sec number looks fine in
+    # isolation. Only consider levels with a low rejection rate as
+    # candidates for "peak" throughput.
+    healthy_levels = [lv for lv in levels if lv["backpressure_rate"] < 0.05] or levels
+    peak = max(healthy_levels, key=lambda r: r["warm_predict_ops_per_sec"])
     print(f"\n[info] peak warm_predict_ops_per_sec={peak['warm_predict_ops_per_sec']} "
           f"at concurrency={peak['concurrency']}")
     if levels[-1]["warm_predict_ops_per_sec"] < levels[0]["warm_predict_ops_per_sec"] * 1.2:

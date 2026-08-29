@@ -1,0 +1,102 @@
+{
+  "recorded_at": "2026-08-29T01:21:06.404309+00:00",
+  "shape": {
+    "n_train": 500,
+    "n_test": 20,
+    "n_features": 15
+  },
+  "cold_fit_latency_ms": {
+    "p50": 816.7203750927001,
+    "p95": 920.5702079925686,
+    "p99": 920.5702079925686,
+    "mean": 830.5990916211158,
+    "max": 920.5702079925686
+  },
+  "concurrency_levels": [
+    {
+      "concurrency": 1,
+      "duration_s": 15.04,
+      "n_successful_requests": 74,
+      "n_attempted_requests": 74,
+      "warm_predict_ops_per_sec": 4.919,
+      "warm_predict_latency_ms": {
+        "p50": 200.1190420705825,
+        "p95": 222.93037502095103,
+        "p99": 249.20412502251565,
+        "mean": 203.26505405387866,
+        "max": 249.20412502251565
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 2,
+      "duration_s": 15.16,
+      "n_successful_requests": 139,
+      "n_attempted_requests": 139,
+      "warm_predict_ops_per_sec": 9.168,
+      "warm_predict_latency_ms": {
+        "p50": 211.066042073071,
+        "p95": 270.46183310449123,
+        "p99": 372.42829194292426,
+        "mean": 217.38454648762567,
+        "max": 431.14308291114867
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 4,
+      "duration_s": 15.4,
+      "n_successful_requests": 145,
+      "n_attempted_requests": 145,
+      "warm_predict_ops_per_sec": 9.418,
+      "warm_predict_latency_ms": {
+        "p50": 415.52712488919497,
+        "p95": 447.1275000832975,
+        "p99": 544.051666976884,
+        "mean": 419.43556578701424,
+        "max": 549.7464169748127
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 8,
+      "duration_s": 15.81,
+      "n_successful_requests": 140,
+      "n_attempted_requests": 140,
+      "warm_predict_ops_per_sec": 8.853,
+      "warm_predict_latency_ms": {
+        "p50": 890.9635830204934,
+        "p95": 1039.2032922245562,
+        "p99": 1216.2692500278354,
+        "mean": 880.5194788279811,
+        "max": 1218.4279998764396
+      },
+      "backpressure_503": 0,
+      "backpressure_rate": 0.0,
+      "errors": 0
+    },
+    {
+      "concurrency": 16,
+      "duration_s": 16.5,
+      "n_successful_requests": 140,
+      "n_attempted_requests": 832,
+      "warm_predict_ops_per_sec": 8.482,
+      "warm_predict_latency_ms": {
+        "p50": 1289.1188750509173,
+        "p95": 1698.754332959652,
+        "p99": 1811.9512079283595,
+        "mean": 1285.9906107137379,
+        "max": 1829.8346248921007
+      },
+      "backpressure_503": 692,
+      "backpressure_rate": 0.832,
+      "errors": 0
+    }
+  ]
+}
