@@ -188,11 +188,17 @@ def _preloaded_observations(
         from tabctx.memory import calibration_tabicl_a100 as grids
     except ImportError:  # generated module absent (pre-calibration tree)
         return (), ()
-    return {
+    fit_grid = {
         "kv": getattr(grids, "A100_40GB_TABICL_KV_PEAK_GRID", ()),
         "repr": getattr(grids, "A100_40GB_TABICL_REPR_PEAK_GRID", ()),
         "off": getattr(grids, "A100_40GB_TABICL_OFF_PEAK_GRID", ()),
     }[kv_cache]
+    predict_grid = {
+        "kv": getattr(grids, "A100_40GB_TABICL_KV_PREDICT_PEAK_GRID", ()),
+        "repr": getattr(grids, "A100_40GB_TABICL_REPR_PREDICT_PEAK_GRID", ()),
+        "off": getattr(grids, "A100_40GB_TABICL_OFF_PREDICT_PEAK_GRID", ()),
+    }[kv_cache]
+    return fit_grid, predict_grid
 
 
 def build_estimator(

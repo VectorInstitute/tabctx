@@ -84,3 +84,29 @@ class TestBuildEngine:
     def test_cache_capacity_matches_estimator_ceiling(self):
         built = build_engine(ServeSettings(backends=("fake",), gpu_memory_fraction=0.5))
         assert built.engine.stats().capacity_bytes == built.estimator.ceiling_bytes()
+
+
+class TestCalibrationPreload:
+    """Builds the TABICL estimator through the factory -- the exact path
+    that crashed a live deploy when _preloaded_observations returned a
+    raw grid instead of (fit, predict) pairs. Works without tabicl
+    installed: the calibration module only needs Observation."""
+
+    def test_tabicl_estimator_builds_with_both_grids(self):
+        for mode in ("kv", "repr"):
+            est = build_estimator(ServeSettings(backends=("tabicl",), kv_cache=mode))
+            assert "preloaded calibration measurement" in est.confidence()
+            # A shape inside the measured grid must estimate from the
+            # measured peak (well under the formula's number), for both
+            # the fit query and the chunking (predict) query.
+            fit_est = est.estimate_bytes(50_000, 0, 50)
+            assert fit_est < 40_000_000_000
+            predict_est = est.estimate_bytes(50_000, 1_000, 50)
+            assert predict_est < 10_000_000_000, (
+                "predict estimate should come from measured predict peaks, "
+                f"got {predict_est} (formula-sized -> 1-row chunking bug)"
+            )
+
+    def test_off_mode_and_fake_backend_build_clean(self):
+        assert build_estimator(ServeSettings(backends=("tabicl",), kv_cache="off"))
+        assert build_estimator(ServeSettings(backends=("fake",)))
