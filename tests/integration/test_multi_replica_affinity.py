@@ -149,6 +149,62 @@ def test_session_header_dataset_id_mismatch_is_422(two_replica_service):
         assert r.status_code == 422, r.text
 
 
+def test_tenant_namespacing_isolates_same_dataset_id(two_replica_service):
+    """Two tenants using the SAME dataset_id must get their own contexts
+    (v0.6.0 Priority-2 fix: dataset_id alone was a flat, guessable
+    namespace). The fake backend predicts the training majority class, so
+    each tenant's predictions reveal exactly whose context served them."""
+    base = two_replica_service
+    dataset_id = "shared-name"
+    headers = {"x-session-id": dataset_id}
+
+    def fit_body(majority_class: str) -> dict:
+        return {
+            "train_X": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]],
+            "train_y": [majority_class, majority_class, "other"],
+            "task": "classification",
+            "dataset_id": dataset_id,
+        }
+
+    with httpx.Client(base_url=base, timeout=60.0) as client:
+        for tenant, label in (("acme", "acme-class"), ("globex", "globex-class")):
+            r = client.post(
+                "/v1/tabctx/fit",
+                json=fit_body(label),
+                headers={**headers, "x-tabctx-tenant-id": tenant},
+            )
+            assert r.status_code == 200, r.text
+            # The scoping prefix must never leak into responses.
+            assert r.json()["dataset_id"] == dataset_id
+
+        for tenant, label in (("acme", "acme-class"), ("globex", "globex-class")):
+            r = client.post(
+                "/v1/tabctx/predict",
+                json={"dataset_id": dataset_id, "test_X": [[9.0, 9.0]]},
+                headers={**headers, "x-tabctx-tenant-id": tenant},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["predictions"] == [label], (
+                f"tenant {tenant} got another tenant's model output"
+            )
+
+        # No tenant header -> unscoped namespace -> nothing cached there.
+        r = client.post(
+            "/v1/tabctx/predict",
+            json={"dataset_id": dataset_id, "test_X": [[9.0, 9.0]]},
+            headers=headers,
+        )
+        assert r.status_code == 404, r.text
+
+        # Malformed tenant id is rejected loudly, not silently unscoped.
+        r = client.post(
+            "/v1/tabctx/predict",
+            json={"dataset_id": dataset_id, "test_X": [[9.0, 9.0]]},
+            headers={**headers, "x-tabctx-tenant-id": "not:allowed"},
+        )
+        assert r.status_code == 422, r.text
+
+
 def test_unknown_dataset_is_a_clean_404(two_replica_service):
     base = two_replica_service
     with httpx.Client(base_url=base, timeout=60.0) as client:

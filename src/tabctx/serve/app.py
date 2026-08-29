@@ -18,7 +18,9 @@ consistent-hash request router so requests carrying the session-affinity
 header (`x-session-id`, configurable via RAY_SERVE_SESSION_ID_HEADER_KEY)
 pin to a consistent replica. The contract -- the session id IS the
 dataset_id -- lives in serve/affinity.py; engine construction (backend
-selection, GPU memory budgeting) lives in serve/factory.py.
+selection, GPU memory budgeting) lives in serve/factory.py; tenant
+namespacing (`x-tabctx-tenant-id` scoping dataset_ids per tenant, see
+serve/tenancy.py) closes the guessable-dataset_id data-leakage gap.
 """
 
 import logging
@@ -41,6 +43,11 @@ from tabctx import (
 )
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.tenancy import (
+    TenantRequiredError,
+    resolve_tenant_id,
+    scope_dataset_id,
+)
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -117,6 +124,7 @@ class TabctxPredictResponse(BaseModel):
     served_by: str | None = None
 
 
+_AUTH_ERRORS = (TenantRequiredError,)
 _INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError,)
@@ -124,6 +132,8 @@ _COMPUTE_ERRORS = (BackendComputeError,)
 
 
 def _map_error(e: Exception) -> HTTPException:
+    if isinstance(e, _AUTH_ERRORS):
+        return HTTPException(401, str(e))
     if isinstance(e, _INVALID_INPUT_ERRORS):
         return HTTPException(422, str(e))
     if isinstance(e, _ADMISSION_ERRORS):
@@ -240,17 +250,34 @@ class TabctxService:
     @fastapi_app.post("/v1/tabctx/fit", response_model=FitResponse)
     async def tabctx_fit(self, req: FitRequest, request: Request) -> FitResponse:
         session_id = session_id_from_headers(request.headers)
-        return await run_in_threadpool(self._fit_sync, req, session_id)
+        return await run_in_threadpool(self._fit_sync, req, dict(request.headers), session_id)
 
-    def _fit_sync(self, req: FitRequest, session_id: str | None) -> FitResponse:
+    def _fit_sync(
+        self, req: FitRequest, headers: dict[str, str], session_id: str | None
+    ) -> FitResponse:
         n_train = len(req.train_X)
         n_features = len(req.train_X[0]) if n_train else 0
         try:
-            dataset_id = resolve_dataset_id(session_id, req.dataset_id)
-            dataset_id = self._engine.fit(
-                req.train_X, req.train_y, task=req.task, dataset_id=dataset_id
+            tenant_id = resolve_tenant_id(headers)
+            # The caller-visible dataset_id: header/body reconciliation
+            # first (affinity contract), server-generated as a last
+            # resort. Tenant scoping is applied only on the cache-facing
+            # id -- responses always show the caller's own id.
+            dataset_id = resolve_dataset_id(session_id, req.dataset_id) or str(
+                uuid.uuid4()
             )
-        except (*_INVALID_INPUT_ERRORS, *_ADMISSION_ERRORS, *_COMPUTE_ERRORS) as e:
+            self._engine.fit(
+                req.train_X,
+                req.train_y,
+                task=req.task,
+                dataset_id=scope_dataset_id(tenant_id, dataset_id),
+            )
+        except (
+            *_AUTH_ERRORS,
+            *_INVALID_INPUT_ERRORS,
+            *_ADMISSION_ERRORS,
+            *_COMPUTE_ERRORS,
+        ) as e:
             raise _map_error(e) from e
         return FitResponse(
             dataset_id=dataset_id,
@@ -264,18 +291,31 @@ class TabctxService:
         self, req: TabctxPredictRequest, request: Request
     ) -> TabctxPredictResponse:
         session_id = session_id_from_headers(request.headers)
-        return await run_in_threadpool(self._predict_sync, req, session_id)
+        return await run_in_threadpool(
+            self._predict_sync, req, dict(request.headers), session_id
+        )
 
     def _predict_sync(
-        self, req: TabctxPredictRequest, session_id: str | None
+        self,
+        req: TabctxPredictRequest,
+        headers: dict[str, str],
+        session_id: str | None,
     ) -> TabctxPredictResponse:
         start = time.monotonic()
         try:
+            tenant_id = resolve_tenant_id(headers)
             resolve_dataset_id(session_id, req.dataset_id)
             outcome = self._engine.predict(
-                req.dataset_id, req.test_X, return_proba=req.return_proba
+                scope_dataset_id(tenant_id, req.dataset_id),
+                req.test_X,
+                return_proba=req.return_proba,
             )
-        except (*_INVALID_INPUT_ERRORS, *_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
+        except (
+            *_AUTH_ERRORS,
+            *_INVALID_INPUT_ERRORS,
+            *_NOT_FOUND_ERRORS,
+            *_COMPUTE_ERRORS,
+        ) as e:
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
         return TabctxPredictResponse(

@@ -119,6 +119,27 @@ Details worth knowing:
   torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
   prove the multi-replica contract on a laptop.
 
+## Tenant isolation
+
+`dataset_id` alone is a flat, guessable namespace -- without isolation,
+any caller who knows another tenant's dataset_id could predict against
+their cached model. The serving layer therefore scopes every dataset_id
+by the `x-tabctx-tenant-id` header before it touches the cache: two
+tenants can both call their dataset `mnist` and get fully separate
+contexts, and a caller without the right tenant id sees a clean 404,
+never another tenant's model.
+
+- Set `TABCTX_REQUIRE_TENANT=true` in production: every `/v1/tabctx`
+  request must then carry a tenant id (else 401), so there is no
+  unscoped namespace at all.
+- By default the header is optional (dev-friendly, backward compatible),
+  but then unscoped ids coexist with scoped ones and the boundary is
+  advisory, not enforced.
+- Tenant identity is caller-supplied and unverified by design; put an
+  authenticating proxy (API keys -> tenant id) in front for real
+  security. See `src/tabctx/serve/tenancy.py` for the full trust-model
+  notes.
+
 ## Installation
 
 Requires Python ≥ 3.10.
