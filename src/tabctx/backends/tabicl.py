@@ -60,25 +60,74 @@ from tabctx.types import ArrayLike, PredictOutcome, Task
 class TabICLBackend:
     name = "tabicl"
 
-    def __init__(self, device: str | None = None) -> None:
+    def __init__(self, device: str | None = None, kv_cache: bool | str = "kv") -> None:
+        """kv_cache: passed through to TabICL ("kv", "repr", True, or
+        False). tabicl's own default is False, which makes every
+        predict() re-encode the ENTIRE training set through all three
+        transformer stages -- i.e. the exact cost tabctx exists to avoid
+        paying twice (confirmed by tracing predict_proba: with no cache,
+        transform(mode="both") re-concatenates and re-encodes train+test
+        on every call). tabctx defaults it ON ("kv": fastest, most
+        memory-hungry -- the memory cost lands inside fit()'s measured
+        delta, so cache accounting and the adaptive admission gate see it
+        automatically; "repr" trades ~24x less ICL-cache memory for
+        re-running the ICL stack per predict)."""
         import torch
 
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._kv_cache = kv_cache
         self._last_context_bytes: int | None = None
+        # task -> attrs of an already-loaded backbone, shared across
+        # fits. Loading is ~hundreds of MB of torch.load + H2D transfer
+        # PER FIT without this. Sharing one nn.Module across estimators
+        # is tabicl's own sanctioned pattern (see
+        # _unsupervised/unsupervised.py and _finetune/base.py, both of
+        # which do exactly this with the comment "prevents redundant
+        # torch.load() calls"). Safe here because the engine serializes
+        # every backend call behind its cache lock -- the shared module's
+        # per-call mutable state (its _cache pointer, InferenceManager
+        # config) is never touched concurrently.
+        self._shared_backbones: dict[str, dict[str, Any]] = {}
+
+    def _make_estimator(self, task: Task) -> Any:
+        if task == "classification":
+            from tabicl import TabICLClassifier
+
+            est = TabICLClassifier(device=self._device, kv_cache=self._kv_cache)
+        else:
+            from tabicl import TabICLRegressor
+
+            est = TabICLRegressor(device=self._device, kv_cache=self._kv_cache)
+
+        shared = self._shared_backbones.get(task)
+        if shared is not None:
+            for attr, value in shared.items():
+                setattr(est, attr, value)
+            # Instance attribute shadows the method: fit() calls
+            # self._load_model() and gets this no-op instead of a fresh
+            # torch.load + load_state_dict.
+            est._load_model = lambda: None
+        return est
+
+    def _stash_backbone(self, task: Task, model: Any) -> None:
+        if task in self._shared_backbones:
+            return
+        shared = {"model_": model.model_}
+        # Keep save()/pickling of estimators working: __setstate__ only
+        # rebuilds from weights when model_config_ exists (see tabicl
+        # _sklearn/base.py); copying these mirrors _finetune/base.py.
+        for attr in ("model_config_", "model_path_"):
+            if hasattr(model, attr):
+                shared[attr] = getattr(model, attr)
+        self._shared_backbones[task] = shared
 
     def fit(self, X: ArrayLike, y: ArrayLike, task: Task) -> Any:
         import torch
 
-        # Fresh instance every call -- see backends/base.py docstring for why
-        # this is load-bearing, not just a style choice.
-        if task == "classification":
-            from tabicl import TabICLClassifier
-
-            model = TabICLClassifier(device=self._device)
-        else:
-            from tabicl import TabICLRegressor
-
-            model = TabICLRegressor(device=self._device)
+        # Fresh estimator instance every call (load-bearing -- see
+        # backends/base.py), but the underlying pretrained nn.Module is
+        # shared across fits after the first (see __init__).
+        model = self._make_estimator(task)
 
         measuring = self._device == "cuda"
         before_bytes = torch.cuda.memory_allocated() if measuring else 0
@@ -94,6 +143,7 @@ class TabICLBackend:
             self._last_context_bytes = max(0, torch.cuda.memory_allocated() - before_bytes)
         else:
             self._last_context_bytes = None
+        self._stash_backbone(task, model)
         return model
 
     def predict(

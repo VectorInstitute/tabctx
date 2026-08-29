@@ -41,6 +41,7 @@ from tabctx import (
     DatasetNotFoundError,
     InvalidInputError,
 )
+from tabctx.batching import CoalescingPredictor
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import ServeSettings, build_engine
 from tabctx.serve.tenancy import (
@@ -153,8 +154,14 @@ def _replica_tag() -> str | None:
 
 
 @serve.deployment(
-    max_ongoing_requests=2,
-    max_queued_requests=8,
+    # 8 concurrent requests per replica (was 2): safe because the engine
+    # serializes all GPU work behind its cache lock regardless -- extra
+    # in-flight requests wait on the lock (or coalesce, see batching.py)
+    # rather than running concurrent GPU calls, so the memory ceiling's
+    # one-in-flight-call assumption still holds. More in-flight requests
+    # = more same-context coalescing opportunity.
+    max_ongoing_requests=8,
+    max_queued_requests=16,
     health_check_period_s=30,
     health_check_timeout_s=60,
     # Consistent-hash routing on the session-affinity header: requests for
@@ -181,6 +188,11 @@ class TabctxService:
         self._engine = built.engine
         self._estimator = built.estimator
         self._device = built.device
+        # Same-context predict coalescing (see batching.py): concurrent
+        # requests against one cached context share a single backend call.
+        self._predictor = CoalescingPredictor(
+            self._engine, window_s=settings.batch_window_ms / 1000.0
+        )
         if "cuda" not in self._device and settings.backend == "tabicl":
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -305,7 +317,7 @@ class TabctxService:
         try:
             tenant_id = resolve_tenant_id(headers)
             resolve_dataset_id(session_id, req.dataset_id)
-            outcome = self._engine.predict(
+            outcome = self._predictor.predict(
                 scope_dataset_id(tenant_id, req.dataset_id),
                 req.test_X,
                 return_proba=req.return_proba,
@@ -361,6 +373,10 @@ class TabctxService:
                 "used_bytes": stats.used_bytes,
                 "free_bytes": stats.free_bytes,
                 "capacity_bytes": stats.capacity_bytes,
+            },
+            "batching": {
+                "batched_requests": self._predictor.batched_requests,
+                "engine_calls": self._predictor.engine_calls,
             },
             "real_gpu_memory": real_gpu_memory,
         }
