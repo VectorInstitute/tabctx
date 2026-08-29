@@ -115,9 +115,10 @@ serialization is *possible* if ever justified.
   `backends/tabpfn.py` exists and the protocol seam held (zero changes
   elsewhere); the kv-cache lesson applied verbatim (`fit_with_cache` is
   not TabPFN's default either). Blockers on full validation: the v8+
-  checkpoint is license-gated on Hugging Face (a human must accept +
-  `huggingface-cli login`; integration tests skip with instructions
-  until then), and the memory estimator's static calibration is
+  checkpoint is license-gated by PriorLabs' own portal (a human must
+  register at https://ux.priorlabs.ai, accept the license, and export
+  TABPFN_TOKEN=<API key>; integration tests skip with instructions
+  until then -- an HF token alone is NOT sufficient, confirmed), and the memory estimator's static calibration is
   TabICL-on-A100 data — run a TabPFN calibration pass on GPU before
   trusting capacity numbers.
 - **Verified tenant identity** (API keys -> tenant id at a proxy, or in

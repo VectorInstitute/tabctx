@@ -160,8 +160,8 @@ Requires Python ≥ 3.10.
 ```bash
 pip install -e .                 # core library only (FakeBackend, no GPU deps)
 pip install -e ".[tabicl]"       # + real TabICL backend (torch, tabicl)
-pip install -e ".[tabpfn]"       # + TabPFN backend (weights are license-gated
-                                 #   on Hugging Face: accept + hf login first)
+pip install -e ".[tabpfn]"       # + TabPFN backend (weights license-gated:
+                                 #   ux.priorlabs.ai + export TABPFN_TOKEN)
 pip install -e ".[serve]"        # + Ray Serve deployment (ray[serve], fastapi)
 pip install -e ".[dev]"          # + test dependencies
 ```

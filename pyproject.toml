@@ -34,8 +34,8 @@ Roadmap = "https://github.com/VectorInstitute/tabctx/blob/main/ROADMAP.md"
 
 [project.optional-dependencies]
 tabicl = ["tabicl", "torch"]
-# TabPFN v8+ weights are license-gated on Hugging Face: accept the model
-# license and `huggingface-cli login` before first use.
+# TabPFN v8+ weights are license-gated by PriorLabs: register at
+# https://ux.priorlabs.ai, accept the license, export TABPFN_TOKEN.
 tabpfn = ["tabpfn", "torch"]
 # ray>=2.58 is required for the consistent-hash request router that makes
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).

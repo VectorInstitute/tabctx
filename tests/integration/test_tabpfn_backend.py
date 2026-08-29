@@ -24,19 +24,21 @@ from tabctx.serve.factory import build_engine  # noqa: E402
 
 @pytest.fixture(scope="module", autouse=True)
 def tabpfn_weights_available():
-    """TabPFN v8+ gates its checkpoint behind a Hugging Face license
-    acceptance + token. Skip (with instructions) rather than fail when
-    the machine isn't authorized -- accepting a model license is a human
-    decision, not something a test run should attempt."""
+    """TabPFN v8+ gates its checkpoint behind PriorLabs' own license
+    portal: register at https://ux.priorlabs.ai, accept the license on
+    the Licenses tab, and export TABPFN_TOKEN=<API key from /account>.
+    Skip (with instructions) rather than fail when the machine isn't
+    authorized -- accepting a model license is a human decision, not
+    something a test run should attempt."""
     try:
         tiny_X = [[0.0, 1.0], [1.0, 0.0], [0.5, 0.5], [0.2, 0.8]]
         TabPFNBackend(device="cpu").fit(tiny_X, ["a", "b", "a", "b"], "classification")
     except Exception as e:  # noqa: BLE001 -- any auth/download gate
         if "license" in str(e).lower() or "token" in str(e).lower():
             pytest.skip(
-                "TabPFN checkpoint not accessible: accept the model license "
-                "on Hugging Face and `huggingface-cli login`, then re-run. "
-                f"({type(e).__name__}: {e})"
+                "TabPFN checkpoint not accessible: register/log in at "
+                "https://ux.priorlabs.ai, accept the license, and export "
+                f"TABPFN_TOKEN=<your API key>. ({type(e).__name__})"
             )
         raise
 
