@@ -1,7 +1,19 @@
+<p align="center">
+  <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml">
+    <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml/badge.svg" alt="tests">
+  </a>
+  <img src="https://img.shields.io/badge/python-≥3.10-blue.svg" alt="Python ≥ 3.10">
+  <img src="https://img.shields.io/badge/status-experimental%20(v0.x)-orange.svg" alt="status: experimental">
+  <a href="LICENSE.md">
+    <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="license">
+  </a>
+</p>
+
 # tabctx
 
 Multi-tenant context caching and serving for tabular in-context-learning
-(ICL) foundation models — TabICL/TabICLv2 today, designed to add TabPFN and
+(ICL) foundation models — [TabICL](https://github.com/soda-inria/tabicl)
+today, designed to add [TabPFN](https://github.com/PriorLabs/TabPFN) and
 similar models later without a rewrite.
 
 ## Why
@@ -11,138 +23,132 @@ table plus a test table — no autoregressive decoding, no token-level KV
 cache. Both independently cache the *encoded training context* to speed up
 repeated `.predict()` calls against the same training set, and both call
 this a "KV cache" in their own docs. But it's a single-process,
-single-estimator-object feature — nobody has built the multi-tenant,
-evictable, memory-governed version of it.
+single-estimator-object feature — nobody had built the multi-tenant,
+evictable, memory-governed version of it. (Confirmed by searching PyPI,
+GitHub, and arXiv: nothing like this existed before this repo.)
 
-That's what `tabctx` is: the analog of what PagedAttention did for
-per-request LLM KV caches, applied to per-training-set tabular ICL contexts.
+**tabctx is that missing piece** — the analog of what PagedAttention did
+for per-request LLM KV caches, applied to per-training-set tabular ICL
+contexts.
 
-This is deliberately **not** built on vLLM (its PagedAttention/continuous-
+It's deliberately **not** built on vLLM (its PagedAttention/continuous-
 batching machinery targets autoregressive decode, which these models don't
 do — even vLLM's own maintainers caveat their closest precedent, pooling
-models, as "not guaranteed to provide performance improvements") and is
+models, as "not guaranteed to provide performance improvements") and it's
 **not** written in a new systems language (vLLM's speed comes from Python
-orchestration plus custom GPU kernels, not from the host language — same
-recipe applies here). It's pure Python, designed to sit behind a generic
-Ray Serve `@serve.deployment` (proven engine-agnostic; no Ray-side changes
-needed).
+orchestration plus custom GPU kernels, not the host language — same recipe
+applies here). Pure Python, sitting behind a generic Ray Serve
+`@serve.deployment` — no engine-specific orchestration layer needed.
 
-## Status: v1
+## Quick wins
 
-TabICL backend only. Core pieces:
-- `TabctxEngine` — `fit()` → `dataset_id`, `predict(dataset_id, ...)` reusing
-  the cached context, `fit_predict()` convenience for one-shot callers.
-- `ContextCacheManager` — multi-tenant, LRU-evictable cache of encoded
-  contexts, sized against a memory ceiling.
-- `PowerLawMemoryEstimator` — admission control and eviction sizing,
-  calibrated from real measurements on an A100-40GB (see
-  `src/tabctx/memory/calibration_data.py`). **Read `confidence()` before
-  trusting this anywhere else** — it's explicit about being low-confidence,
-  single-GPU, single-backend calibration.
-- Chunked test-row batching — large test sets are automatically split
-  against the memory ceiling so one oversized request can't crash the whole
-  replica (the failure mode this library exists partly to prevent).
+**See it work with zero setup** (no GPU, no model download — a fake
+backend stands in for TabICL):
 
-## Out of scope for v1 (see Gaps below)
+```bash
+git clone https://github.com/VectorInstitute/tabctx.git && cd tabctx
+pip install -e .
+python examples/local_fit_predict.py
+```
 
-TabPFN backend · cross-request/heterogeneous-shape batching · disk/CPU cache
-tiering · multi-replica cache-aware routing · custom CUDA/Triton kernels ·
-PyPI/GitHub publishing.
+**Use it for real**, with TabICL doing the actual predicting:
 
-## Validated at scale (2026-08-28, real A100-40GB)
-
-Extensive multi-tenant load testing found and fixed a real bug, then
-confirmed the fix under genuine sustained pressure: cache-capacity
-accounting used to come from the same pre-fit formula used for admission
-control, which ran ~14x higher than real GPU memory for a representative
-shape (see CHANGELOG's v0.3.0 entry) — capping real usable capacity at ~2
-concurrent contexts when the hardware could actually hold ~227. Fixed by
-measuring real `torch.cuda.memory_allocated()` after `fit()` instead of
-estimating before it. Re-validated by looping 260 fits to genuinely exceed
-the cache ceiling: eviction fired correctly and continuously, the earliest
-context was cleanly evicted (404) while the most recent stayed served
-(200), accounted vs. real GPU memory tracked within <1% of each other
-throughout, and 8 further cycles under continued full-capacity pressure
-showed no memory leak (evicted contexts' GPU memory was genuinely
-reclaimed). Multi-tenant isolation, concurrent-request correctness (no data
-races, though GPU work itself still serializes per replica by design),
-the regression task path, and `dataset_id` reuse/overwrite semantics were
-all confirmed end-to-end on real hardware too.
-
-## Quickstart
+```bash
+pip install -e ".[tabicl]"
+```
 
 ```python
 from tabctx import TabctxEngine, ContextCacheManager
 from tabctx.backends.tabicl import TabICLBackend
-from tabctx.memory import PowerLawMemoryEstimator, A100_40GB_TABICL_CALIBRATION
+from tabctx.memory import AdaptiveMemoryEstimator, PowerLawMemoryEstimator, A100_40GB_TABICL_CALIBRATION
 
-estimator = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+estimator = AdaptiveMemoryEstimator(fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION))
 cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
 engine = TabctxEngine(backend=TabICLBackend(), cache=cache, estimator=estimator)
 
 dataset_id = engine.fit(X_train, y_train, task="classification")
 result = engine.predict(dataset_id, X_test, return_proba=True)
-# Reuse the same cached context for a different test batch -- no re-fit:
+
+# The whole point: reuse the same cached context for a new test batch,
+# with no re-fit cost.
 result2 = engine.predict(dataset_id, other_X_test)
 ```
 
-See `examples/local_fit_predict.py` for a runnable, no-GPU version using the
-test-only `FakeBackend`, and `src/tabctx/serve/app.py` for the Ray Serve
-deployment.
+**Serve it over HTTP** with Ray Serve — `src/tabctx/serve/app.py` is a
+ready-to-run deployment (`fit`/`predict` endpoints, health checks, live
+memory-usage reporting). See `benchmarks/README.md` for how to measure it
+once it's running.
 
-## Gaps / roadmap
+## Installation
 
-- **Memory estimator (the pre-fit admission-control gate) confidence is
-  LOW**: calibrated from 4 successful measurements + 1 known-OOM boundary,
-  one A100-40GB card, one backend (TabICL). The OOM boundary itself is only
-  bounded between 5.2M and 18.4M `(train+test)×features` cells — real
-  calibration data collection (more shapes, other GPU types, other
-  backends) is needed before trusting this elsewhere. (Cache *accounting*
-  no longer uses this estimator when a real measurement is available — see
-  "Validated at scale" above — this gap is specifically about the pre-fit
-  safety gate, which must stay conservative since nothing has run yet.)
-- **The estimator overestimates badly for tiny inputs** (found via unit
-  testing, not just theorized): calibration only covers 6,000-5,200,000
-  cells, and extrapolating below that range overestimates substantially — a
-  20-row/2-feature table estimates to ~23MB. Safe (never risks OOM by
-  under-estimating) but still relevant to the admission gate's precision
-  for small requests. Needs a piecewise or additive-intercept model, not a
-  pure power law, once more calibration data exists.
-- **No tenant/authz boundary** on `dataset_id` — it's a flat, shared,
-  unauthenticated cache namespace. Anyone who knows or guesses a
-  `dataset_id` can `predict()` against someone else's cached context.
-- **No cache durability** — a replica restart silently drops every cached
-  context; callers only find out via a subsequent `DatasetNotFoundError`.
-- **v1 serializes all GPU work per replica** via one coarse lock around the
-  cache's fit/evict/predict critical section. Confirmed correct/necessary
-  given how the admission ceiling is derived (it only accounts for one
-  in-flight backend call) — not just an arbitrary v1 shortcut. A safe
-  concurrency improvement requires re-deriving that ceiling as a function
-  of the max number of concurrent in-flight backend calls first, then this
-  lock can be relaxed accordingly.
-- **No TabPFN backend yet** — the `TabularICLBackend` protocol is designed
-  to support one, but it isn't implemented.
-- **Checkpoint reload cost per `fit()`, confirmed empirically**: a fresh
-  `TabICLClassifier`/`Regressor` instance reloads the checkpoint from disk
-  every time (~0.1s on CPU, after the one-time download — `huggingface_hub`
-  only avoids re-downloading, not re-parsing; confirmed by reading
-  `tabicl/_sklearn/classifier.py`'s `_load_model()`). Required per v1's
-  fresh-instance-per-`fit()` rule, but a real target for later: share loaded
-  backbone weights across `fit()` calls in-process, keeping only the
-  per-fit training-encoding state instance-specific.
-- **No cross-request batching** — v1 only chunks *one request's* test rows
-  against its own cached context; packing multiple different requests'
-  tables into one GPU call (the problem CRUMB, arXiv 2606.11473, targets) is
-  unsolved here.
-- **No disk/CPU cache tiering** — contexts live in GPU memory only; both
-  TabPFN's own cache and the TabICL paper's CPU-offload numbers suggest
-  overflow-to-CPU is valuable for larger deployments.
-- **No multi-replica, cache-aware routing** — NVIDIA Dynamo's KV-aware
-  routing pattern (route to whichever replica already holds relevant cached
-  state) is a good design to imitate for "route repeat-predict-on-same-
-  training-set requests to the replica already caching it," but nothing here
-  implements it; the architecture doesn't preclude adding it later.
-- **No custom CUDA/Triton kernels** — v1 wraps TabICL's own eager PyTorch
-  attention as-is.
-- **ConfigMap+wheel delivery to GKE is a stopgap** for testing, not a real
-  distribution story (no PyPI/GitHub publishing yet).
+Requires Python ≥ 3.10.
+
+```bash
+pip install -e .                 # core library only (FakeBackend, no GPU deps)
+pip install -e ".[tabicl]"       # + real TabICL backend (torch, tabicl)
+pip install -e ".[serve]"        # + Ray Serve deployment (ray[serve], fastapi)
+pip install -e ".[dev]"          # + test dependencies
+```
+
+Not yet on PyPI — install from a clone for now (see [Roadmap](ROADMAP.md)).
+
+## How it works
+
+- **`TabctxEngine`** — `fit(X, y)` → `dataset_id`, `predict(dataset_id, X_test)`
+  reusing the cached context, `fit_predict()` for one-shot callers who don't
+  need caching.
+- **`ContextCacheManager`** — a multi-tenant, LRU-evictable cache of encoded
+  training contexts, sized against a real memory budget.
+- **`AdaptiveMemoryEstimator`** — admission control that starts from a
+  conservative static formula and gets progressively less conservative as
+  the service accumulates real per-`fit()` GPU measurements, safely (only
+  ever using a real measurement to bound a *smaller-or-equal* future
+  request, never to extrapolate upward).
+- **Chunked prediction** — large test sets are automatically split against
+  the memory budget so one oversized request can't crash the whole
+  replica — the failure mode this library exists partly to prevent (the
+  naive one-shot wrapper it replaces did crash this way; see
+  [CHANGELOG](CHANGELOG.md)).
+
+## Validated at scale (real A100-40GB, not simulated)
+
+- **Cache reuse works**: a `predict()` against an already-cached context is
+  routinely 3-10x faster than the `fit()` that created it.
+- **Real bugs found and fixed by actually load-testing**, not by reasoning
+  about the code in the abstract: a ~14x cache-accounting overestimate that
+  was throttling real multi-tenant capacity to a fraction of what the
+  hardware supports (fixed in v0.3.0); malformed input crashing as an
+  unhandled 500 instead of a clean rejection (fixed in v0.5.0). Full list
+  in [CHANGELOG.md](CHANGELOG.md).
+- **Eviction under real pressure**: looping past the cache's ~25.7GB
+  ceiling correctly evicts the oldest contexts, with no memory leak across
+  repeated cycles.
+- **Concurrency is honestly benchmarked, not assumed**: throughput
+  plateaus around 9-9.4 ops/sec at concurrency 2-4 on a single replica,
+  then Ray Serve's own backpressure kicks in — see
+  `benchmarks/baselines/v0.5.0.json` and
+  [`benchmarks/README.md`](benchmarks/README.md) for the methodology
+  (adapted from LLM-serving benchmark vocabulary: TTFT → cold-fit latency,
+  tokens/sec → warm-predict ops/sec).
+- **Column count scales linearly, not quadratically** (TabICLv2's
+  inducing-point column attention, confirmed empirically): ~13ms/feature
+  for `fit()`, ~0.9ms/feature for `predict()`, out to 700 columns tested —
+  see `benchmarks/baselines/v0.5.0-feature-sweep.json`.
+
+## Status & Roadmap
+
+v0.5.0, single-replica. **Read [ROADMAP.md](ROADMAP.md) before starting new
+work** — it ranks what's next and why (short version: multi-replica
+deployment is currently broken due to a routing gap, and that's the first
+thing to fix, ahead of any pure performance work).
+
+## Contributing
+
+Issues and PRs welcome. Run `pytest tests/unit/` before submitting (no GPU
+required — the test suite runs entirely against a fake backend). See
+[CHANGELOG.md](CHANGELOG.md) for the project's history and
+[ROADMAP.md](ROADMAP.md) for where it's headed.
+
+## License
+
+[Apache 2.0](LICENSE.md)
