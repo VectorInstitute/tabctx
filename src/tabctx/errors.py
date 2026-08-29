@@ -12,6 +12,17 @@ class TabctxError(Exception):
     """Base class for all tabctx errors."""
 
 
+class InvalidInputError(TabctxError):
+    """Raised for malformed input (mismatched X/y lengths, empty tables,
+    ragged rows, a predict() feature count that doesn't match the cached
+    context) -- checked before any backend/GPU work is attempted. Found via
+    load testing: without this, malformed input reached the backend and
+    raised an unhandled, untranslated exception (numpy/sklearn shape
+    errors), surfacing as a raw 500 that leaked no useful detail to the
+    caller -- exactly the failure mode a multi-tenant service can't afford
+    (one careless client's bad request shouldn't look like a server bug)."""
+
+
 class AdmissionRejected(TabctxError):
     """Raised when a request's estimated memory footprint exceeds the
     configured ceiling, before any backend/GPU work is attempted."""

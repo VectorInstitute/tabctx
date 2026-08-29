@@ -16,6 +16,7 @@ from tabctx.errors import (
     BackendComputeError,
     CacheCapacityError,
     DatasetNotFoundError,
+    InvalidInputError,
     TabctxError,
 )
 from tabctx.types import EngineStats, PredictOutcome, Task
@@ -28,6 +29,7 @@ __all__ = [
     "ContextCacheManager",
     "DatasetNotFoundError",
     "EngineStats",
+    "InvalidInputError",
     "PredictOutcome",
     "TabctxEngine",
     "TabctxError",

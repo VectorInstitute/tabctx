@@ -3,7 +3,7 @@ import pytest
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import ContextCacheManager
 from tabctx.engine import TabctxEngine
-from tabctx.errors import AdmissionRejected, DatasetNotFoundError
+from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
 from tabctx.memory.calibration_data import A100_40GB_TABICL_CALIBRATION
 from tabctx.memory.estimator import PowerLawMemoryEstimator
 
@@ -40,6 +40,44 @@ def test_predict_unknown_dataset_id_raises():
     engine, _ = make_engine()
     with pytest.raises(DatasetNotFoundError):
         engine.predict("never-fit", TEST_X)
+
+
+@pytest.mark.parametrize(
+    "train_X,train_y",
+    [
+        pytest.param([], [], id="empty_train_X"),
+        pytest.param([[1.0, 2.0]], ["a", "b"], id="mismatched_lengths_y_longer"),
+        pytest.param([[1.0, 2.0], [3.0, 4.0]], ["a"], id="mismatched_lengths_y_shorter"),
+        pytest.param([[1.0, 2.0], [3.0]], ["a", "b"], id="ragged_rows"),
+        pytest.param([[], []], ["a", "b"], id="zero_features"),
+    ],
+)
+def test_fit_rejects_malformed_input(train_X, train_y):
+    engine, backend = make_engine()
+    with pytest.raises(InvalidInputError):
+        engine.fit(train_X, train_y)
+    assert backend.fit_calls == 0, "malformed input must be rejected before reaching the backend"
+
+
+def test_predict_rejects_empty_test_X():
+    engine, _ = make_engine()
+    dataset_id = engine.fit(TRAIN_X, TRAIN_Y)
+    with pytest.raises(InvalidInputError):
+        engine.predict(dataset_id, [])
+
+
+def test_predict_rejects_test_X_with_wrong_feature_count():
+    engine, _ = make_engine()
+    dataset_id = engine.fit(TRAIN_X, TRAIN_Y)  # 2 features
+    with pytest.raises(InvalidInputError):
+        engine.predict(dataset_id, [[1.0, 2.0, 3.0]])  # 3 features -- mismatch
+
+
+def test_predict_rejects_ragged_test_X():
+    engine, _ = make_engine()
+    dataset_id = engine.fit(TRAIN_X, TRAIN_Y)
+    with pytest.raises(InvalidInputError):
+        engine.predict(dataset_id, [[1.0, 2.0], [3.0]])
 
 
 def test_return_proba_is_a_single_backend_call_not_two():

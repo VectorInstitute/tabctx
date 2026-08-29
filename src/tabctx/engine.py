@@ -11,9 +11,49 @@ import uuid
 from tabctx.backends.base import TabularICLBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.chunking import choose_chunk_rows, split_rows
-from tabctx.errors import AdmissionRejected, DatasetNotFoundError
+from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+
+
+def _row_lengths(X: ArrayLike) -> list[int]:
+    return [len(row) for row in X]
+
+
+def _validate_fit_input(X: ArrayLike, y: ArrayLike) -> int:
+    """Returns n_features. Raises InvalidInputError for anything that would
+    otherwise reach the backend as a malformed array and blow up as an
+    unhandled, untranslated exception (numpy/sklearn shape errors) --
+    found via load testing to surface as a bare 500 with no useful detail."""
+    n_train = len(X)
+    if n_train == 0:
+        raise InvalidInputError("train_X must be non-empty")
+    if len(y) != n_train:
+        raise InvalidInputError(
+            f"train_X has {n_train} rows but train_y has {len(y)} labels"
+        )
+    lengths = _row_lengths(X)
+    n_features = lengths[0]
+    if n_features == 0:
+        raise InvalidInputError("training rows must have at least one feature")
+    if any(length != n_features for length in lengths):
+        raise InvalidInputError(
+            "all training rows must have the same number of features "
+            f"(saw lengths ranging {min(lengths)}-{max(lengths)})"
+        )
+    return n_features
+
+
+def _validate_predict_input(X_test: ArrayLike, n_features: int) -> None:
+    if len(X_test) == 0:
+        raise InvalidInputError("test_X must be non-empty")
+    lengths = _row_lengths(X_test)
+    if any(length != n_features for length in lengths):
+        raise InvalidInputError(
+            f"test_X rows must have {n_features} features (matching the "
+            f"cached training context), saw lengths ranging "
+            f"{min(lengths)}-{max(lengths)}"
+        )
 
 
 class TabctxEngine:
@@ -38,6 +78,11 @@ class TabctxEngine:
         to predict() -- generated automatically unless the caller supplies
         one (e.g. to reuse a stable, caller-known identifier).
 
+        Raises InvalidInputError for malformed input (mismatched X/y
+        lengths, empty tables, ragged rows) before anything else -- checked
+        first so a careless client's bad request can't reach the backend as
+        an unhandled exception.
+
         Raises AdmissionRejected before any backend/GPU work if the training
         shape alone is estimated to exceed the configured memory ceiling
         (using the conservative formula-based estimator -- this pre-fit gate
@@ -53,7 +98,7 @@ class TabctxEngine:
         shape, needlessly throttling how many contexts actually fit.
         """
         n_train = len(X)
-        n_features = len(X[0]) if n_train else 0
+        n_features = _validate_fit_input(X, y)
 
         if not self._estimator.admit(n_train, 0, n_features):
             raise AdmissionRejected(
@@ -103,6 +148,7 @@ class TabctxEngine:
                 "never fit, was evicted, or was lost to a replica restart "
                 "(the cache has no durability across process restarts)"
             )
+        _validate_predict_input(X_test, context.n_features)
 
         n_test = len(X_test)
         chunk_rows = choose_chunk_rows(

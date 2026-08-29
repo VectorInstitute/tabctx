@@ -30,6 +30,7 @@ from tabctx import (
     CacheCapacityError,
     ContextCacheManager,
     DatasetNotFoundError,
+    InvalidInputError,
     TabctxEngine,
 )
 from tabctx.backends.tabicl import TabICLBackend
@@ -97,12 +98,15 @@ class TabctxPredictResponse(BaseModel):
     latency_ms: float
 
 
+_INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError,)
 _COMPUTE_ERRORS = (BackendComputeError,)
 
 
 def _map_error(e: Exception) -> HTTPException:
+    if isinstance(e, _INVALID_INPUT_ERRORS):
+        return HTTPException(422, str(e))
     if isinstance(e, _ADMISSION_ERRORS):
         return HTTPException(413, str(e))
     if isinstance(e, _NOT_FOUND_ERRORS):
@@ -171,7 +175,7 @@ class TabctxService:
                 task=req.task,
                 return_proba=req.return_proba,
             )
-        except (*_ADMISSION_ERRORS, *_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
+        except (*_INVALID_INPUT_ERRORS, *_ADMISSION_ERRORS, *_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
             logger.error("[%s] %s: %s", request_id, type(e).__name__, e)
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
@@ -211,7 +215,7 @@ class TabctxService:
             dataset_id = self._engine.fit(
                 req.train_X, req.train_y, task=req.task, dataset_id=req.dataset_id
             )
-        except (*_ADMISSION_ERRORS, *_COMPUTE_ERRORS) as e:
+        except (*_INVALID_INPUT_ERRORS, *_ADMISSION_ERRORS, *_COMPUTE_ERRORS) as e:
             raise _map_error(e) from e
         return FitResponse(dataset_id=dataset_id, n_train=n_train, n_features=n_features)
 
@@ -225,7 +229,7 @@ class TabctxService:
             outcome = self._engine.predict(
                 req.dataset_id, req.test_X, return_proba=req.return_proba
             )
-        except (*_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
+        except (*_INVALID_INPUT_ERRORS, *_NOT_FOUND_ERRORS, *_COMPUTE_ERRORS) as e:
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
         return TabctxPredictResponse(

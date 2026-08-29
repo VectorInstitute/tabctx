@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-28
+### Fixed
+- Malformed input (mismatched `train_X`/`train_y` lengths, empty tables, ragged rows, zero-feature rows, a `predict()` feature count mismatched against the cached context) now raises `InvalidInputError` -> HTTP 422, instead of reaching the backend as raw numpy/sklearn arrays and surfacing as an unhandled, untranslated exception (a bare 500 with no useful detail). Found via `probe_scale.py`'s malformed-input test against a real deployment.
+
+### Context
+Found during a dedicated race-condition/throughput/input-validation test pass (`tests/gke-tabicl-test/probe_scale.py` in inference-platform), run to validate the service is robust to one careless client's bad request -- a real multi-tenant requirement, not just a nice-to-have. That same pass confirmed no data corruption under concurrent `fit()`/`predict()` races on the same `dataset_id`, and measured real sustained throughput (~1.2 fit+predict cycles/sec across 8 concurrent users, p95 latency ~7.7s) -- concrete evidence of the coarse per-replica lock's real-world cost under load, which is already a documented gap.
+
 ## [0.4.0] - 2026-08-28
 ### Added
 - `AdaptiveMemoryEstimator` (`memory/adaptive.py`): wraps the static `PowerLawMemoryEstimator` as a fallback, but the pre-fit admission gate now uses real per-fit measurements (fed back via `engine.fit()` -> `record_observation()`) whenever a past fit at least as large in both rows and features has been observed -- safe by construction (memory cost is assumed monotonic in table size, so a real measurement on a larger-or-equal shape is a valid upper bound for a smaller query), with a configurable safety margin on top. Falls back to the static formula for genuinely novel or larger-than-anything-seen shapes, and always for predict()-time chunking queries (a different, unmeasured quantity). Deployed as the default estimator in `serve/app.py`.
