@@ -1,6 +1,12 @@
 <p align="center">
-  <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml">
-    <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml/badge.svg" alt="tests">
+  <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/unit_tests.yml">
+    <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/unit_tests.yml/badge.svg" alt="unit tests">
+  </a>
+  <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/integration_tests.yml">
+    <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/integration_tests.yml/badge.svg" alt="integration tests">
+  </a>
+  <a href="https://pypi.org/project/tabctx/">
+    <img src="https://img.shields.io/pypi/v/tabctx.svg" alt="PyPI">
   </a>
   <img src="https://img.shields.io/badge/python-≥3.12-blue.svg" alt="Python ≥ 3.12">
   <img src="https://img.shields.io/badge/status-experimental%20(v0.x)-orange.svg" alt="status: experimental">
