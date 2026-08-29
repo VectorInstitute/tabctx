@@ -1,15 +1,14 @@
-# Publish tabctx to PyPI on a version tag (e.g. `git tag v0.8.0 && git push --tags`).
+# Publish tabctx to PyPI + create a GitHub Release on a version tag
+# (e.g. `git tag v0.9.0 && git push --tags`). Modeled on motive's
+# publish workflow (uv build, PyPI Trusted Publishing via OIDC -- no API
+# token stored in GitHub, `pypi` environment as the release gate).
 #
-# Uses PyPI Trusted Publishing (OIDC) -- no API token stored in GitHub.
-# ONE-TIME SETUP required before the first release (a human step):
-#   1. Create the project on PyPI (or reserve the name).
-#   2. PyPI -> project -> Publishing -> add a "trusted publisher":
-#      owner=VectorInstitute, repo=tabctx, workflow=release.yml,
-#      environment=pypi.
-#   3. GitHub repo -> Settings -> Environments -> create "pypi"
+# ONE-TIME SETUP before the first release:
+#   1. PyPI -> project (or pending publisher) -> Publishing -> add a
+#      trusted publisher: owner=VectorInstitute, repo=tabctx,
+#      workflow=release.yml, environment=pypi.
+#   2. GitHub repo -> Settings -> Environments -> create "pypi"
 #      (optionally with required reviewers as a release gate).
-# Until that setup exists, this workflow simply fails at the publish
-# step and nothing is released.
 name: release
 
 on:
@@ -20,15 +19,22 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # OIDC for PyPI Trusted Publishing
+      contents: write  # GitHub Release creation
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version-file: ".python-version"
 
       - name: Verify tag matches pyproject version
         run: |
@@ -41,29 +47,18 @@ jobs:
 
       - name: Run unit tests
         run: |
-          pip install -e ".[dev]"
-          pytest tests/unit/ -q
+          uv venv && uv pip install -e ".[dev]"
+          uv run pytest tests/unit/ -q
 
-      - name: Build sdist and wheel
-        run: |
-          pip install build
-          python -m build
+      - name: Build package
+        run: uv build
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
         with:
-          name: dist
-          path: dist/
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write  # OIDC for PyPI Trusted Publishing
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
+          artifacts: "dist/*"
+          generateReleaseNotes: true
+          allowUpdates: true

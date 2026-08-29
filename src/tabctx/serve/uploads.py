@@ -38,7 +38,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator
+from collections.abc import Iterable, Iterator
 
 from tabctx.errors import UploadNotFoundError, UploadTooLargeError
 

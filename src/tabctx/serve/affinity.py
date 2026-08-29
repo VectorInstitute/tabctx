@@ -22,7 +22,7 @@ unit-testable without a running cluster.
 from __future__ import annotations
 
 import os
-from typing import Mapping
+from collections.abc import Mapping
 
 from tabctx.errors import InvalidInputError
 

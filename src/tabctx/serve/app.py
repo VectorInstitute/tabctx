@@ -476,12 +476,14 @@ class TabctxService:
         expensive way. max_admissible_train_rows is derived live from
         the admission gate at representative feature counts, so it
         tightens/loosens as the adaptive estimator learns real costs."""
+        used_bytes = self._engine.stats().used_bytes
+        headroom = self._estimator.admission_headroom_bytes(used_bytes)
         max_rows_by_features = {}
         for n_features in (10, 50, 100, 200, 500):
             lo, hi = 0, 2_000_000
             while lo < hi:
                 mid = (lo + hi + 1) // 2
-                if self._estimator.admit(mid, 0, n_features):
+                if self._estimator.estimate_bytes(mid, 0, n_features) <= headroom:
                     lo = mid
                 else:
                     hi = mid - 1
@@ -490,13 +492,16 @@ class TabctxService:
             "backend": self._backend_name,
             "cache_mode": self._settings.kv_cache,
             "memory_ceiling_bytes": self._estimator.ceiling_bytes(),
+            "admission_headroom_bytes": headroom,
+            "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
             "max_admissible_train_rows_by_feature_count": max_rows_by_features,
             "note": (
-                "Admission limits are per-replica, derived from the memory "
-                "estimator, and adaptive: they loosen for shapes similar to "
-                "ones this replica has actually served. A rejected fit "
-                "returns 413 with the same numbers."
+                "Admission limits are per-replica, usage-aware (they shrink "
+                "as this replica's cache fills and recover as contexts are "
+                "evicted), and adaptive: they loosen for shapes similar to "
+                "ones this replica has measured. A rejected fit returns 413 "
+                "with the same numbers."
             ),
         }
 

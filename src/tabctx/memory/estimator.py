@@ -36,6 +36,16 @@ class MemoryEstimator(Protocol):
 
     def ceiling_bytes(self) -> int: ...
 
+    def admission_headroom_bytes(self, used_bytes: int) -> int:
+        """The budget a new fit's estimated (peak) cost must fit within,
+        given `used_bytes` currently resident in the cache. What OOMs a
+        GPU is transient-peak PLUS already-resident contexts, so
+        usage-aware implementations subtract used_bytes from a
+        transient ceiling near real device capacity. The static
+        estimator ignores usage and returns its fixed ceiling (its
+        conservative estimates already price in coexistence)."""
+        ...
+
     def confidence(self) -> str: ...
 
     def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:
@@ -133,6 +143,19 @@ class PowerLawMemoryEstimator:
         return self.estimate_bytes(n_train, n_test, n_features) <= self._effective_ceiling
 
     def ceiling_bytes(self) -> int:
+        return self._effective_ceiling
+
+    @property
+    def gpu_capacity_bytes(self) -> int:
+        return self._gpu_capacity_bytes
+
+    def admission_headroom_bytes(self, used_bytes: int) -> int:
+        # Fixed ceiling regardless of usage: this estimator's formula
+        # over-estimates so aggressively (see class docstring) that the
+        # gap to real device capacity already covers coexistence with
+        # cached contexts. Usage-aware headroom lives in
+        # AdaptiveMemoryEstimator, where estimates are real measurements.
+        del used_bytes
         return self._effective_ceiling
 
     def record_observation(self, n_train: int, n_features: int, real_bytes: int) -> None:

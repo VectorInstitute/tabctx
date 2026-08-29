@@ -2,7 +2,7 @@
   <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml">
     <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/tests.yml/badge.svg" alt="tests">
   </a>
-  <img src="https://img.shields.io/badge/python-≥3.10-blue.svg" alt="Python ≥ 3.10">
+  <img src="https://img.shields.io/badge/python-≥3.12-blue.svg" alt="Python ≥ 3.12">
   <img src="https://img.shields.io/badge/status-experimental%20(v0.x)-orange.svg" alt="status: experimental">
   <a href="LICENSE.md">
     <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="license">
@@ -17,31 +17,47 @@ and [TabPFN](https://github.com/PriorLabs/TabPFN) behind one engine,
 cache, and serving stack (`TABCTX_BACKEND=tabicl|tabpfn`), with a
 protocol seam (`backends/base.py`) for adding more.
 
-## Why
+## Why does this exist?
 
-TabICL and TabPFN both do a single forward pass over a labeled training
-table plus a test table, with no autoregressive decoding and no
-token-level KV cache. Both independently cache the *encoded training
-context* to speed up repeated `.predict()` calls against the same training
-set, and both call this a "KV cache" in their own docs. But it's a
-single-process, single-estimator-object feature: nobody had built the
-multi-tenant, evictable, memory-governed version of it. (Confirmed by
-searching PyPI, GitHub, and arXiv: nothing like this existed before this
-repo.)
+Tabular foundation models like TabICL and TabPFN make predictions in an
+unusual way: there is no per-dataset training loop. You hand the model a
+labeled training table and the rows you want predictions for, and it
+produces answers in a single forward pass -- the training table *is* the
+prompt ("in-context learning"). That's what makes them exciting: one
+pretrained model, any table, no training pipeline.
 
-**tabctx is that missing piece**, the analog of what PagedAttention did
-for per-request LLM KV caches, applied to per-training-set tabular ICL
-contexts.
+It also creates a serving problem. Encoding the training table is by far
+the most expensive part of that forward pass, and it's identical every
+time you predict against the same training set. Both TabICL and TabPFN
+know this: each can cache its own encoded training table (both call this
+their "KV cache", by analogy to LLMs) so repeat predictions skip the
+re-encode. But that cache lives inside one Python estimator object in
+one process. The moment you want to *serve* these models -- many users,
+many datasets, one GPU -- you need things a single object can't give
+you:
 
-It's deliberately **not** built on vLLM (its PagedAttention/continuous-
-batching machinery targets autoregressive decode, which these models don't
-do, and even vLLM's own maintainers caveat their closest precedent,
-pooling models, as "not guaranteed to provide performance improvements")
-and it's **not** written in a new systems language (vLLM's speed comes
-from Python orchestration plus custom GPU kernels, not the host language;
-the same recipe applies here). Pure Python, sitting behind a generic Ray
-Serve `@serve.deployment`, with no engine-specific orchestration layer
-needed.
+- keep many datasets' encoded tables cached at once, each addressable
+  by id, isolated per tenant;
+- know how much GPU memory each one costs, evict the coldest when the
+  budget fills, and refuse a request that would OOM the GPU *before*
+  it runs;
+- route repeat requests to wherever their cached table lives when the
+  service scales past one replica.
+
+**tabctx is that layer.** LLM serving went through the same transition
+-- a per-request KV cache inside one process became a managed,
+multi-tenant, memory-governed resource (vLLM's PagedAttention is the
+famous example). tabctx does the analogous job for tabular ICL models,
+where the cached unit is a training table's encoding rather than a chat
+session's tokens. As far as we can tell nobody had built this before
+(searched PyPI, GitHub, and arXiv).
+
+Two deliberate non-choices, briefly: it isn't built *on* vLLM, because
+vLLM's machinery is specialized for autoregressive token-by-token
+generation, which these models don't do. And it isn't written in a
+"faster language": like vLLM itself, the heavy math runs in the model's
+GPU kernels, so plain Python orchestration behind a standard Ray Serve
+deployment is exactly fast enough.
 
 ## Quick wins
 
@@ -189,7 +205,7 @@ never another tenant's model.
 
 ## Installation
 
-Requires Python ≥ 3.10.
+Requires Python ≥ 3.12.
 
 ```bash
 pip install -e .                 # core library only (FakeBackend, no GPU deps)

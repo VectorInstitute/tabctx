@@ -134,16 +134,38 @@ class BuiltEngine:
     device: str
 
 
+def _preloaded_observations(settings: ServeSettings) -> tuple:
+    """Factory-installed calibration grid matching this deployment's
+    backend + cache mode (see memory/calibration_tabicl_a100.py), so
+    admission rests on real measurements from the first request onward.
+    Only TabICL-on-A100 grids exist so far; other configurations start
+    with no preload and learn from their own fits."""
+    if settings.backend != "tabicl":
+        return ()
+    try:
+        from tabctx.memory import calibration_tabicl_a100 as grids
+    except ImportError:  # generated module absent (pre-calibration tree)
+        return ()
+    return {
+        "kv": getattr(grids, "A100_40GB_TABICL_KV_PEAK_GRID", ()),
+        "repr": getattr(grids, "A100_40GB_TABICL_REPR_PEAK_GRID", ()),
+        "off": getattr(grids, "A100_40GB_TABICL_OFF_PEAK_GRID", ()),
+    }[settings.kv_cache]
+
+
 def build_estimator(settings: ServeSettings) -> AdaptiveMemoryEstimator:
     """Adaptive estimator over the calibrated static fallback, with both
-    ceilings scaled by the configured GPU-memory fraction."""
+    ceilings scaled by the configured GPU-memory fraction and the
+    matching measured calibration grid preloaded (v0.9.0)."""
     fraction = settings.gpu_memory_fraction
     fallback = PowerLawMemoryEstimator(
         A100_40GB_TABICL_CALIBRATION,
         hard_ceiling_bytes=int(DEFAULT_HARD_CEILING_BYTES * fraction),
         gpu_capacity_bytes=int(DEFAULT_GPU_CAPACITY_BYTES * fraction),
     )
-    return AdaptiveMemoryEstimator(fallback=fallback)
+    return AdaptiveMemoryEstimator(
+        fallback=fallback, preloaded=_preloaded_observations(settings)
+    )
 
 
 def _build_backend(settings: ServeSettings) -> tuple[TabularICLBackend, str]:

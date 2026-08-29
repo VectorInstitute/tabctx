@@ -58,6 +58,7 @@ class TabPFNBackend:
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._fit_mode = _FIT_MODES[cache_mode]
         self._last_context_bytes: int | None = None
+        self._last_fit_peak_bytes: int | None = None
 
     def _make_estimator(self, task: Task) -> Any:
         if task == "classification":
@@ -74,10 +75,13 @@ class TabPFNBackend:
         model = self._make_estimator(task)
         measuring = self._device == "cuda"
         before_bytes = torch.cuda.memory_allocated() if measuring else 0
+        if measuring:
+            torch.cuda.reset_peak_memory_stats()
         try:
             model.fit(np.asarray(X, dtype=float), np.asarray(y))
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
+            self._last_fit_peak_bytes = None
             raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
         except ValueError as e:
             # TabPFN's own input gate (pretraining limits: too many rows,
@@ -85,12 +89,18 @@ class TabPFNBackend:
             # caller's oversized table is bad input, not a server fault.
             self._last_context_bytes = None
             raise InvalidInputError(f"tabpfn rejected the training table: {e}") from e
+        # Resident vs peak: two different consumers -- see
+        # backends/tabicl.py fit() for the full rationale.
         if measuring:
             self._last_context_bytes = max(
                 0, torch.cuda.memory_allocated() - before_bytes
             )
+            self._last_fit_peak_bytes = max(
+                0, torch.cuda.max_memory_allocated() - before_bytes
+            )
         else:
             self._last_context_bytes = None
+            self._last_fit_peak_bytes = None
         return model
 
     def predict(
@@ -127,3 +137,8 @@ class TabPFNBackend:
         # treat capacity numbers for TabPFN deployments as provisional
         # until real fits accumulate in the AdaptiveMemoryEstimator.
         return self._last_context_bytes
+
+    def fit_peak_bytes_hint(self) -> int | None:
+        """Transient high-water memory of the most recent fit() -- the
+        admission-relevant quantity; None on CPU/after OOM."""
+        return self._last_fit_peak_bytes

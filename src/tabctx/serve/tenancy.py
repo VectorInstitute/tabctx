@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Mapping
+from collections.abc import Mapping
 
 from tabctx.errors import InvalidInputError, TabctxError
 

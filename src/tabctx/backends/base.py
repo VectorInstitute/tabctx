@@ -41,10 +41,18 @@ class TabularICLBackend(Protocol):
         ...
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
-        """Cost of the context most recently returned by fit(), for cache
-        capacity/eviction accounting -- called by the engine AFTER fit(),
-        not before, so an implementation can report a real measurement
-        (e.g. actual device memory delta) instead of a guess. Return None
-        if the backend has no opinion; the engine falls back to its own
-        (much more conservative, pre-fit-only) MemoryEstimator."""
+        """RESIDENT cost of the context most recently returned by fit(),
+        for cache capacity/eviction accounting -- called by the engine
+        AFTER fit(), not before, so an implementation can report a real
+        measurement (e.g. actual device memory delta) instead of a guess.
+        Return None if the backend has no opinion; the engine falls back
+        to its own (much more conservative, pre-fit-only) MemoryEstimator.
+
+        Implementations MAY also expose ``fit_peak_bytes_hint() -> int |
+        None`` (optional; the engine probes with getattr): the TRANSIENT
+        high-water memory of the most recent fit(). That is the
+        admission-relevant quantity -- peak is what actually OOMs, and it
+        can exceed the resident context by orders of magnitude -- and the
+        engine feeds it (not the resident size) back into the estimator's
+        admission learning."""
         ...

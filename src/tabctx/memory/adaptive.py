@@ -56,10 +56,36 @@ class AdaptiveMemoryEstimator:
         fallback: MemoryEstimator,
         safety_margin: float = 1.5,
         max_observations: int = 500,
+        preloaded: tuple[Observation, ...] = (),
+        preloaded_margin: float = 1.1,
+        transient_capacity_fraction: float = 0.9,
     ) -> None:
+        """preloaded: factory-installed observations (e.g. a measured
+        calibration grid -- see memory/calibration_data.py), consulted
+        exactly like runtime observations but immutable and exempt from
+        the runtime FIFO cap, so a long-running replica can never evict
+        its own calibration. As of v0.9.0 observations are PEAK fit
+        bytes (the admission-relevant quantity), not resident context
+        size -- see engine.fit() and backends/base.py.
+
+        preloaded_margin: margin applied when the tightest dominating
+        observation is a calibration point (a direct measurement of
+        exactly the bounded quantity on this hardware, so it earns a
+        smaller margin than a runtime observation, which keeps
+        safety_margin). Calibration points near device capacity would
+        otherwise be pushed over the admission line by the 1.5x runtime
+        margin and re-forbid fits that measurably succeed.
+
+        transient_capacity_fraction: admission_headroom_bytes() allows a
+        fit's estimated peak to use up to this fraction of the
+        (fraction-scaled) device capacity MINUS what the cache already
+        holds resident -- peak-plus-resident is what actually OOMs."""
         self._fallback = fallback
         self._safety_margin = safety_margin
         self._max_observations = max_observations
+        self._preloaded: tuple[Observation, ...] = tuple(preloaded)
+        self._preloaded_margin = preloaded_margin
+        self._transient_capacity_fraction = transient_capacity_fraction
         self._observations: list[Observation] = []
         self._lock = threading.Lock()
 
@@ -73,22 +99,30 @@ class AdaptiveMemoryEstimator:
             if len(self._observations) > self._max_observations:
                 self._observations.pop(0)
 
-    def _best_dominating_observation(self, n_train: int, n_features: int) -> Observation | None:
+    def _best_dominating_observation(
+        self, n_train: int, n_features: int
+    ) -> tuple[Observation, bool] | None:
+        """Returns (observation, is_preloaded) for the tightest
+        dominating measurement, or None."""
         with self._lock:
-            candidates = [o for o in self._observations if o.dominates(n_train, n_features)]
+            runtime = [o for o in self._observations if o.dominates(n_train, n_features)]
+        preloaded = [o for o in self._preloaded if o.dominates(n_train, n_features)]
+        candidates = [(o, False) for o in runtime] + [(o, True) for o in preloaded]
         if not candidates:
             return None
-        return min(candidates, key=lambda o: o.cells)
+        return min(candidates, key=lambda pair: pair[0].cells)
 
     def estimate_bytes(self, n_train: int, n_test: int, n_features: int) -> int:
-        # Only fit-time/cache-accounting queries (n_test == 0) can use a
-        # learned observation -- predict()-time chunking (n_test > 0) needs
-        # to account for active test-row memory we have no measurement of
+        # Only fit-time queries (n_test == 0) can use a learned
+        # observation -- predict()-time chunking (n_test > 0) needs to
+        # account for active test-row memory we have no measurement of
         # yet, so it always uses the (conservative) fallback unchanged.
         if n_test == 0:
-            obs = self._best_dominating_observation(n_train, n_features)
-            if obs is not None:
-                return math.ceil(obs.real_bytes * self._safety_margin)
+            best = self._best_dominating_observation(n_train, n_features)
+            if best is not None:
+                obs, is_preloaded = best
+                margin = self._preloaded_margin if is_preloaded else self._safety_margin
+                return math.ceil(obs.real_bytes * margin)
         return self._fallback.estimate_bytes(n_train, n_test, n_features)
 
     def admit(self, n_train: int, n_test: int, n_features: int) -> bool:
@@ -97,11 +131,24 @@ class AdaptiveMemoryEstimator:
     def ceiling_bytes(self) -> int:
         return self._fallback.ceiling_bytes()
 
+    def admission_headroom_bytes(self, used_bytes: int) -> int:
+        """Usage-aware: a fit's transient peak coexists with everything
+        the cache holds resident, so the peak budget is (a fraction of)
+        device capacity minus current usage. Falls back to the static
+        ceiling when the fallback doesn't expose real capacity."""
+        capacity = getattr(self._fallback, "gpu_capacity_bytes", None)
+        if capacity is None:
+            return self._fallback.admission_headroom_bytes(used_bytes)
+        return max(
+            0, int(capacity * self._transient_capacity_fraction) - used_bytes
+        )
+
     def confidence(self) -> str:
         with self._lock:
             n_obs = len(self._observations)
         return (
             f"{self._fallback.confidence()} Additionally backed by "
+            f"{len(self._preloaded)} preloaded calibration measurement(s) and "
             f"{n_obs} real operational fit() measurement(s): admission "
             "decisions for a requested shape use a real measurement instead "
             "of the formula above whenever a past fit at least as large in "

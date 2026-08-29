@@ -77,6 +77,7 @@ class TabICLBackend:
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._kv_cache = kv_cache
         self._last_context_bytes: int | None = None
+        self._last_fit_peak_bytes: int | None = None
         # task -> attrs of an already-loaded backbone, shared across
         # fits. Loading is ~hundreds of MB of torch.load + H2D transfer
         # PER FIT without this. Sharing one nn.Module across estimators
@@ -131,18 +132,32 @@ class TabICLBackend:
 
         measuring = self._device == "cuda"
         before_bytes = torch.cuda.memory_allocated() if measuring else 0
+        if measuring:
+            torch.cuda.reset_peak_memory_stats()
         try:
             model.fit(X, y)
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
+            self._last_fit_peak_bytes = None
             raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
-        # Real measured delta, not a guess -- see module docstring for why
-        # this matters. None on CPU (no reliable equivalent here in v1); the
-        # engine falls back to the formula-based estimator in that case.
+        # Two DIFFERENT real measurements, for two different consumers --
+        # conflating them was the v0.4.0 design flaw fixed in v0.9.0:
+        # - resident delta (context_bytes_hint): what the fitted context
+        #   occupies afterward -> cache capacity/eviction accounting.
+        # - peak delta (fit_peak_bytes_hint): the transient high-water
+        #   during fit -> what ADMISSION must bound, since this is what
+        #   actually OOMs. Peak can exceed resident by orders of
+        #   magnitude (activations, ensemble intermediates).
+        # None on CPU; the engine falls back to the formula estimator.
         if measuring:
-            self._last_context_bytes = max(0, torch.cuda.memory_allocated() - before_bytes)
+            after_bytes = torch.cuda.memory_allocated()
+            self._last_context_bytes = max(0, after_bytes - before_bytes)
+            self._last_fit_peak_bytes = max(
+                0, torch.cuda.max_memory_allocated() - before_bytes
+            )
         else:
             self._last_context_bytes = None
+            self._last_fit_peak_bytes = None
         self._stash_backbone(task, model)
         return model
 
@@ -178,3 +193,8 @@ class TabICLBackend:
         # module docstring); None on CPU or if fit() OOM'd, in which case
         # the engine falls back to the formula-based MemoryEstimator.
         return self._last_context_bytes
+
+    def fit_peak_bytes_hint(self) -> int | None:
+        """Transient high-water memory of the most recent fit() -- the
+        admission-relevant quantity (see fit()); None on CPU/after OOM."""
+        return self._last_fit_peak_bytes

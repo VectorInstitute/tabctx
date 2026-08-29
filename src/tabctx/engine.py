@@ -125,12 +125,26 @@ class TabctxEngine:
         n_train = len(X)
         n_features = _validate_fit_input(X, y)
 
-        if not self._estimator.admit(n_train, 0, n_features):
+        # Usage-aware admission (v0.9.0): what OOMs is the fit's transient
+        # PEAK on top of everything already resident, so the estimated
+        # peak must fit the estimator's headroom given current cache
+        # usage. (The static estimator's headroom ignores usage -- its
+        # formula is conservative enough to price coexistence in; the
+        # adaptive estimator subtracts real usage from real capacity.)
+        # Known conservatism: usage is measured before eviction, so a
+        # nearly-full cache can reject a fit that evicting cold contexts
+        # would have made room for -- evict-ahead-of-fit is a possible
+        # future refinement.
+        estimated = self._estimator.estimate_bytes(n_train, 0, n_features)
+        headroom = self._estimator.admission_headroom_bytes(
+            self._cache.stats().used_bytes
+        )
+        if estimated > headroom:
             raise AdmissionRejected(
                 f"training shape ({n_train} rows x {n_features} features) "
-                f"is estimated to need "
-                f"{self._estimator.estimate_bytes(n_train, 0, n_features)} bytes, "
-                f"exceeding the {self._estimator.ceiling_bytes()} byte ceiling"
+                f"is estimated to need {estimated} bytes at peak, "
+                f"exceeding the current {headroom} byte admission headroom "
+                f"(cache holds {self._cache.stats().used_bytes} bytes)"
             )
 
         resolved_id = dataset_id or str(uuid.uuid4())
@@ -140,11 +154,18 @@ class TabctxEngine:
             if est_bytes is None:
                 est_bytes = self._estimator.estimate_bytes(n_train, 0, n_features)
             else:
-                # A real measurement, not a guess -- feed it back so the
-                # PRE-FIT admission gate can use it (safely, as a bound for
-                # smaller/equal future shapes) for requests that haven't
-                # happened yet. See memory/adaptive.py.
-                self._estimator.record_observation(n_train, n_features, est_bytes)
+                # Feed a real measurement back so the PRE-FIT admission
+                # gate can use it (safely, as a bound for smaller/equal
+                # future shapes -- see memory/adaptive.py). What admission
+                # must bound is the fit's transient PEAK (that's what
+                # OOMs), so prefer the peak hint when the backend reports
+                # one; the resident size is only a (low) fallback for
+                # backends without peak measurement.
+                peak_hint = getattr(self._backend, "fit_peak_bytes_hint", None)
+                peak_bytes = peak_hint() if callable(peak_hint) else None
+                self._estimator.record_observation(
+                    n_train, n_features, peak_bytes if peak_bytes else est_bytes
+                )
             context = CachedContext(
                 dataset_id=resolved_id,
                 backend_name=self._backend.name,

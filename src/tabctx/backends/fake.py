@@ -38,8 +38,10 @@ class FakeBackend:
         bytes_hint: int | None = None,
         fit_delay_s: float = 0.0,
         predict_delay_s: float = 0.0,
+        peak_bytes_hint: int | None = None,
     ) -> None:
         self._bytes_hint = bytes_hint
+        self._peak_bytes_hint = peak_bytes_hint
         self._fit_delay_s = fit_delay_s
         self._predict_delay_s = predict_delay_s
         self.fit_calls = 0
@@ -90,3 +92,6 @@ class FakeBackend:
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features  # unused: this backend's hint is fixed at construction
         return self._bytes_hint
+
+    def fit_peak_bytes_hint(self) -> int | None:
+        return self._peak_bytes_hint
