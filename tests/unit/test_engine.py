@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from tabctx.backends.fake import FakeBackend
@@ -169,3 +170,80 @@ def test_stats_reflect_cached_contexts():
     assert engine.stats().n_cached_contexts == 1
     engine.evict(dataset_id)
     assert engine.stats().n_cached_contexts == 0
+
+
+class TestNumpyInput:
+    """X/y as numpy arrays take the rectangular-shape fast path
+    (_rect_shape) instead of the per-row Python loop -- both must agree
+    on validation outcomes."""
+
+    def test_fit_and_predict_accept_numpy_2d_arrays(self):
+        engine, _ = make_engine()
+        X = np.array(TRAIN_X, dtype=np.float32)
+        y = np.array(TRAIN_Y)
+        dataset_id = engine.fit(X, y, task="classification")
+        result = engine.predict(dataset_id, np.array(TEST_X, dtype=np.float32))
+        assert len(result.predictions) == len(TEST_X)
+
+    def test_fit_rejects_numpy_array_with_zero_features(self):
+        engine, backend = make_engine()
+        with pytest.raises(InvalidInputError):
+            engine.fit(np.empty((3, 0)), np.array(["a", "b", "c"]))
+        assert backend.fit_calls == 0
+
+    def test_predict_rejects_numpy_test_X_with_wrong_feature_count(self):
+        engine, _ = make_engine()
+        dataset_id = engine.fit(np.array(TRAIN_X, dtype=np.float32), np.array(TRAIN_Y))
+        with pytest.raises(InvalidInputError):
+            engine.predict(dataset_id, np.array([[1.0, 2.0, 3.0]], dtype=np.float32))
+
+
+class TestConstructorValidation:
+    def test_requires_cache(self):
+        with pytest.raises(ValueError, match="cache is required"):
+            TabctxEngine(
+                backend=FakeBackend(),
+                estimator=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION),
+            )
+
+    def test_single_backend_form_requires_backend_and_estimator(self):
+        cache = ContextCacheManager(capacity_bytes=1_000_000)
+        with pytest.raises(ValueError, match="provide backend"):
+            TabctxEngine(cache=cache)
+
+    def test_multi_backend_form_requires_estimators_and_valid_default(self):
+        cache = ContextCacheManager(capacity_bytes=1_000_000)
+        with pytest.raises(ValueError, match="multi-backend form needs"):
+            TabctxEngine(
+                backends={"a": FakeBackend(name="a")},
+                cache=cache,
+                estimators=None,
+                default_backend="a",
+            )
+        with pytest.raises(ValueError, match="multi-backend form needs"):
+            TabctxEngine(
+                backends={"a": FakeBackend(name="a")},
+                cache=cache,
+                estimators={"a": PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)},
+                default_backend="not-a-backend",
+            )
+
+    def test_backends_and_estimators_keys_must_match(self):
+        cache = ContextCacheManager(capacity_bytes=1_000_000)
+        with pytest.raises(ValueError, match="must share keys"):
+            TabctxEngine(
+                backends={"a": FakeBackend(name="a")},
+                estimators={"b": PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)},
+                cache=cache,
+                default_backend="a",
+            )
+
+
+class TestBackendIntrospection:
+    def test_default_backend_property(self):
+        engine, _ = make_engine()
+        assert engine.default_backend == "fake"
+
+    def test_estimator_for_default_and_named(self):
+        engine, _ = make_engine()
+        assert engine.estimator_for() is engine.estimator_for("fake")

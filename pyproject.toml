@@ -76,3 +76,17 @@ packages = ["src/tabctx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# tabicl/tabpfn need a real GPU or PriorLabs-licensed weights and are
+# never installed by any CI job (unit_tests.yml runs `uv sync --dev`;
+# integration_tests.yml installs `.[serve,dev]` -- neither pulls in
+# tabicl, tabpfn, or torch). They're tested locally/on GPU rigs instead
+# (see tests/integration/test_tabpfn_backend.py's docstring). Measuring
+# coverage on code that structurally cannot run in CI would just be a
+# permanent, meaningless 0% rather than a signal -- omitted here for
+# the same reason.
+omit = [
+    "src/tabctx/backends/tabicl.py",
+    "src/tabctx/backends/tabpfn.py",
+]

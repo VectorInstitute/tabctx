@@ -57,6 +57,15 @@ class TestParseTrainCsv:
         with pytest.raises(InvalidInputError):
             parse_train_csv(_write(tmp_path, "f0,label\n"), "classification")
 
+    def test_ragged_target_column_rejected(self, tmp_path):
+        # Feature columns (0, 1) are present in every row, so they parse
+        # cleanly; the target column (index 2) is missing from the second
+        # data row -- must surface as a 422-worthy InvalidInputError, not
+        # an unhandled numpy ValueError.
+        p = _write(tmp_path, "a,b,label\n1,2,x\n3,4\n")
+        with pytest.raises(InvalidInputError, match="train target"):
+            parse_train_csv(p, "classification")
+
     def test_single_row_still_2d(self, tmp_path):
         X, y, _ = parse_train_csv(
             _write(tmp_path, "f0,f1,label\n1,2,cat\n"), "classification"

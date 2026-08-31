@@ -1,6 +1,8 @@
 """Unit tests for the disk spillover tier (cache/spill.py + its
 ContextCacheManager integration)."""
 
+from pathlib import Path
+
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.cache.spill import DiskSpillStore
@@ -58,6 +60,29 @@ class TestDiskSpillStore:
         DiskSpillStore(tmp_path).spill(_ctx("survivor"))
         # A NEW store over the same directory (fresh process) can load it.
         assert DiskSpillStore(tmp_path).load("survivor") is not None
+
+    def test_write_failure_downgrades_to_plain_eviction(self, tmp_path, monkeypatch):
+        store = DiskSpillStore(tmp_path)
+
+        def boom(self, data):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(Path, "write_bytes", boom)
+        assert store.spill(_ctx("x")) is False
+        # No partial files left behind.
+        assert list(tmp_path.iterdir()) == []
+
+    def test_make_room_gives_up_when_disk_has_untracked_files(self, tmp_path):
+        # A payload file present on disk but absent from the in-memory
+        # index (e.g. left by a process that crashed mid-spill) must not
+        # make _make_room loop forever -- it gives up rather than evicting
+        # something it has no record of.
+        store = DiskSpillStore(tmp_path, capacity_bytes=10)
+        (tmp_path / "stray.payload").write_bytes(b"x" * 100)
+        assert store._index == {}
+        # spill() still succeeds (capacity is soft, not enforced on write).
+        assert store.spill(_ctx("y", payload=b"z" * 5))
+        assert store.load("y") is not None
 
 
 class TestCacheManagerIntegration:

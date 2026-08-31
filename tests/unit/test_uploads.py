@@ -87,3 +87,19 @@ class TestExpiry:
         stats = store.stats()
         assert stats["n_pending_uploads"] == 1
         assert stats["pending_bytes"] == 4
+
+
+class TestDefaultDirectory:
+    def test_no_directory_uses_a_fresh_tempdir(self):
+        store = UploadStore()
+        record = store.put([b"data"])
+        assert record.path.exists()
+        assert store.consume(record.upload_id) == record.path
+
+
+class TestIteration:
+    def test_iterates_pending_records(self, store):
+        a = store.put([b"a"])
+        b = store.put([b"bb"])
+        ids = {r.upload_id for r in store}
+        assert ids == {a.upload_id, b.upload_id}

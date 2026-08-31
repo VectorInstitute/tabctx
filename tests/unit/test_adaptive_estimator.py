@@ -94,3 +94,32 @@ def test_confidence_reports_observation_count():
     assert "0 real operational" in est.confidence()
     est.record_observation(n_train=1000, n_features=10, real_bytes=1_000_000)
     assert "1 real operational" in est.confidence()
+
+
+def test_headroom_falls_back_to_static_when_fallback_has_no_gpu_capacity():
+    # A fallback estimator that doesn't expose gpu_capacity_bytes (i.e.
+    # isn't PowerLawMemoryEstimator) can't support usage-aware headroom --
+    # AdaptiveMemoryEstimator must defer to the fallback's own headroom
+    # rather than crash on the missing attribute.
+    class StubEstimator:
+        def estimate_bytes(self, n_train, n_test, n_features):
+            return 1
+
+        def admit(self, n_train, n_test, n_features):
+            return True
+
+        def ceiling_bytes(self):
+            return 1000
+
+        def admission_headroom_bytes(self, used_bytes):
+            del used_bytes
+            return 42
+
+        def confidence(self):
+            return "stub"
+
+        def record_observation(self, n_train, n_features, real_bytes):
+            del n_train, n_features, real_bytes
+
+    est = AdaptiveMemoryEstimator(fallback=StubEstimator())
+    assert est.admission_headroom_bytes(999) == 42

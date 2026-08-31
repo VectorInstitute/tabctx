@@ -94,7 +94,12 @@ def parse_train_csv(
             raise InvalidInputError(f"train target: unreadable CSV column ({e})") from e
         y = [str(v).strip() for v in y_arr[:, 0]]
 
-    if len(y) != X.shape[0]:
+    if len(y) != X.shape[0]:  # pragma: no cover
+        # Defensive: X and y are parsed independently (same file, same
+        # skiprows) so a real CSV can't make them disagree -- found no
+        # way to construct one in testing. Kept as a guard rather than an
+        # assert so a future parsing change that could break this
+        # invariant fails as a clean 422, not a silent shape mismatch.
         raise InvalidInputError(
             f"target column has {len(y)} values but features have {X.shape[0]} rows"
         )
