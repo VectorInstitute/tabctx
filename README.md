@@ -5,6 +5,9 @@
   <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/integration_tests.yml">
     <img src="https://github.com/VectorInstitute/tabctx/actions/workflows/integration_tests.yml/badge.svg" alt="integration tests">
   </a>
+  <a href="https://codecov.io/github/VectorInstitute/tabctx">
+    <img src="https://codecov.io/github/VectorInstitute/tabctx/graph/badge.svg" alt="codecov">
+  </a>
   <a href="https://pypi.org/project/tabctx/">
     <img src="https://img.shields.io/pypi/v/tabctx.svg" alt="PyPI">
   </a>
@@ -302,8 +305,10 @@ before starting new work** -- it ranks what's next and why.
 
 ## Contributing
 
-Issues and PRs welcome. Run `pytest tests/unit/` before submitting (no GPU
-required; the test suite runs entirely against a fake backend). See
+Issues and PRs welcome -- see [CONTRIBUTING.md](CONTRIBUTING.md) for
+guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community
+standards. Run `pytest tests/unit/` before submitting (no GPU required; the
+test suite runs entirely against a fake backend). See
 [CHANGELOG.md](CHANGELOG.md) for the project's history and
 [ROADMAP.md](ROADMAP.md) for where it's headed.
 

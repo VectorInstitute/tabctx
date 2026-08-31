@@ -44,4 +44,12 @@ jobs:
         run: uv sync --dev
 
       - name: Run unit tests with coverage
-        run: uv run pytest tests/unit --cov tabctx --cov-report=term-missing -q
+        run: uv run pytest tests/unit --cov tabctx --cov-report=term-missing --cov-report=xml -q
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: VectorInstitute/tabctx
+          fail_ci_if_error: false
+          verbose: true
