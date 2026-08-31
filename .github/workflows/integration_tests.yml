@@ -48,10 +48,29 @@ jobs:
         run: |
           uv venv && uv pip install -e ".[serve,dev]"
 
-      - name: Run integration tests
+      - name: Run integration tests with coverage
         # Invoked via the venv's python, NOT `uv run`: under `uv run`,
         # Ray launches its worker processes through uv, which re-syncs
         # the project env from the lockfile (dev group only -- no
         # ray[serve]) and every replica dies with "No module named
         # 'ray'". Observed on CI run 33260341506.
-        run: .venv/bin/python -m pytest tests/integration -q
+        #
+        # serve/app.py needs a live Ray Serve cluster (fake backend, no
+        # GPU) -- it's the one module these tests exercise that the
+        # unit-test job structurally can't (no ray[serve] there by
+        # design, see unit_tests.yml). Measuring coverage here and
+        # uploading it as its own codecov flag lets the "overall" number
+        # reflect that real coverage instead of unit_tests.yml's 0% for
+        # this file alone.
+        run: |
+          .venv/bin/python -m pytest tests/integration \
+            --cov tabctx --cov-report=xml --cov-report=term-missing -q
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: VectorInstitute/tabctx
+          flags: integration
+          fail_ci_if_error: false
+          verbose: true

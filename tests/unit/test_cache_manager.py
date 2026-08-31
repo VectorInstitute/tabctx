@@ -85,3 +85,39 @@ def test_evict_removes_entry():
 def test_evict_missing_id_is_a_noop():
     cache = ContextCacheManager(capacity_bytes=1000)
     cache.evict("does-not-exist")  # must not raise
+
+
+def test_make_room_stops_when_nothing_left_to_evict():
+    # Calling make_room directly (bypassing put()'s own-size guard) with a
+    # target larger than total capacity must stop cleanly once the cache is
+    # empty, rather than looping forever.
+    cache = ContextCacheManager(capacity_bytes=100)
+    cache.put(make_context("a", 100))
+    evicted = cache.make_room(1000)
+    assert evicted == ["a"]
+    assert cache.stats().n_cached_contexts == 0
+
+
+def test_evict_one_on_empty_cache_returns_none():
+    cache = ContextCacheManager(capacity_bytes=1000)
+    assert cache.evict_one() is None
+
+
+def test_evict_one_evicts_lru_victim():
+    cache = ContextCacheManager(capacity_bytes=1000)
+    cache.put(make_context("old", 100, last_accessed_at=1.0))
+    cache.put(make_context("new", 100, last_accessed_at=2.0))
+    victim = cache.evict_one()
+    assert victim == "old"
+    assert cache.get("old") is None
+    assert cache.get("new") is not None
+
+
+def test_evict_one_spills_when_a_spill_tier_is_attached(tmp_path):
+    from tabctx.cache.spill import DiskSpillStore
+
+    spill = DiskSpillStore(tmp_path)
+    cache = ContextCacheManager(capacity_bytes=1000, spill_store=spill)
+    cache.put(make_context("a", 100))
+    assert cache.evict_one() == "a"
+    assert spill.stats()["n_spilled_contexts"] == 1

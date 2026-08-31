@@ -51,5 +51,6 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: VectorInstitute/tabctx
+          flags: unit
           fail_ci_if_error: false
           verbose: true

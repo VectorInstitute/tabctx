@@ -161,3 +161,73 @@ class TestFailureIsolation:
                 f"innocent request {name} was poisoned by another member's "
                 "malformed input"
             )
+
+    def test_context_level_failure_propagates_to_every_member(self):
+        # Unlike a per-member InvalidInputError, a context-level failure
+        # (dataset evicted mid-flight, backend compute error) would have
+        # hit every member individually too -- all of them must see it.
+        engine, _ = _make_engine(predict_delay_s=0.01)
+        _fit(engine, "ds")
+        predictor = CoalescingPredictor(engine, window_s=0.08)
+        predictor._engine.evict("ds")  # context vanishes before the batch runs
+
+        barrier = threading.Barrier(2)
+        errors: dict[str, Exception] = {}
+
+        def call(name):
+            barrier.wait()
+            try:
+                predictor.predict("ds", [[1.0, 2.0]])
+            except DatasetNotFoundError as e:
+                errors[name] = e
+
+        threads = [
+            threading.Thread(target=call, args=("m1",)),
+            threading.Thread(target=call, args=("m2",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert set(errors) == {"m1", "m2"}
+
+    def test_leader_bug_still_unblocks_followers(self):
+        # Defensive path: if the leader's _execute() itself raises (a bug
+        # in the coalescing machinery, not a normal predict failure --
+        # normal failures are already caught inside _execute), followers
+        # must still be released with a clear error instead of hanging.
+        engine, _ = _make_engine(predict_delay_s=0.01)
+        _fit(engine, "ds")
+        predictor = CoalescingPredictor(engine, window_s=0.08)
+
+        def broken_execute(key, batch):
+            raise RuntimeError("bug in coalescing internals")
+
+        predictor._execute = broken_execute
+
+        barrier = threading.Barrier(2)
+        outcomes: dict[str, object] = {}
+
+        def call(name):
+            barrier.wait()
+            try:
+                predictor.predict("ds", [[1.0, 2.0]])
+            except Exception as e:  # noqa: BLE001 -- capturing either exception type
+                outcomes[name] = e
+
+        threads = [
+            threading.Thread(target=call, args=("m1",)),
+            threading.Thread(target=call, args=("m2",)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Which of the two becomes the batch leader is a race (both block
+        # on the barrier and then contend for the batching lock), so
+        # assert on the two DISTINCT outcomes rather than on identity.
+        messages = {str(e) for e in outcomes.values()}
+        assert "bug in coalescing internals" in messages  # the leader's own error
+        assert any("batch leader failed" in m for m in messages)  # follower's

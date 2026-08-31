@@ -60,6 +60,13 @@ def test_confidence_names_the_oom_boundary_window():
     assert "18,400,000" in msg
 
 
+def test_zero_cells_estimate_is_zero():
+    # (n_train + n_test) * n_features == 0 -- nothing to encode, so the
+    # power-law fit (undefined at cells=0) is skipped entirely.
+    est = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+    assert est.estimate_bytes(0, 0, 0) == 0
+
+
 def test_higher_safety_margin_reduces_admitted_shapes():
     lax = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION, safety_margin=1.0)
     strict = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION, safety_margin=5.0)

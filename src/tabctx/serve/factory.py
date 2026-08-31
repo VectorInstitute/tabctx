@@ -224,16 +224,15 @@ def build_estimator(
     )
 
 
-def _build_backend(
+def _build_real_backend(
     kind: BackendKind, settings: ServeSettings
-) -> tuple[TabularICLBackend, str]:
-    """Returns (backend, device). Imports torch/tabicl/tabpfn only on the
-    paths that need them, so the fake backend runs with core deps alone."""
-    if kind == "fake":
-        from tabctx.backends.fake import FakeBackend
-
-        return FakeBackend(), "cpu (fake backend)"
-
+) -> tuple[TabularICLBackend, str]:  # pragma: no cover
+    # Requires torch + tabicl/tabpfn (GPU or licensed weights), which --
+    # like backends/tabicl.py and backends/tabpfn.py themselves -- are not
+    # part of any unit- or integration-test CI extra; see those modules'
+    # docstrings. Isolated in its own function so the pragma doesn't also
+    # exclude the (fully unit-tested) fake-backend and dispatch logic in
+    # _build_backend below.
     import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -247,6 +246,18 @@ def _build_backend(
 
     kv_cache: bool | str = False if settings.kv_cache == "off" else settings.kv_cache
     return TabICLBackend(device=device, kv_cache=kv_cache), device
+
+
+def _build_backend(
+    kind: BackendKind, settings: ServeSettings
+) -> tuple[TabularICLBackend, str]:
+    """Returns (backend, device). Imports torch/tabicl/tabpfn only on the
+    paths that need them, so the fake backend runs with core deps alone."""
+    if kind == "fake":
+        from tabctx.backends.fake import FakeBackend
+
+        return FakeBackend(), "cpu (fake backend)"
+    return _build_real_backend(kind, settings)
 
 
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:

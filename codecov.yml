@@ -1,7 +1,21 @@
+# Two flags feed the "overall" project number: `unit` (tests/unit,
+# unit_tests.yml -- fast, no GPU/ray) and `integration` (tests/integration,
+# integration_tests.yml -- boots a real local Ray Serve cluster, which is
+# what actually exercises serve/app.py). Both must land before the merged
+# report is complete.
+flags:
+  unit:
+    paths:
+      - src/tabctx/
+    carryforward: false
+  integration:
+    paths:
+      - src/tabctx/
+    carryforward: false
 codecov:
   require_ci_to_pass: true
   notify:
-    after_n_builds: 1
+    after_n_builds: 2
     wait_for_ci: yes
 comment:
   behavior: default
