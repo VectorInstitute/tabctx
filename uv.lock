@@ -2771,6 +2771,7 @@ dependencies = [
 dev = [
     { name = "httpx" },
     { name = "pytest" },
+    { name = "pytest-cov" },
 ]
 serve = [
     { name = "fastapi" },
@@ -2803,6 +2804,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'serve'" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "ray", extras = ["serve"], marker = "extra == 'serve'", specifier = ">=2.58.0" },
     { name = "tabicl", marker = "extra == 'tabicl'" },
     { name = "tabpfn", marker = "extra == 'tabpfn'" },
