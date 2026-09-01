@@ -18,6 +18,9 @@ Found by a full-codebase review (2026-09-01), each with a regression test:
 ### Added
 - `benchmarks/probe_deployment.py`: end-to-end acceptance probe for a live deployment on any GPU via `TabctxClient` (tenant + custom session header aware): cache reuse, single-pass proba, upload/fit/predict by reference + schema check, chunked predicts, coalescing, and fill-until-eviction with spill restore.
 
+### Validated
+- All of the above on a live GKE deployment (`tabctx-gateway`, one NVIDIA L4 24GB, TabICLv2 + TabPFN-3, spill on) via `probe_deployment.py`: 24/24 checks. The device-capacity fix is visible there: cache ceiling 14.3GB / admission headroom 20.1GB (was 24GB / 36GB, i.e. more than the card). Deployment gotcha recorded for next time: Ray caches pip runtime envs by package spec on every node, and the Serve controller ships the ingress-wrapped class from the HEAD's cached env by value -- a same-named wheel only goes live after the head pod (not just the worker) restarts.
+
 ## [0.9.1] - 2026-08-29
 ### Fixed
 Two bugs found by the dedicated GKE stress run (a fresh single-replica A100 deployment of v0.9.0 with both models and spillover):

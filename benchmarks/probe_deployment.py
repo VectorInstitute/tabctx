@@ -9,7 +9,14 @@ check, chunked large predicts, same-context coalescing, and -- by
 filling the cache -- eviction into the spill tier and transparent
 restore. Every check prints PASS/FAIL; the exit code is non-zero if any
 failed. Read-only for the deployment apart from the contexts it fits
-under its own dataset_id prefix (evicted at the end).
+under its own tenant + dataset_id prefix; the API has no delete
+endpoint (ROADMAP item 1), so they are left to LRU eviction.
+
+First run on the GKE tabctx-gateway L4 (2026-09-01, TabICLv2 + TabPFN-3,
+spill on): 24/24 -- cold fit 5.3s vs warm predict 211ms (TabICL) /
+508ms (TabPFN), 16 concurrent predicts -> 12 engine calls, a 20k x 50
+fit evict-ahead spilled 4 contexts and the first one restored and
+predicted identically.
 
 Unlike the inference-platform probes this handles deployments that
 require a tenant header (TABCTX_REQUIRE_TENANT=true) and that rename the

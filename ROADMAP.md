@@ -20,7 +20,8 @@ remainder, and gets deleted when it empties.
       and a `persisted` state; serialized files carry tabctx / backend /
       torch versions and device so a mismatch re-fits instead of
       loading garbage.
-   2. `POST /v1/tabctx/datasets/{id}/persist`, `GET /v1/tabctx/datasets`
+   2. `POST /v1/tabctx/datasets/{id}/persist`, `DELETE /v1/tabctx/datasets/{id}`
+      (today nothing but LRU pressure removes a context), `GET /v1/tabctx/datasets`
       (per tenant: task, model, shape, feature names, residency), a
       warm-load manifest at replica start, and a batch `tabctx fit`
       entry point that writes to the store without a serving replica.
