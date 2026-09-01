@@ -84,6 +84,7 @@ class TestMapStatus:
             (413, AdmissionRejected),
             (507, BackendComputeError),
             (401, PermissionError),
+            (503, TabctxBackpressureError),
         ],
     )
     def test_maps_known_codes(self, code, exc_type):
@@ -177,6 +178,27 @@ class TestFit:
         assert captured["url"] == "http://localhost:8000/v1/tabctx/fit"
 
 
+class TestSessionHeaderName:
+    def test_custom_session_header_name(self, monkeypatch):
+        # Deployments may rename the affinity header via
+        # RAY_SERVE_SESSION_ID_HEADER_KEY; the client must follow suit or
+        # affinity silently degrades to uniform routing.
+        captured = {}
+        _install(
+            monkeypatch,
+            lambda req: (
+                captured.__setitem__("headers", req.headers),
+                _json_response({"dataset_id": "x"}),
+            )[1],
+        )
+        client = TabctxClient(
+            "http://localhost:8000", session_header="x-tabctx-session-id"
+        )
+        client.fit([[1.0]], ["a"], dataset_id="ds-1")
+        assert captured["headers"]["X-tabctx-session-id"] == "ds-1"
+        assert "X-session-id" not in captured["headers"]
+
+
 class TestTenantHeader:
     def test_tenant_header_sent_when_configured(self, monkeypatch):
         captured = {}
@@ -227,20 +249,68 @@ class TestUpload:
         assert captured["headers"]["Content-type"] == "text/csv"
         assert captured["headers"]["X-session-id"] == "ds-1"
 
-    def test_upload_csv_file_reads_file_bytes(self, monkeypatch, tmp_path):
+    def test_upload_csv_file_streams_the_open_file(self, monkeypatch, tmp_path):
+        # The by-reference path exists for tables too big for inline
+        # JSON, so the client must hand urllib the open file (streamed
+        # in blocks) with an explicit Content-Length, not f.read().
         p = tmp_path / "t.csv"
         p.write_bytes(b"a,b\n1,2\n")
         captured = {}
-        _install(
-            monkeypatch,
-            lambda req: (
-                captured.__setitem__("data", req.data),
-                _json_response({"upload_id": "up-2"}),
-            )[1],
-        )
+
+        def handler(req):
+            captured["headers"] = req.headers
+            captured["is_file"] = hasattr(req.data, "read")
+            captured["data"] = req.data.read()
+            return _json_response({"upload_id": "up-2"})
+
+        _install(monkeypatch, handler)
         client = TabctxClient("http://localhost:8000")
         assert client.upload_csv_file(str(p), dataset_id="ds-1") == "up-2"
+        assert captured["is_file"]
         assert captured["data"] == b"a,b\n1,2\n"
+        assert captured["headers"]["Content-length"] == str(len(b"a,b\n1,2\n"))
+        assert captured["headers"]["Content-type"] == "text/csv"
+
+    def test_upload_csv_file_real_http_roundtrip(self, monkeypatch, tmp_path):
+        """No urlopen stub: a real local HTTP server receives the
+        streamed body, proving urllib actually accepts the file object
+        + Content-Length combination end to end."""
+        import http.server
+        import threading
+
+        monkeypatch.undo()  # drop the autouse urlopen/sleep patches
+        body = b"f0,f1\n" + b"\n".join(b"%d,%d" % (i, i * 2) for i in range(5000))
+        p = tmp_path / "big.csv"
+        p.write_bytes(body)
+        received = {}
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers["Content-Length"])
+                received["body"] = self.rfile.read(n)
+                received["path"] = self.path
+                received["session"] = self.headers.get("x-session-id")
+                out = json.dumps({"upload_id": "up-real"}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *args):  # keep pytest output clean
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            client = TabctxClient(f"http://127.0.0.1:{server.server_port}")
+            assert client.upload_csv_file(str(p), dataset_id="ds-1") == "up-real"
+        finally:
+            server.shutdown()
+        assert received["body"] == body
+        assert received["path"] == "/v1/tabctx/upload"
+        assert received["session"] == "ds-1"
 
     def test_upload_csv_maps_413_to_admission_rejected(self, monkeypatch):
         _install(
@@ -376,6 +446,32 @@ class TestFitPredict:
 
 
 class TestGetEndpoints:
+    def test_get_maps_http_errors_like_post(self, monkeypatch):
+        # GETs used to leak raw urllib.error.HTTPError; every call in the
+        # client must speak tabctx's exception vocabulary.
+        _install(
+            monkeypatch,
+            lambda req: (_ for _ in ()).throw(
+                _http_error(503, {"detail": "replica busy"})
+            ),
+        )
+        with pytest.raises(TabctxBackpressureError):
+            TabctxClient("http://localhost:8000").ready()
+
+    def test_get_uses_get_method_without_body(self, monkeypatch):
+        captured = {}
+        _install(
+            monkeypatch,
+            lambda req: (
+                captured.__setitem__("method", req.get_method()),
+                captured.__setitem__("data", req.data),
+                _json_response({"status": "ready"}),
+            )[2],
+        )
+        TabctxClient("http://localhost:8000").ready()
+        assert captured["method"] == "GET"
+        assert captured["data"] is None
+
     def test_ready(self, monkeypatch):
         captured = {}
         _install(

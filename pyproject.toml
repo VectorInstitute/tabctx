@@ -57,6 +57,9 @@ dev = [
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+# ruff >= 0.14 also formats fenced code in Markdown; README snippets are
+# hand-aligned for reading, not for the formatter.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]

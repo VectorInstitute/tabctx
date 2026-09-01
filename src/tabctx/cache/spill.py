@@ -69,9 +69,10 @@ class DiskSpillStore:
         self._capacity_bytes = capacity_bytes
         self._serializers = serializers or {}
         self._lock = threading.Lock()
-        # dataset_id -> (meta, last_used monotonic) for entries this
-        # process knows about; rebuilt lazily from disk for entries a
-        # predecessor process spilled (warm restart).
+        # dataset_id -> last-used monotonic time for entries this process
+        # knows about; entries a predecessor process spilled (warm
+        # restart) are indexed at 0.0, i.e. oldest, so they are the
+        # first to go under disk pressure.
         self._index: dict[str, float] = {}
         for meta_path in self._dir.glob("*.meta.json"):
             self._index[meta_path.name[: -len(".meta.json")]] = 0.0
@@ -105,6 +106,7 @@ class DiskSpillStore:
                         "n_train": context.n_train,
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
+                        "feature_names": context.feature_names,
                     }
                 )
             )
@@ -142,6 +144,8 @@ class DiskSpillStore:
             n_features=meta["n_features"],
             payload=payload,
             est_bytes=meta["est_bytes"],
+            # Absent from files written before feature_names existed.
+            feature_names=meta.get("feature_names"),
         )
 
     def delete(self, dataset_id: str) -> None:

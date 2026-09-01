@@ -151,10 +151,16 @@ class TabctxEngine:
         task: Task = "classification",
         dataset_id: str | None = None,
         backend: str | None = None,
+        feature_names: list[str] | None = None,
     ) -> str:
         """Encode and cache a training context. Returns a dataset_id to pass
         to predict() -- generated automatically unless the caller supplies
         one (e.g. to reuse a stable, caller-known identifier).
+
+        feature_names (optional) records the training table's column
+        names on the cached context (see CachedContext) for callers that
+        validate a test table's header against it; the engine itself only
+        ever checks feature *count*.
 
         Raises InvalidInputError for malformed input (mismatched X/y
         lengths, empty tables, ragged rows) before anything else -- checked
@@ -216,12 +222,15 @@ class TabctxEngine:
                 if estimated <= headroom:
                     break
                 # Feasible but blocked by warm contexts: evict-ahead.
-                # Guaranteed to terminate at the feasibility bound above.
-                self._cache.evict_one()
+                # Terminates at the feasibility bound above; the None
+                # check is belt-and-braces against an estimator whose
+                # headroom doesn't recover to the empty-cache value.
+                if self._cache.evict_one() is None:
+                    break
             payload = chosen.fit(X, y, task)
             est_bytes = chosen.context_bytes_hint(n_train, n_features)
             if est_bytes is None:
-                est_bytes = estimator.estimate_bytes(n_train, 0, n_features)
+                est_bytes = estimated
             else:
                 # Feed a real measurement back so the PRE-FIT admission
                 # gate can use it (safely, as a bound for smaller/equal
@@ -243,9 +252,18 @@ class TabctxEngine:
                 n_features=n_features,
                 payload=payload,
                 est_bytes=est_bytes,
+                feature_names=feature_names,
             )
             self._cache.put(context)
         return resolved_id
+
+    def feature_names(self, dataset_id: str) -> list[str] | None:
+        """Column names recorded at fit() for a cached context, or None
+        when the context is unknown or was fit without names. Reloads a
+        spilled context as a side effect, exactly as predict() would."""
+        with self._cache.lock:
+            context = self._cache.get(dataset_id)
+            return context.feature_names if context is not None else None
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False

@@ -1,6 +1,22 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+Found by a full-codebase review (2026-09-01), each with a regression test:
+- **Explicit eviction could resurrect a stale context.** `ContextCacheManager.evict()` (fit_predict's cleanup, re-fit overwrites) dropped the resident entry but left any spilled copy on disk, so the next `get()` transparently reloaded the OLD context. Explicit evict and re-fit `put()` now remove the spilled copy too.
+- **Spill restore under a smaller budget was a 500.** A context spilled by a replica with a larger `TABCTX_GPU_MEMORY_FRACTION` failed re-admission with `CacheCapacityError` from inside `get()`; it is now a clean miss (re-fit), and predict maps admission errors to 413 as fit already did.
+- **predict() raced evict-ahead-of-fit.** The context lookup and chunk-size derivation ran outside the cache lock, so a concurrent fit could spill the context and shrink the headroom between lookup and GPU call. The whole sequence now runs under the lock (RLock, so nothing else changes).
+- **The serving budget was always an A100's.** `serve/factory.py` hardcoded 40GB device capacity; on an L4 (24GB) admission headroom exceeded the card. Capacity is now read from the visible CUDA device (`detect_gpu_capacity_bytes`), the cache ceiling keeps its calibrated 24/40 ratio to it, and `/readyz` + `/v1/tabctx/limits` report `gpu_capacity_bytes`.
+- **Client:** `GET` calls (`ready`, `models`, `limits`) leaked raw `urllib` errors instead of tabctx exceptions; `upload_csv_file` read the whole file into memory despite existing for tables too big for inline JSON (it now streams the open file with an explicit `Content-Length`, verified against a real HTTP server in the unit suite); the affinity header name is configurable (`session_header=`) to follow a deployment's `RAY_SERVE_SESSION_ID_HEADER_KEY`, without which affinity silently degraded.
+- **Factory default model** was chosen by comparing a backend *kind* (`tabicl`) against model *ids* (`tabicl-v2`) -- correct only because dict insertion order happened to agree. Now explicit.
+
+### Changed
+- `CachedContext.feature_names`: a CSV-fit context's column names live on the context (and in its spill metadata) instead of a per-replica dict in `serve/app.py` that grew without bound and lost the schema check whenever a context was restored from spill or a replica restarted. `TabctxEngine.fit(feature_names=...)` / `engine.feature_names(dataset_id)`.
+- Cache usage is tracked incrementally (`make_room` polled an O(n) sum per eviction); `ContextCacheManager.dataset_ids()` added. Estimator/factory defaults reference the module constants they duplicated; adaptive observations use a bounded deque.
+- Housekeeping: `.env` ignored; ruff no longer formats Markdown code blocks; README architecture figure (`docs/figures/architecture.svg`), status section, and a "pre-computed contexts for many applications" section stating what works and what's missing (ROADMAP item 1).
+
+### Added
+- `benchmarks/probe_deployment.py`: end-to-end acceptance probe for a live deployment on any GPU via `TabctxClient` (tenant + custom session header aware): cache reuse, single-pass proba, upload/fit/predict by reference + schema check, chunked predicts, coalescing, and fill-until-eviction with spill restore.
 
 ## [0.9.1] - 2026-08-29
 ### Fixed

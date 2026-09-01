@@ -30,10 +30,12 @@ replica rather than mis-routing -- see serve/app.py).
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import IO
 
 from tabctx.errors import (
     AdmissionRejected,
@@ -43,6 +45,8 @@ from tabctx.errors import (
     TabctxError,
     UploadNotFoundError,
 )
+from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
+from tabctx.serve.tenancy import TENANT_HEADER
 from tabctx.types import ArrayLike, Task
 
 
@@ -69,14 +73,21 @@ class TabctxClient:
         timeout_s: float = 120.0,
         max_retries: int = 3,
         retry_backoff_s: float = 0.25,
+        session_header: str = DEFAULT_SESSION_ID_HEADER,
     ) -> None:
         """max_retries applies only to 503 backpressure (safe to retry by
-        construction); every other error propagates immediately."""
+        construction); every other error propagates immediately.
+
+        session_header: the affinity header name. Must match the
+        deployment's RAY_SERVE_SESSION_ID_HEADER_KEY (default
+        "x-session-id"); a deployment that renames it would otherwise
+        silently lose replica affinity."""
         self._base_url = base_url.rstrip("/")
         self._tenant_id = tenant_id
         self._timeout_s = timeout_s
         self._max_retries = max_retries
         self._retry_backoff_s = retry_backoff_s
+        self._session_header = session_header
 
     # ---- public API ------------------------------------------------------
 
@@ -102,27 +113,26 @@ class TabctxClient:
         resp = self._post("/v1/tabctx/fit", body, session_id=dataset_id)
         return resp["dataset_id"]
 
-    def upload_csv(self, data: bytes, dataset_id: str) -> str:
-        """Upload a CSV (bytes) for later fit/predict-by-reference;
-        returns the upload_id. dataset_id is required because it is the
-        affinity routing key: the upload must land on the same replica
-        the fit/predict for that dataset will reach."""
-        req = urllib.request.Request(
-            f"{self._base_url}/v1/tabctx/upload",
-            data=data,
-            headers={**self._headers(dataset_id), "Content-Type": "text/csv"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
-                return json.loads(resp.read().decode())["upload_id"]
-        except urllib.error.HTTPError as e:
-            raise self._map_status(e.code, self._detail(e)) from e
+    def upload_csv(self, data: bytes | IO[bytes], dataset_id: str) -> str:
+        """Upload a CSV for later fit/predict-by-reference; returns the
+        upload_id. `data` is the raw CSV as bytes, or an open binary
+        file object (streamed -- see upload_csv_file). dataset_id is
+        required because it is the affinity routing key: the upload must
+        land on the same replica the fit/predict for that dataset will
+        reach."""
+        headers = {**self._headers(dataset_id), "Content-Type": "text/csv"}
+        if not isinstance(data, bytes | bytearray):
+            # urllib streams a file object in blocks, but only if it
+            # knows the length up front (else it refuses non-bytes bodies).
+            headers["Content-Length"] = str(os.fstat(data.fileno()).st_size)
+        return self._request("/v1/tabctx/upload", data, headers)["upload_id"]
 
     def upload_csv_file(self, path: str, dataset_id: str) -> str:
-        """upload_csv from a file path, read in streaming-friendly chunks."""
+        """upload_csv from a file path, streamed from disk in blocks
+        rather than read into memory -- the path exists for tables too
+        big to hold as inline JSON, so it must not buffer them either."""
         with open(path, "rb") as f:
-            return self.upload_csv(f.read(), dataset_id)
+            return self.upload_csv(f, dataset_id)
 
     def fit_uploaded(
         self,
@@ -215,43 +225,47 @@ class TabctxClient:
         Use it to validate a table client-side before uploading it."""
         return self._get("/v1/tabctx/limits")
 
-    def _get(self, path: str) -> dict:
-        req = urllib.request.Request(f"{self._base_url}{path}")
-        with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
-            return json.loads(resp.read().decode())
-
     # ---- internals -------------------------------------------------------
+
+    def _get(self, path: str) -> dict:
+        return self._request(path, None, {})
 
     def _headers(self, session_id: str | None) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if session_id is not None:
-            headers["x-session-id"] = session_id
+            headers[self._session_header] = session_id
         if self._tenant_id is not None:
-            headers["x-tabctx-tenant-id"] = self._tenant_id
+            headers[TENANT_HEADER] = self._tenant_id
         return headers
+
+    def _request(
+        self, path: str, data: bytes | IO[bytes] | None, headers: dict[str, str]
+    ) -> dict:
+        """One HTTP round trip (POST when data is given, else GET), JSON
+        response decoded, HTTP errors mapped to tabctx exceptions. No
+        retry: 503 is raised as TabctxBackpressureError for _post to
+        handle, since only idempotent-by-construction calls may retry."""
+        req = urllib.request.Request(
+            f"{self._base_url}{path}",
+            data=data,
+            headers=headers,
+            method="POST" if data is not None else "GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            raise self._map_status(e.code, self._detail(e)) from e
 
     def _post(self, path: str, body: dict, session_id: str | None) -> dict:
         data = json.dumps(body).encode()
-        last_backpressure: TabctxBackpressureError | None = None
         for attempt in range(self._max_retries + 1):
-            req = urllib.request.Request(
-                f"{self._base_url}{path}",
-                data=data,
-                headers=self._headers(session_id),
-                method="POST",
-            )
             try:
-                with urllib.request.urlopen(req, timeout=self._timeout_s) as resp:
-                    return json.loads(resp.read().decode())
-            except urllib.error.HTTPError as e:
-                detail = self._detail(e)
-                if e.code == 503:
-                    last_backpressure = TabctxBackpressureError(detail)
-                    if attempt < self._max_retries:
-                        time.sleep(self._retry_backoff_s * (2**attempt))
-                        continue
-                    raise last_backpressure from e
-                raise self._map_status(e.code, detail) from e
+                return self._request(path, data, self._headers(session_id))
+            except TabctxBackpressureError:
+                if attempt >= self._max_retries:
+                    raise
+                time.sleep(self._retry_backoff_s * (2**attempt))
         raise AssertionError("unreachable")  # pragma: no cover
 
     @staticmethod
@@ -282,4 +296,6 @@ class TabctxClient:
             return BackendComputeError(detail)
         if code == 401:
             return PermissionError(detail)
+        if code == 503:
+            return TabctxBackpressureError(detail)
         return TabctxError(f"HTTP {code}: {detail}")

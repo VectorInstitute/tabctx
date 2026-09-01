@@ -144,6 +144,62 @@ class TestBuildEstimator:
         assert not tiny.admit(n_train, 0, n_features)
 
 
+class TestDeviceCapacity:
+    def test_capacity_scales_both_ceilings_proportionally(self):
+        a100 = build_estimator(ServeSettings(backends=("fake",)))
+        l4 = build_estimator(
+            ServeSettings(backends=("fake",)), gpu_capacity_bytes=24 * 1024**3
+        )
+        ratio = (24 * 1024**3) / a100._fallback.gpu_capacity_bytes
+        assert l4._fallback.gpu_capacity_bytes == 24 * 1024**3
+        assert l4.ceiling_bytes() == pytest.approx(
+            a100.ceiling_bytes() * ratio, rel=0.01
+        )
+        # And the usage-aware admission headroom shrinks with the card.
+        assert l4.admission_headroom_bytes(0) < a100.admission_headroom_bytes(0)
+
+    def test_none_capacity_keeps_the_a100_defaults(self):
+        from tabctx.memory.estimator import DEFAULT_GPU_CAPACITY_BYTES
+
+        est = build_estimator(
+            ServeSettings(backends=("fake",)), gpu_capacity_bytes=None
+        )
+        assert est._fallback.gpu_capacity_bytes == DEFAULT_GPU_CAPACITY_BYTES
+
+    def test_build_engine_uses_detected_capacity_for_real_backends(self, monkeypatch):
+        monkeypatch.setattr(
+            "tabctx.serve.factory._build_real_backend",
+            lambda kind, settings: (FakeBackend(name=f"{kind}-model"), "cuda"),
+        )
+        monkeypatch.setattr(
+            "tabctx.serve.factory.detect_gpu_capacity_bytes", lambda: 24 * 1024**3
+        )
+        built = build_engine(ServeSettings(backends=("tabicl",)))
+        assert built.gpu_capacity_bytes == 24 * 1024**3
+        assert built.estimator._fallback.gpu_capacity_bytes == 24 * 1024**3
+
+    def test_fake_backend_never_probes_the_device(self, monkeypatch):
+        def boom():
+            raise AssertionError("fake backend must not touch torch/cuda")
+
+        monkeypatch.setattr("tabctx.serve.factory.detect_gpu_capacity_bytes", boom)
+        built = build_engine(ServeSettings(backends=("fake",)))
+        assert built.gpu_capacity_bytes is None
+
+    def test_detect_returns_none_without_a_gpu(self, monkeypatch):
+        from tabctx.serve.factory import detect_gpu_capacity_bytes
+
+        # Whether or not torch is installed here, no CUDA device is
+        # visible on the CI/dev machines this runs on.
+        try:
+            import torch
+
+            monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        except ImportError:
+            pass
+        assert detect_gpu_capacity_bytes() is None
+
+
 class TestBuildEngine:
     def test_fake_backend_end_to_end(self):
         built = build_engine(ServeSettings(backends=("fake",)))
@@ -166,6 +222,33 @@ class TestBuildEngine:
         # (not just returned alongside it) -- that's the wiring this
         # factory code exists to do.
         assert built.engine._cache._spill is built.spill_store
+
+    def test_default_model_is_the_first_listed_kind_by_model_id(self, monkeypatch):
+        # Backends are keyed by model id ("tabicl-v2"), not kind
+        # ("tabicl"); the default must still be the first-listed kind's
+        # model, resolved through that mapping.
+        monkeypatch.setattr(
+            "tabctx.serve.factory._build_real_backend",
+            lambda kind, settings: (FakeBackend(name=f"{kind}-model"), "cpu"),
+        )
+        built = build_engine(ServeSettings(backends=("tabpfn", "fake")))
+        assert built.default == "tabpfn-model"
+        assert built.engine.default_backend == "tabpfn-model"
+        assert built.engine.backend_names == ["tabpfn-model", "fake"]
+
+    def test_settings_defaults_match_from_env_defaults(self, monkeypatch):
+        for var in (
+            BACKEND_ENV_VAR,
+            GPU_MEMORY_FRACTION_ENV_VAR,
+            KV_CACHE_ENV_VAR,
+            BATCH_WINDOW_MS_ENV_VAR,
+            MAX_UPLOAD_BYTES_ENV_VAR,
+            UPLOAD_TTL_S_ENV_VAR,
+            SPILL_DIR_ENV_VAR,
+            SPILL_CAPACITY_ENV_VAR,
+        ):
+            monkeypatch.delenv(var, raising=False)
+        assert ServeSettings.from_env() == ServeSettings()
 
     def test_no_spill_dir_leaves_spill_store_none(self):
         built = build_engine(ServeSettings(backends=("fake",)))

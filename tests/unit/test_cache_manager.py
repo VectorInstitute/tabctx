@@ -121,3 +121,28 @@ def test_evict_one_spills_when_a_spill_tier_is_attached(tmp_path):
     cache.put(make_context("a", 100))
     assert cache.evict_one() == "a"
     assert spill.stats()["n_spilled_contexts"] == 1
+
+
+def test_used_bytes_tracks_put_evict_and_overwrite():
+    cache = ContextCacheManager(capacity_bytes=1000)
+    cache.put(make_context("a", 100))
+    cache.put(make_context("b", 200))
+    assert cache.used_bytes == 300
+    # Overwriting an id replaces its bytes rather than double-counting.
+    cache.put(make_context("a", 150))
+    assert cache.used_bytes == 350
+    cache.evict("b")
+    assert cache.used_bytes == 150
+    cache.evict("b")  # repeated evict of a gone id changes nothing
+    assert cache.used_bytes == 150
+    assert cache.dataset_ids() == ["a"]
+
+
+def test_put_overwrite_does_not_evict_others_needlessly():
+    # Replacing "a" (100 -> 100) in a full cache must not evict "b":
+    # the old "a" is released before room is measured.
+    cache = ContextCacheManager(capacity_bytes=200)
+    cache.put(make_context("a", 100, last_accessed_at=1.0))
+    cache.put(make_context("b", 100, last_accessed_at=2.0))
+    assert cache.put(make_context("a", 100, last_accessed_at=3.0)) == []
+    assert cache.get("b") is not None

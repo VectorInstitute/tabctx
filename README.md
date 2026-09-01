@@ -81,6 +81,28 @@ generation, which these models don't do. And it isn't written in a
 GPU kernels, so plain Python orchestration behind a standard Ray Serve
 deployment is exactly fast enough.
 
+## Architecture
+
+![tabctx architecture](docs/figures/architecture.svg)
+
+*Figure: a request enters through Ray Serve's consistent-hash proxy
+(affinity on the session header) into a `TabctxService` replica, which
+resolves the tenant, parses inline JSON or an uploaded CSV, and hands the
+table to the engine. The engine validates input, gates admission on an
+estimated memory peak, keeps encoded contexts in a byte-budgeted LRU
+cache, and dispatches to whichever backend fit the context. Evicted
+contexts optionally spill to local disk and reload on their next use
+(editable source: `docs/figures/architecture.svg`).*
+
+The unit everything revolves around is a **context**: one training
+table, encoded once by one model, addressed by `dataset_id` (scoped per
+tenant) and reused by every later `predict()` against it. A context
+carries its payload (the fitted estimator with its kv cache), the model
+that fit it, its shape and, when it came from a CSV, its column names,
+plus a measured byte cost. All models deployed on a device share one
+cache and one memory budget, so admission control sees the whole
+device's usage regardless of which model a request picks.
+
 ## Quick wins
 
 **See it work with zero setup** (no GPU, no model download: a fake
@@ -165,7 +187,12 @@ Details worth knowing:
   observable and testable end to end.
 - When replicas share one physical GPU (e.g. 2 replicas at
   `num_gpus: 0.5`), set `TABCTX_GPU_MEMORY_FRACTION` (e.g. `0.45`) so
-  each replica budgets its share of GPU memory.
+  each replica budgets its share of GPU memory. The budget is the
+  visible device's real memory (an L4's 24GB, an A100's 40GB), detected
+  at startup and reported by `/readyz` as `gpu_capacity_bytes`.
+- If the deployment renames the affinity header
+  (`RAY_SERVE_SESSION_ID_HEADER_KEY`), construct the client with
+  `session_header=` to match; the header name is the routing key.
 - `TABCTX_BACKEND=fake` runs the whole serve stack without a GPU or
   torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
   prove the multi-replica contract on a laptop.
@@ -224,6 +251,58 @@ never another tenant's model.
   authenticating proxy (API keys -> tenant id) in front for real
   security. See `src/tabctx/serve/tenancy.py` for the full trust-model
   notes.
+
+## Serving many applications from pre-computed contexts
+
+A natural deployment shape for these models: an admin uploads a cohort
+table for an application, the model encodes it once, the encoded context
+(TabICL's kv cache) is saved, and end users of that application only ever
+call `predict` against it -- one deployment, many applications, each a
+loaded context. Here is exactly how far the current library gets you and
+what is still missing.
+
+**Works today:**
+
+- *Publish an application* = `upload_csv` + `fit_uploaded(dataset_id=<app>)`
+  under the admin's tenant; the context is encoded once and cached on
+  the GPU. The training CSV's header is recorded on the context, so
+  test CSVs are schema-checked against it.
+- *Select an application* = `predict(<app>, ...)` with the same tenant
+  header. Many applications coexist in one deployment under one memory
+  budget; both models can be mixed (`model="tabicl-v2"` / `"tabpfn-3"`).
+- *Save the kv cache to disk* = the spill tier (`TABCTX_SPILL_DIR`).
+  Contexts evicted under memory pressure are serialized (TabICL's shared
+  backbone excluded) and reload transparently on the next predict, and a
+  restarted replica pointed at the same directory can reload its
+  predecessor's spilled contexts -- no training data needed.
+
+**Missing (see [ROADMAP.md](ROADMAP.md), item 1):**
+
+1. **Explicit, durable persistence.** Spilling happens only *on
+   eviction*, to replica-local disk, best-effort and LRU-bounded. There
+   is no "persist this context" call, no pinning (exempt from eviction),
+   and no shared store (object storage / PVC) a fresh replica or a second
+   deployment could load from. Contexts that were never evicted are lost
+   on restart.
+2. **Offline pre-computation.** Encoding only happens through the
+   serving endpoint. Publishing an application should also work as a
+   batch job that fits and writes the context to the shared store, with
+   the deployment warm-loading a manifest of contexts at start.
+3. **A catalog.** You must already know a `dataset_id`; there is no
+   `GET /v1/tabctx/datasets` listing an application's contexts with
+   their task, model, shape, schema and residency (GPU / spilled /
+   persisted). The schema now travels with the context, so this is
+   mostly an endpoint.
+4. **Roles.** Tenancy is namespacing, not authorization: a tenant that
+   can predict can also re-fit or evict. "Admin publishes, users predict"
+   needs scoped credentials at the gateway (or read-only tenant tokens).
+5. **Per-application endpoints.** `/v1/apps/<app>/predict` is a thin
+   alias onto (tenant, dataset_id, model) and belongs in the gateway or
+   a small application resource, not in the engine.
+6. **Portable context format.** Serialized contexts are pickled
+   estimators tied to the tabicl/torch versions and device they were
+   fit on. A durable store needs a versioned format with a compatibility
+   check and a fallback to re-fit from the stored table.
 
 ## Installation
 
@@ -299,16 +378,22 @@ sharing one A100-40GB** (v0.7.0, 2026-08-29,
 
 ## Status & Roadmap
 
-v0.6.0. Multi-replica deployments are now correct via session-sticky
-routing (the former top roadmap item). **Read [ROADMAP.md](ROADMAP.md)
-before starting new work** -- it ranks what's next and why.
+v0.9.x: multi-model endpoint, calibrated peak-aware admission, disk
+spillover and multi-replica routing have all shipped and been validated
+on real GPUs (see [CHANGELOG.md](CHANGELOG.md)). **Read
+[ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
+next and why.
 
 ## Contributing
 
 Issues and PRs welcome -- see [CONTRIBUTING.md](CONTRIBUTING.md) for
 guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community
 standards. Run `pytest tests/unit/` before submitting (no GPU required; the
-test suite runs entirely against a fake backend). See
+test suite runs entirely against a fake backend). Changes to serving or
+memory behaviour should also pass `benchmarks/probe_deployment.py`
+against a live GPU deployment -- it checks the contracts only a real
+model on a real device can prove (cache reuse, eviction and spill
+restore, coalescing). See
 [CHANGELOG.md](CHANGELOG.md) for the project's history and
 [ROADMAP.md](ROADMAP.md) for where it's headed.
 

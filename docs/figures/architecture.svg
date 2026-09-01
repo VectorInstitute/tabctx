@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="720" viewBox="0 0 900 720" font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+  <title>tabctx architecture: clients, serving layer, engine, backends, and context tiers</title>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5A6270"/>
+    </marker>
+  </defs>
+  <rect width="900" height="720" fill="#FFFFFF"/>
+
+  <!-- CLIENTS -->
+  <text x="17" y="70" transform="rotate(-90 17 70)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#5B7A99">CLIENTS</text>
+  <rect x="40" y="32" width="248" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
+  <text x="164" y="56" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">TabctxClient (pure stdlib)</text>
+  <text x="164" y="72" text-anchor="middle" font-size="11.5" fill="#4A5058">fit / predict / upload_csv / models / limits</text>
+  <text x="164" y="88" text-anchor="middle" font-size="11.5" fill="#4A5058">sets affinity + tenant headers, maps errors</text>
+  <rect x="334" y="32" width="248" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
+  <text x="458" y="56" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">Any HTTP client</text>
+  <text x="458" y="72" text-anchor="middle" font-size="11.5" fill="#4A5058">x-session-id: dataset_id (replica affinity)</text>
+  <text x="458" y="88" text-anchor="middle" font-size="11.5" fill="#4A5058">x-tabctx-tenant-id: tenant (isolation)</text>
+  <rect x="628" y="32" width="248" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
+  <text x="752" y="56" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">In-process use</text>
+  <text x="752" y="72" text-anchor="middle" font-size="11.5" fill="#4A5058">TabctxEngine directly, no server</text>
+  <text x="752" y="88" text-anchor="middle" font-size="11.5" fill="#4A5058">(notebooks, batch jobs, tests)</text>
+
+  <path d="M 164 104 V 135" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <path d="M 458 104 V 135" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <path d="M 752 104 V 288" fill="none" stroke="#5A6270" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arr)"/>
+
+  <!-- SERVING -->
+  <text x="17" y="212" transform="rotate(-90 17 212)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#6E8A4E">SERVING</text>
+  <rect x="40" y="136" width="542" height="52" rx="6" ry="6" fill="#EAF0E2" stroke="#6E8A4E" stroke-width="1.2"/>
+  <text x="311" y="158" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">Ray Serve proxy: consistent-hash router on the session header</text>
+  <text x="311" y="175" text-anchor="middle" font-size="11.5" fill="#4A5058">same dataset_id always reaches the same replica; strict (no fallback replica), 503 under backpressure</text>
+  <path d="M 311 188 V 207" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <rect x="40" y="208" width="542" height="80" rx="6" ry="6" fill="#EAF0E2" stroke="#6E8A4E" stroke-width="1.2"/>
+  <text x="56" y="230" text-anchor="start" font-size="11.5" fill="#23272E" font-weight="600">TabctxService replica (serve/app.py, FastAPI) -- one per GPU share</text>
+  <text x="56" y="247" text-anchor="start" font-size="11.5" fill="#4A5058">•  POST /v1/tabctx/upload -> fit -> predict; GET /v1/models, /v1/tabctx/limits, /readyz</text>
+  <text x="56" y="264" text-anchor="start" font-size="11.5" fill="#4A5058">•  tenant scoping (t:tenant:dataset_id), replica-local upload store, CSV parsing</text>
+  <text x="56" y="281" text-anchor="start" font-size="11.5" fill="#4A5058">•  CoalescingPredictor: concurrent predicts on one context share a single GPU call</text>
+  <rect x="628" y="208" width="248" height="80" rx="6" ry="6" fill="#EAF0E2" stroke="#6E8A4E" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="752" y="232" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">serve/factory.py</text>
+  <text x="752" y="249" text-anchor="middle" font-size="11.5" fill="#4A5058">env -> engine: TABCTX_BACKEND,</text>
+  <text x="752" y="265" text-anchor="middle" font-size="11.5" fill="#4A5058">GPU fraction, kv mode, spill dir;</text>
+  <text x="752" y="281" text-anchor="middle" font-size="11.5" fill="#4A5058">detects device memory</text>
+  <path d="M 311 288 V 319" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <!-- ENGINE -->
+  <text x="17" y="410" transform="rotate(-90 17 410)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#A67B4B">ENGINE</text>
+  <rect x="40" y="320" width="836" height="52" rx="6" ry="6" fill="#F4ECE2" stroke="#A67B4B" stroke-width="1.2"/>
+  <text x="458" y="342" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">TabctxEngine: fit(X, y) -> dataset_id; predict(dataset_id, X_test); one lock serializes all GPU work per replica</text>
+  <text x="458" y="359" text-anchor="middle" font-size="11.5" fill="#4A5058">input validation (422 before any GPU work) · per-backend dispatch by the context's backend_name · test-set chunking against live headroom</text>
+  <path d="M 164 372 V 403" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <path d="M 458 372 V 403" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <path d="M 752 372 V 403" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <rect x="40" y="404" width="248" height="96" rx="6" ry="6" fill="#F4ECE2" stroke="#A67B4B" stroke-width="1.2"/>
+  <text x="164" y="426" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">AdaptiveMemoryEstimator</text>
+  <text x="164" y="443" text-anchor="middle" font-size="11.5" fill="#4A5058">admission: estimated fit PEAK must fit</text>
+  <text x="164" y="459" text-anchor="middle" font-size="11.5" fill="#4A5058">85% of device minus resident contexts</text>
+  <text x="164" y="475" text-anchor="middle" font-size="11.5" fill="#4A5058">calibrated grid + learns from real fits;</text>
+  <text x="164" y="491" text-anchor="middle" font-size="11.5" fill="#4A5058">infeasible fits 413 before any eviction</text>
+  <rect x="334" y="404" width="248" height="96" rx="6" ry="6" fill="#F4ECE2" stroke="#A67B4B" stroke-width="1.2"/>
+  <text x="458" y="426" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">ContextCacheManager</text>
+  <text x="458" y="443" text-anchor="middle" font-size="11.5" fill="#4A5058">dataset_id -> CachedContext (payload,</text>
+  <text x="458" y="459" text-anchor="middle" font-size="11.5" fill="#4A5058">backend, shape, feature names, bytes)</text>
+  <text x="458" y="475" text-anchor="middle" font-size="11.5" fill="#4A5058">LRU eviction against a byte budget;</text>
+  <text x="458" y="491" text-anchor="middle" font-size="11.5" fill="#4A5058">evict-ahead so a safe fit is never refused</text>
+  <rect x="628" y="404" width="248" height="96" rx="6" ry="6" fill="#F4ECE2" stroke="#A67B4B" stroke-width="1.2"/>
+  <text x="752" y="426" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">TabularICLBackend protocol</text>
+  <text x="752" y="443" text-anchor="middle" font-size="11.5" fill="#4A5058">fit -> opaque payload; predict = ONE pass</text>
+  <text x="752" y="459" text-anchor="middle" font-size="11.5" fill="#4A5058">reports measured resident + peak bytes</text>
+  <text x="752" y="475" text-anchor="middle" font-size="11.5" fill="#4A5058">optional dumps/loads for the spill tier</text>
+  <text x="752" y="491" text-anchor="middle" font-size="11.5" fill="#4A5058">(backends/base.py -- add a model here)</text>
+  <path d="M 288 452 H 333" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <path d="M 582 452 H 627" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <!-- BACKENDS -->
+  <path d="M 752 500 V 531" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="17" y="560" transform="rotate(-90 17 560)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#7A6699">MODELS</text>
+  <rect x="40" y="532" width="248" height="56" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
+  <text x="164" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">tabicl-v2 (TabICLBackend)</text>
+  <text x="164" y="571" text-anchor="middle" font-size="11.5" fill="#4A5058">kv cache on, shared backbone, GPU deltas</text>
+  <rect x="334" y="532" width="248" height="56" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
+  <text x="458" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">tabpfn-3 (TabPFNBackend)</text>
+  <text x="458" y="571" text-anchor="middle" font-size="11.5" fill="#4A5058">fit_with_cache; 422 on pretraining limits</text>
+  <rect x="628" y="532" width="248" height="56" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="752" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">fake (FakeBackend)</text>
+  <text x="752" y="571" text-anchor="middle" font-size="11.5" fill="#4A5058">no GPU/torch: CI, laptops, integration tests</text>
+  <text x="608" y="608" text-anchor="middle" font-size="11" fill="#4A5058" font-style="italic">one shared cache and memory budget per device; each context remembers the model that fit it</text>
+
+  <!-- TIERS -->
+  <path d="M 345 500 V 514 H 311 V 631" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="304" y="600" text-anchor="end" font-size="10.5" fill="#4A5058" font-style="italic">holds / evicts</text>
+  <text x="17" y="668" transform="rotate(-90 17 668)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#5A6270">TIERS</text>
+  <rect x="40" y="632" width="395" height="60" rx="6" ry="6" fill="#F3F4F6" stroke="#5A6270" stroke-width="1.2"/>
+  <text x="237" y="655" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">GPU-resident contexts (encoded training tables, kv caches)</text>
+  <text x="237" y="672" text-anchor="middle" font-size="11.5" fill="#4A5058">what the cache budgets and evicts; warm predicts skip the re-encode</text>
+  <rect x="481" y="632" width="395" height="60" rx="6" ry="6" fill="#F3F4F6" stroke="#5A6270" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="678" y="655" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">Disk spill tier (TABCTX_SPILL_DIR, opt-in)</text>
+  <text x="678" y="672" text-anchor="middle" font-size="11.5" fill="#4A5058">evicted contexts reload on next use, no training data needed</text>
+  <path d="M 435 662 H 480" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)" marker-start="url(#arr)"/>
+</svg>

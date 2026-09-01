@@ -215,6 +215,7 @@ class TabctxService:
         self._backend_name = built.backend.name  # default model id
         self._spill_store = built.spill_store
         self._device = built.device
+        self._gpu_capacity_bytes = built.gpu_capacity_bytes
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
         self._predictor = CoalescingPredictor(
@@ -227,11 +228,6 @@ class TabctxService:
             ttl_s=settings.upload_ttl_s,
             max_upload_bytes=settings.max_upload_bytes,
         )
-        # dataset_id (scoped) -> training CSV feature names, so a test
-        # CSV's header can be checked against the training schema (a
-        # silently reordered column would mean garbage predictions).
-        # Entries are dropped when a predict finds the dataset evicted.
-        self._feature_names: dict[str, list[str]] = {}
         # Restart visibility (ROADMAP "cache durability", first step): a
         # replica restart silently drops every cached context, and the
         # caller-visible symptom (404 -> re-fit) is indistinguishable
@@ -390,13 +386,18 @@ class TabctxService:
             )
             scoped_id = scope_dataset_id(tenant_id, dataset_id)
             model_id = req.model or self._engine.default_backend
+            # A CSV-fit context records its header on the cached context
+            # so a test CSV's columns can be checked against it (a
+            # silently reordered column would mean garbage predictions);
+            # the schema lives and dies with the context, spill included.
             self._engine.fit(
-                X, y, task=req.task, dataset_id=scoped_id, backend=model_id
+                X,
+                y,
+                task=req.task,
+                dataset_id=scoped_id,
+                backend=model_id,
+                feature_names=feature_names,
             )
-            if feature_names is not None:
-                self._feature_names[scoped_id] = feature_names
-            else:
-                self._feature_names.pop(scoped_id, None)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -433,9 +434,9 @@ class TabctxService:
             path = self._uploads.consume(req.test_upload_id, tenant_id)
             try:
                 # Schema check against the training CSV's header when the
-                # context was fit by reference; inline-fit contexts fall
-                # back to the engine's feature-count check.
-                return parse_features_csv(path, self._feature_names.get(scoped_id))
+                # context was fit by reference; inline-fit (or unknown)
+                # contexts fall back to the engine's feature-count check.
+                return parse_features_csv(path, self._engine.feature_names(scoped_id))
             finally:
                 self._uploads.discard(path)
         if req.test_X is None:
@@ -457,19 +458,13 @@ class TabctxService:
             resolve_dataset_id(session_id, req.dataset_id)
             scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
             X_test = self._resolve_test_table(req, tenant_id, scoped_id)
-            try:
-                outcome = self._predictor.predict(
-                    scoped_id, X_test, return_proba=req.return_proba
-                )
-            except DatasetNotFoundError:
-                # The context is gone (evicted/restart) -- drop the stale
-                # training-schema entry so it can't mismatch a future
-                # re-fit of the same id via a different path.
-                self._feature_names.pop(scoped_id, None)
-                raise
+            outcome = self._predictor.predict(
+                scoped_id, X_test, return_proba=req.return_proba
+            )
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
+            *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
         ) as e:
@@ -532,6 +527,7 @@ class TabctxService:
             "admission_headroom_bytes": headroom,
             "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
+            "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "max_admissible_train_rows_by_feature_count": max_rows_by_features,
             "note": (
                 "Admission limits are per-replica, usage-aware (they shrink "
@@ -565,6 +561,7 @@ class TabctxService:
             "status": "ready",
             "device": self._device,
             "cuda_available": torch is not None and torch.cuda.is_available(),
+            "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "replica": _replica_tag(),
             "replica_started_at_unix": self._started_at,
             "replica_uptime_s": round(time.time() - self._started_at, 1),

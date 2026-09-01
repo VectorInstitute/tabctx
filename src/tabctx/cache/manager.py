@@ -38,6 +38,11 @@ class CachedContext:
     n_features: int
     payload: Any
     est_bytes: int
+    # Training-table column names when the context was fit from a CSV
+    # (serve/csv_io.py); None for inline tables. Travels with the
+    # context through the spill tier so a restored context keeps its
+    # schema check.
+    feature_names: list[str] | None = None
     created_at: float = field(default_factory=time.monotonic)
     last_accessed_at: float = field(default_factory=time.monotonic)
 
@@ -52,10 +57,14 @@ class ContextCacheManager:
         """spill_store: optional disk tier (cache/spill.py). When set,
         capacity-pressure evictions spill instead of dropping, and get()
         transparently reloads spilled contexts. Explicit evict() (caller
-        intent, re-fit overwrite) never spills."""
+        intent, re-fit overwrite) never spills -- and also drops any
+        spilled copy, so an evicted context can't resurrect."""
         self._capacity_bytes = capacity_bytes
         self._policy = policy or LRUEvictionPolicy()
         self._entries: dict[str, CachedContext] = {}
+        # Maintained incrementally so stats()/free_bytes stay O(1) --
+        # make_room() polls free_bytes once per eviction.
+        self._used_bytes = 0
         self._spill = spill_store
         self._lock = threading.RLock()
 
@@ -71,7 +80,14 @@ class ContextCacheManager:
             if restored is None:
                 return None
             restored.last_accessed_at = time.monotonic()
-            self.put(restored)
+            try:
+                self.put(restored)
+            except CacheCapacityError:
+                # Spilled under a larger budget than this process has
+                # (e.g. TABCTX_GPU_MEMORY_FRACTION lowered across a
+                # restart). Nothing can re-admit it; treat as a miss so
+                # the caller re-fits instead of the request 500ing.
+                return None
             return restored
 
     def touch(self, dataset_id: str) -> None:
@@ -79,6 +95,25 @@ class ContextCacheManager:
             entry = self._entries.get(dataset_id)
             if entry is not None:
                 entry.last_accessed_at = time.monotonic()
+
+    def _remove(self, dataset_id: str) -> CachedContext | None:
+        """Drop an entry from the primary tier (no spill). Caller holds
+        the lock."""
+        entry = self._entries.pop(dataset_id, None)
+        if entry is not None:
+            self._used_bytes -= entry.est_bytes
+        return entry
+
+    def _evict_victim(self) -> str | None:
+        """Policy-chosen eviction, spilling when a tier is attached.
+        Caller holds the lock."""
+        victim_id = self._policy.select_victim(list(self._entries.values()))
+        if victim_id is None:
+            return None
+        victim = self._remove(victim_id)
+        if self._spill is not None:
+            self._spill.spill(victim)  # best-effort by contract
+        return victim_id
 
     def make_room(self, needed_bytes: int) -> list[str]:
         """Evict entries (via the configured policy) until at least
@@ -88,12 +123,9 @@ class ContextCacheManager:
         evicted: list[str] = []
         with self._lock:
             while self.free_bytes < needed_bytes:
-                victim_id = self._policy.select_victim(list(self._entries.values()))
+                victim_id = self._evict_victim()
                 if victim_id is None:
                     break
-                victim = self._entries.pop(victim_id)
-                if self._spill is not None:
-                    self._spill.spill(victim)  # best-effort by contract
                 evicted.append(victim_id)
         return evicted
 
@@ -103,19 +135,15 @@ class ContextCacheManager:
         if the cache is empty. Used by the engine's evict-ahead-of-fit
         path to convert resident bytes into transient fit headroom."""
         with self._lock:
-            victim_id = self._policy.select_victim(list(self._entries.values()))
-            if victim_id is None:
-                return None
-            victim = self._entries.pop(victim_id)
-            if self._spill is not None:
-                self._spill.spill(victim)
-            return victim_id
+            return self._evict_victim()
 
     def put(self, context: CachedContext) -> list[str]:
         """Insert a context, evicting via the policy to make room first.
         Returns the list of evicted dataset_ids. Raises CacheCapacityError
         if context.est_bytes alone exceeds total capacity -- no amount of
-        eviction would ever make room for it."""
+        eviction would ever make room for it. Overwriting an existing
+        dataset_id replaces it in both tiers (a stale spilled copy must
+        never outlive the context that superseded it)."""
         if context.est_bytes > self._capacity_bytes:
             raise CacheCapacityError(
                 f"context for {context.dataset_id!r} needs "
@@ -123,18 +151,33 @@ class ContextCacheManager:
                 f"{self._capacity_bytes} bytes"
             )
         with self._lock:
+            self._remove(context.dataset_id)
+            if self._spill is not None:
+                self._spill.delete(context.dataset_id)
             evicted = self.make_room(context.est_bytes)
             self._entries[context.dataset_id] = context
+            self._used_bytes += context.est_bytes
             return evicted
 
     def evict(self, dataset_id: str) -> None:
+        """Drop a context from every tier. Never spills: this is caller
+        intent (fit_predict's one-shot cleanup, an explicit delete), and
+        a spilled copy left behind would silently resurrect on the next
+        get()."""
         with self._lock:
-            self._entries.pop(dataset_id, None)
+            self._remove(dataset_id)
+            if self._spill is not None:
+                self._spill.delete(dataset_id)
+
+    def dataset_ids(self) -> list[str]:
+        """Ids currently resident in the primary tier (not spilled)."""
+        with self._lock:
+            return list(self._entries)
 
     @property
     def used_bytes(self) -> int:
         with self._lock:
-            return sum(c.est_bytes for c in self._entries.values())
+            return self._used_bytes
 
     @property
     def free_bytes(self) -> int:
@@ -144,7 +187,7 @@ class ContextCacheManager:
         with self._lock:
             return EngineStats(
                 n_cached_contexts=len(self._entries),
-                used_bytes=self.used_bytes,
+                used_bytes=self._used_bytes,
                 free_bytes=self.free_bytes,
                 capacity_bytes=self._capacity_bytes,
             )

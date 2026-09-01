@@ -112,8 +112,8 @@ class PowerLawMemoryEstimator:
         self,
         calibration: Sequence[CalibrationPoint],
         safety_margin: float = 2.0,
-        hard_ceiling_bytes: int = 24 * 1024**3,
-        gpu_capacity_bytes: int = 40536 * 1024**2,  # A100-40GB, MiB-reported
+        hard_ceiling_bytes: int = DEFAULT_HARD_CEILING_BYTES,
+        gpu_capacity_bytes: int = DEFAULT_GPU_CAPACITY_BYTES,
     ) -> None:
         ok_points = [p for p in calibration if p.outcome == "ok"]
         if len(ok_points) < 2:

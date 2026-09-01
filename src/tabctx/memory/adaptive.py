@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import math
 import threading
+from collections import deque
 from dataclasses import dataclass
 
 from tabctx.memory.estimator import MemoryEstimator
@@ -91,7 +92,6 @@ class AdaptiveMemoryEstimator:
         holds resident -- peak-plus-resident is what actually OOMs."""
         self._fallback = fallback
         self._safety_margin = safety_margin
-        self._max_observations = max_observations
         self._preloaded: tuple[Observation, ...] = tuple(preloaded)
         # Measured predict-time peaks at PREDICT_OBS_N_TEST test rows for
         # the same shapes -- what chunking (n_test > 0 queries) needs.
@@ -102,7 +102,11 @@ class AdaptiveMemoryEstimator:
         self._preloaded_predict: tuple[Observation, ...] = tuple(preloaded_predict)
         self._preloaded_margin = preloaded_margin
         self._transient_capacity_fraction = transient_capacity_fraction
-        self._observations: list[Observation] = []
+        # Bounded FIFO -- simple, avoids unbounded growth over a long-
+        # running replica's lifetime. A future version could prune to a
+        # Pareto frontier of dominating points instead of dropping
+        # oldest-first, to retain coverage rather than just recency.
+        self._observations: deque[Observation] = deque(maxlen=max_observations)
         self._lock = threading.Lock()
 
     def record_observation(
@@ -110,12 +114,6 @@ class AdaptiveMemoryEstimator:
     ) -> None:
         with self._lock:
             self._observations.append(Observation(n_train, n_features, real_bytes))
-            # Bounded FIFO -- simple, avoids unbounded growth over a long-
-            # running replica's lifetime. A future version could prune to a
-            # Pareto frontier of dominating points instead of dropping
-            # oldest-first, to retain coverage rather than just recency.
-            if len(self._observations) > self._max_observations:
-                self._observations.pop(0)
 
     def _best_fit_estimate(self, n_train: int, n_features: int) -> int | None:
         """The MINIMUM effective estimate (measurement x its margin)
