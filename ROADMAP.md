@@ -3,11 +3,12 @@
 Nearly everything the original roadmap tracked has shipped and been
 validated on real hardware -- see CHANGELOG.md v0.6.0-v0.9.0 for what
 landed and the measured evidence. This file now holds only the
-remainder, and gets deleted when it empties.
+remainder (each item is also a GitHub issue labelled `roadmap`), and
+gets deleted when it empties.
 
 ## Remaining
 
-1. **Application catalog + persistent context store** (asked for by
+1. **Application catalog + persistent context store** ([#6](https://github.com/VectorInstitute/tabctx/issues/6)) (asked for by
    the first prospective users, 2026-09-01: "upload a cohort table per
    application, run TabICLv2 once, save the kv cache to disk, let end
    users just pick their application"). What exists and what's missing
@@ -28,7 +29,7 @@ remainder, and gets deleted when it empties.
    3. Read-only tenant credentials at the gateway so "admin publishes,
       users predict" is enforceable; per-application aliases stay a
       gateway concern.
-2. **Post-release: ephemeral GKE stress run + researcher deployment**
+2. **Post-release: ephemeral GKE stress run + researcher deployment** ([#7](https://github.com/VectorInstitute/tabctx/issues/7))
    (deliberately sequenced after the release). Everything is staged in
    `VectorInstitute/inference-platform` branch `test/tabicl-gke-onboard`:
    the research overlay (`tabctx-research-values.yaml`: both models, one
@@ -37,11 +38,11 @@ remainder, and gets deleted when it empties.
    battery), and a parameterized `onboard.sh`
    (`OVERLAY=... RELEASE=tabctx-research TABPFN_TOKEN=... KEEP_ALIVE=true`).
    The prod inference-platform deployment for Vector researchers follows.
-3. **TabPFN memory calibration grid**: the preloaded admission grid is
+3. **TabPFN memory calibration grid** ([#8](https://github.com/VectorInstitute/tabctx/issues/8)): the preloaded admission grid is
    TabICL data; TabPFN deployments fall back to the conservative formula
    plus runtime learning. Run `benchmarks/calibrate_memory.py`-style
    sweeps through `TabPFNBackend` on an A100 and add the grid.
-4. **Docs site**: README carries the full story today; a docs site
+4. **Docs site** ([#9](https://github.com/VectorInstitute/tabctx/issues/9)): README carries the full story today; a docs site
    matters as external adoption starts.
 
 ## Standing process note

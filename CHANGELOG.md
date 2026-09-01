@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-09-01
 ### Fixed
 Found by a full-codebase review (2026-09-01), each with a regression test:
 - **Explicit eviction could resurrect a stale context.** `ContextCacheManager.evict()` (fit_predict's cleanup, re-fit overwrites) dropped the resident entry but left any spilled copy on disk, so the next `get()` transparently reloaded the OLD context. Explicit evict and re-fit `put()` now remove the spilled copy too.

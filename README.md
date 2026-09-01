@@ -378,9 +378,10 @@ sharing one A100-40GB** (v0.7.0, 2026-08-29,
 
 ## Status & Roadmap
 
-v0.9.x: multi-model endpoint, calibrated peak-aware admission, disk
+v0.10.0: multi-model endpoint, calibrated peak-aware admission, disk
 spillover and multi-replica routing have all shipped and been validated
-on real GPUs (see [CHANGELOG.md](CHANGELOG.md)). **Read
+on real GPUs (see [CHANGELOG.md](CHANGELOG.md)). Open roadmap items are
+tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.
 
