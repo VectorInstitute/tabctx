@@ -13,7 +13,7 @@ routes between them:
     1. Devices where the table's estimated peak fits WITHOUT evicting
        anything are preferred; among them, the least active one wins
        (fewest calls in flight, then fewest started recently), ties to
-       the most headroom. Each device serializes its own GPU work, so
+       the most headroom. Each device runs one fit at a time, so
        spreading active users across devices is what lets them run
        concurrently.
     2. If no device can take it without eviction (a large table, or a
@@ -27,9 +27,9 @@ routes between them:
   device's residency and spill index (so a context spilled before a
   restart is found on, and restored to, its own device).
 
-Concurrency. Each device's engine holds its cache lock across its whole
-GPU call, so this router never takes another device's lock to make a
-decision: placement and lookup read lock-free snapshots (used bytes,
+Concurrency. Each device's engine schedules its own GPU work (one fit at a
+time, light predicts beside it; see engine.py), and this router never
+waits on a device to make a decision: placement and lookup read lock-free snapshots (used bytes,
 residency, spill index). Work on different devices therefore runs
 concurrently, fits included. Per-dataset_id locks serialize fits and
 evicts of the SAME id, so two concurrent fits of one id end with a single

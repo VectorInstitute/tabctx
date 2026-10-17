@@ -179,12 +179,12 @@ def _replica_tag() -> str | None:
 
 
 @serve.deployment(
-    # 8 concurrent requests per replica (was 2): safe because the engine
-    # serializes all GPU work behind its cache lock regardless -- extra
-    # in-flight requests wait on the lock (or coalesce, see batching.py)
-    # rather than running concurrent GPU calls, so the memory ceiling's
-    # one-in-flight-call assumption still holds. More in-flight requests
-    # = more same-context coalescing opportunity.
+    # 8 concurrent requests per replica (was 2): safe because each device's
+    # engine schedules its GPU work itself (one fit, plus one light predict
+    # beside it; see engine.py) -- extra in-flight requests queue there (or
+    # coalesce, see batching.py) rather than running unbounded concurrent
+    # GPU calls. More in-flight requests = more same-context coalescing
+    # opportunity.
     max_ongoing_requests=8,
     max_queued_requests=16,
     health_check_period_s=30,
