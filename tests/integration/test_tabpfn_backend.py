@@ -59,7 +59,12 @@ def test_engine_stack_with_tabpfn(data, monkeypatch):
     monkeypatch.setenv("TABCTX_BACKEND", "tabpfn")
     train_X, train_y, test_X = data
     built = build_engine()
-    assert built.backend.name == "tabpfn-3"
+    # Named for the checkpoint tabpfn loads (TABPFN_MODEL_VERSION).
+    from tabpfn.settings import settings
+
+    from tabctx.backends.tabpfn import served_model_id
+
+    assert built.backend.name == served_model_id(settings.tabpfn.model_version.value)
 
     dataset_id = built.engine.fit(train_X, train_y, task="classification")
     outcome = built.engine.predict(dataset_id, test_X, return_proba=True)
@@ -105,12 +110,12 @@ def test_pretraining_limits_surface_as_invalid_input():
     """TabPFN rejects tables beyond its pretraining limits; a caller's
     oversized table must 422, not 500 (multi-tenant requirement).
 
-    2,100 features exceeds even the newer checkpoints' 2,000-feature
-    limit (v2-era models capped at 500; found empirically that 600 no
-    longer trips it -- see inference_config.MAX_NUMBER_OF_FEATURES)."""
+    170 classes exceeds the 160-class limit of every v3-series checkpoint
+    (inference_config.MAX_NUMBER_OF_CLASSES). The feature limit is not
+    portable: 2,000 on v3 but 20,000 on v3.5."""
     rng = np.random.default_rng(0)
-    X = rng.normal(size=(20, 2100)).tolist()
-    y = ["a", "b"] * 10
+    X = rng.normal(size=(340, 4)).tolist()
+    y = [f"c{i}" for i in range(170)] * 2
     backend = TabPFNBackend(device="cpu")
     with pytest.raises(InvalidInputError):
         backend.fit(X, y, "classification")

@@ -108,7 +108,7 @@ class FitRequest(BaseModel):
     task: Literal["classification", "regression"] = "classification"
     dataset_id: str | None = None
     # Which model serves this dataset (chat-completions style): an exact
-    # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3"). Default:
+    # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
     # the deployment's first-listed model.
     model: str | None = None
 
