@@ -54,7 +54,7 @@ from typing import Any
 
 import numpy as np
 
-from tabctx.backends._cuda import device_scope, is_cuda
+from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -105,6 +105,7 @@ class TabICLBackend:
         import torch
 
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        ensure_initialized(self._device)
         self._kv_cache = kv_cache
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None

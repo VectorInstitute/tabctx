@@ -17,6 +17,18 @@ def is_cuda(device: str) -> bool:
     return device == "cuda" or device.startswith("cuda:")
 
 
+def ensure_initialized(device: str) -> None:
+    """Initialize CUDA for a backend bound to a GPU. The memory-stat calls
+    that take an explicit device (reset_peak_memory_stats("cuda:1"), ...)
+    raise "Invalid device argument" before CUDA is initialized -- unlike
+    their no-argument forms, which initialize it via current_device(). A
+    replica's first fit would otherwise fail."""
+    if is_cuda(device):
+        import torch
+
+        torch.cuda.init()
+
+
 def device_scope(device: str) -> contextlib.AbstractContextManager[Any]:
     """Make ``device`` torch's current CUDA device for the block; a no-op
     on CPU."""

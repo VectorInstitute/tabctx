@@ -35,7 +35,7 @@ from typing import Any
 
 import numpy as np
 
-from tabctx.backends._cuda import device_scope, is_cuda
+from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -69,6 +69,7 @@ class TabPFNBackend:
         self.model_version = settings.tabpfn.model_version.value
         self.name = served_model_id(self.model_version)
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        ensure_initialized(self._device)
         self._fit_mode = _FIT_MODES[cache_mode]
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
