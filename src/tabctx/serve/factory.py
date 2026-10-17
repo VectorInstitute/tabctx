@@ -324,6 +324,10 @@ _REQUIREMENT_CALIBRATIONS: dict[tuple[str, str], tuple[str, str]] = {
     ("tabicl", "kv"): ("calibration_tabicl_a100_requirement", "A100_40GB_TABICL_KV"),
     ("tabpfn", "kv"): ("calibration_tabpfn_a100_requirement", "A100_40GB_TABPFN_KV"),
 }
+# Models whose per-row resident cache grows with features (see
+# ResidentRateModel): TabPFN caches per (row, feature group); TabICL's ICL
+# cache is per row only.
+_WIDTH_DEPENDENT_RESIDENT = frozenset({"tabpfn"})
 
 
 def _requirement_calibration(
@@ -457,7 +461,11 @@ def build_estimator(
         preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
         working_floor=working_floor,
-        resident_rate=ResidentRateModel(floor_points) if working_floor else None,
+        resident_rate=ResidentRateModel(
+            floor_points, width_dependent=kind in _WIDTH_DEPENDENT_RESIDENT
+        )
+        if working_floor
+        else None,
     )
 
 
