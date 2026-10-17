@@ -67,6 +67,11 @@ class ContextCacheManager:
         self._used_bytes = 0
         self._spill = spill_store
         self._lock = threading.RLock()
+        # Ids moving between tiers (being spilled, or restored), which
+        # neither tier lists until the I/O finishes. Lock-free readers
+        # (has) must still see them: a multi-device router that saw
+        # neither would answer 404 for a context that is merely moving.
+        self._in_transit: set[str] = set()
 
     def get(self, dataset_id: str) -> CachedContext | None:
         with self._lock:
@@ -76,19 +81,23 @@ class ContextCacheManager:
             # Miss with a spill tier: try reloading. Re-admitting evicts
             # via the normal policy to make room (RLock, so the nested
             # put() is fine); what it displaces may itself spill.
-            restored = self._spill.load(dataset_id)
-            if restored is None:
-                return None
-            restored.last_accessed_at = time.monotonic()
+            self._in_transit.add(dataset_id)
             try:
-                self.put(restored)
-            except CacheCapacityError:
-                # Spilled under a larger budget than this process has
-                # (e.g. TABCTX_GPU_MEMORY_FRACTION lowered across a
-                # restart). Nothing can re-admit it; treat as a miss so
-                # the caller re-fits instead of the request 500ing.
-                return None
-            return restored
+                restored = self._spill.load(dataset_id)
+                if restored is None:
+                    return None
+                restored.last_accessed_at = time.monotonic()
+                try:
+                    self.put(restored)
+                except CacheCapacityError:
+                    # Spilled under a larger budget than this process has
+                    # (e.g. TABCTX_GPU_MEMORY_FRACTION lowered across a
+                    # restart). Nothing can re-admit it; treat as a miss so
+                    # the caller re-fits instead of the request 500ing.
+                    return None
+                return restored
+            finally:
+                self._in_transit.discard(dataset_id)
 
     def touch(self, dataset_id: str) -> None:
         with self._lock:
@@ -110,9 +119,15 @@ class ContextCacheManager:
         victim_id = self._policy.select_victim(list(self._entries.values()))
         if victim_id is None:
             return None
-        victim = self._remove(victim_id)
-        if self._spill is not None:
+        if self._spill is None:
+            self._remove(victim_id)
+            return victim_id
+        self._in_transit.add(victim_id)
+        try:
+            victim = self._remove(victim_id)
             self._spill.spill(victim)  # best-effort by contract
+        finally:
+            self._in_transit.discard(victim_id)
         return victim_id
 
     def make_room(self, needed_bytes: int) -> list[str]:
@@ -181,9 +196,14 @@ class ContextCacheManager:
         return dataset_id in self._entries
 
     def has(self, dataset_id: str) -> bool:
-        """Resident or spilled (snapshot, lock-free)."""
-        return dataset_id in self._entries or (
-            self._spill is not None and self._spill.contains(dataset_id)
+        """Resident, spilled, or moving between the two (snapshot,
+        lock-free). An id in transit is reported held: the caller's
+        locked get() waits for the move and finds it (or, if the spill
+        failed, misses then)."""
+        return (
+            dataset_id in self._entries
+            or dataset_id in self._in_transit
+            or (self._spill is not None and self._spill.contains(dataset_id))
         )
 
     def stats_nowait(self) -> EngineStats:

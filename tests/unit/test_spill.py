@@ -1,6 +1,7 @@
 """Unit tests for the disk spillover tier (cache/spill.py + its
 ContextCacheManager integration)."""
 
+import threading
 from pathlib import Path
 
 from tabctx.backends.fake import FakeBackend
@@ -201,3 +202,64 @@ def test_warm_restart_indexes_by_dataset_id(tmp_path):
     assert restarted.contains("t:alice:ds-1")
     restarted.delete("t:alice:ds-1")
     assert list(tmp_path.iterdir()) == []
+
+
+class GatedSpillStore(DiskSpillStore):
+    """Blocks inside spill()/load() until released, to observe the cache
+    while a context is between tiers."""
+
+    def __init__(self, directory) -> None:
+        super().__init__(directory)
+        self.gate = threading.Event()
+        self.entered = threading.Event()
+
+    def spill(self, context):
+        self.entered.set()
+        assert self.gate.wait(5), "spill gate never released"
+        return super().spill(context)
+
+    def load(self, dataset_id):
+        self.entered.set()
+        assert self.gate.wait(5), "load gate never released"
+        return super().load(dataset_id)
+
+
+class TestInTransitVisibility:
+    """A context being spilled or restored is listed by neither tier until
+    the I/O finishes; lock-free has() must still report it (a multi-device
+    router that didn't would answer 404 for a context that is moving)."""
+
+    def test_has_during_spill(self, tmp_path):
+        store = GatedSpillStore(tmp_path)
+        cache = ContextCacheManager(1000, spill_store=store)
+        cache.put(_ctx("moving"))
+        t = threading.Thread(target=cache.evict_one)
+        t.start()
+        assert store.entered.wait(5)
+        assert not cache.holds("moving")
+        assert cache.has("moving")
+        store.gate.set()
+        t.join(5)
+        assert cache.has("moving") and store.contains("moving")
+
+    def test_has_during_restore(self, tmp_path):
+        store = GatedSpillStore(tmp_path)
+        store.gate.set()
+        cache = ContextCacheManager(1000, spill_store=store)
+        cache.put(_ctx("moving"))
+        cache.evict_one()
+        store.gate.clear()
+        store.entered.clear()
+        t = threading.Thread(target=cache.get, args=("moving",))
+        t.start()
+        assert store.entered.wait(5)
+        assert cache.has("moving")
+        store.gate.set()
+        t.join(5)
+        assert cache.holds("moving")
+
+    def test_failed_spill_is_a_real_miss_afterwards(self, tmp_path):
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        cache.put(_ctx("bad", payload=lambda: None))
+        cache.evict_one()
+        assert not cache.has("bad")
