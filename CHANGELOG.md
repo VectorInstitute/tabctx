@@ -9,7 +9,13 @@
 - `benchmarks/sweep_admission.py`: the table-size sweep (rows up to the first 413 per feature count, fit and predict timed).
 - ROADMAP: multi-GPU and CUDA-level track (#30-#37), PyTorch-level first.
 
+### Changed
+- **TabPFN contexts share the model: ~42x less GPU memory per context.** TabPFN builds a fresh model for every estimator unless its built-model cache is on, so every cached context held its own ~850 MB copy of the weights on the GPU (measured on an A100: 4 contexts of a 300x6 table took 3.4 GB). `TabPFNBackend` now enables that cache (`TABPFN_MODEL_CACHE_SIZE`, default 16 entries, keyed by device and task): one shared model per (device, task), about 1.7 GB fixed per GPU, and a context costs only its own state (~20 MB for that table). Interleaved contexts predict bit-identically to each context alone.
+- **TabPFN spill blobs no longer contain the model.** A spilled TabPFN payload was ~900 MB, mostly weights, and a restore built another private copy on the GPU. References to the shared model are now pickled as tokens and re-attached on load: a 2,000x20 context spills as 99 MB and restores with identical predictions and no extra GPU memory. Older blobs still load.
+- **Weights load at replica start** (`warmup()` on both backends, called by the factory) instead of inside the first tenant's fit, which reported the checkpoint as part of its context (a 200x6 TabPFN context was booked at 855 MB, TabICL's at 226 MB) and paid the load latency.
+
 ### Fixed
+- **First fit on a GPU failed** with "Invalid device argument": device-explicit memory-stat calls need CUDA initialized, which the no-argument forms used to do implicitly. Backends now initialize CUDA at construction.
 - **Spill tier warm restart:** the index rebuilt at startup was keyed by the hex-encoded file name instead of the dataset_id, so lookups, explicit deletes and disk-pressure cleanup all missed contexts a previous process had spilled (restores still worked because `load()` reads by path).
 - **TabICL spill restore reloaded the checkpoint:** tabicl's `__setstate__` calls `_load_model()`, which loaded the full checkpoint (and a second backbone onto the GPU, unaccounted) on every restore before tabctx swapped in the shared one. Spilled TabICL payloads now carry a task tag and restore straight onto the shared backbone; untagged blobs from older versions still load.
 - `/readyz` and the legacy endpoint read GPU memory from torch's current device; they now read the replica's own device(s).

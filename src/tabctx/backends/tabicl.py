@@ -250,6 +250,20 @@ class TabICLBackend:
         # Regressor: no predict_proba to derive from.
         return PredictOutcome(predictions=model.predict(X_test).tolist())
 
+    def warmup(self) -> None:
+        """Load the model weights for both tasks now, with throwaway fits,
+        instead of inside a tenant's first fit: that fit would otherwise
+        report the weights as part of its context (resident bytes for a
+        tiny table were the whole checkpoint), overcharging the cache and
+        leaving the books wrong once it is evicted -- and would pay the
+        load latency."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(32, 4))
+        self.fit(X, (X[:, 0] > 0).astype(int), "classification")
+        self.fit(X, X[:, 0], "regression")
+        self._last_context_bytes = None
+        self._last_fit_peak_bytes = None
+
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
         # Real measurement from the fit() call this is queried after (see

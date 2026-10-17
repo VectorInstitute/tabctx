@@ -368,12 +368,20 @@ def _build_real_backend(
         from tabctx.backends.tabpfn import TabPFNBackend
 
         # TABCTX_KV_CACHE maps onto TabPFN's fit_mode (see backends/tabpfn.py).
-        return TabPFNBackend(device=device, cache_mode=settings.kv_cache)
+        backend: TabularICLBackend = TabPFNBackend(
+            device=device, cache_mode=settings.kv_cache
+        )
+    else:
+        from tabctx.backends.tabicl import TabICLBackend
 
-    from tabctx.backends.tabicl import TabICLBackend
-
-    kv_cache: bool | str = False if settings.kv_cache == "off" else settings.kv_cache
-    return TabICLBackend(device=device, kv_cache=kv_cache)
+        kv_cache: bool | str = (
+            False if settings.kv_cache == "off" else settings.kv_cache
+        )
+        backend = TabICLBackend(device=device, kv_cache=kv_cache)
+    # Weights load at replica start, not inside (and charged to) the first
+    # tenant's fit.
+    backend.warmup()
+    return backend
 
 
 def _build_backend(

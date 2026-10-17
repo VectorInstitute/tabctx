@@ -31,6 +31,9 @@ by the protocol -- fit() mutates estimator state) is already cheap.
 
 from __future__ import annotations
 
+import io
+import os
+import pickle
 from typing import Any
 
 import numpy as np
@@ -50,6 +53,35 @@ def served_model_id(model_version: str) -> str:
     """The API model id for a tabpfn `model_version`: "v3" -> "tabpfn-3",
     "v3.5" -> "tabpfn-3.5", "v3.5-fast" -> "tabpfn-3.5-fast"."""
     return f"tabpfn-{model_version.removeprefix('v')}"
+
+
+# TabPFN builds a fresh model for every estimator unless its built-model
+# cache is on, so every cached context held its own ~850 MB copy of the
+# weights on the GPU (measured: 4 contexts of a 300x6 table = 3.4 GB). With
+# the cache, estimators on one device share one model per task and a
+# context costs only its own state (~20 MB for that table), with
+# bit-identical predictions. Keyed by device and task, so multi-GPU
+# replicas get one shared model per (device, task).
+_BUILT_MODEL_CACHE_ENTRIES = "16"
+_SPILL_TAG = b"P1"
+
+
+class _SharedModelPickler(pickle.Pickler):
+    def __init__(self, file, shared: dict[int, tuple]) -> None:
+        super().__init__(file, protocol=pickle.HIGHEST_PROTOCOL)
+        self._shared = shared
+
+    def persistent_id(self, obj: Any) -> tuple | None:
+        return self._shared.get(id(obj))
+
+
+class _SharedModelUnpickler(pickle.Unpickler):
+    def __init__(self, file, resolve) -> None:
+        super().__init__(file)
+        self._resolve = resolve
+
+    def persistent_load(self, pid: Any) -> Any:
+        return self._resolve(pid)
 
 
 class TabPFNBackend:
@@ -73,6 +105,9 @@ class TabPFNBackend:
         self._fit_mode = _FIT_MODES[cache_mode]
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
+        # (task, index) -> the shared model module(s) on this device.
+        self._shared_models: dict[tuple[str, int], Any] = {}
+        os.environ.setdefault("TABPFN_MODEL_CACHE_SIZE", _BUILT_MODEL_CACHE_ENTRIES)
 
     def _make_estimator(self, task: Task) -> Any:
         if task == "classification":
@@ -117,6 +152,8 @@ class TabPFNBackend:
         else:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
+        for index, module in enumerate(getattr(model, "models_", None) or []):
+            self._shared_models.setdefault((task, index), module)
         return model
 
     def predict(
@@ -149,6 +186,54 @@ class TabPFNBackend:
                 )
             return PredictOutcome(predictions=predictions)
         return PredictOutcome(predictions=model.predict(X_arr).tolist())
+
+    # ---- spillover serialization (see cache/spill.py) ----------------
+
+    def dumps_payload(self, payload: Any) -> bytes:
+        """Pickle a fitted estimator for the spill tier WITHOUT the shared
+        model (pickled whole, a TabPFN payload was ~900 MB of weights, and a
+        restore built a private copy again): every reference to a shared
+        module is written as a (task, index) token instead."""
+        shared = {
+            id(m): ("tabpfn-model", task, i)
+            for (task, i), m in self._shared_models.items()
+        }
+        buf = io.BytesIO()
+        _SharedModelPickler(buf, shared).dump(payload)
+        return _SPILL_TAG + buf.getvalue()
+
+    def loads_payload(self, data: bytes) -> Any:
+        """Inverse of dumps_payload, re-attaching this device's shared model
+        (loading it first after a restart). Untagged blobs from older
+        versions are plain pickles and still load."""
+        if not data.startswith(_SPILL_TAG):
+            with device_scope(self._device):
+                return pickle.loads(data)
+
+        def resolve(pid: Any) -> Any:
+            _, task, index = pid
+            if (task, index) not in self._shared_models:
+                self.warmup()
+            return self._shared_models[(task, index)]
+
+        with device_scope(self._device):
+            return _SharedModelUnpickler(
+                io.BytesIO(data[len(_SPILL_TAG) :]), resolve
+            ).load()
+
+    def warmup(self) -> None:
+        """Load the model weights for both tasks now, with throwaway fits,
+        instead of inside a tenant's first fit: that fit would otherwise
+        report the weights as part of its context (resident bytes for a
+        tiny table were the whole checkpoint), overcharging the cache and
+        leaving the books wrong once it is evicted -- and would pay the
+        load latency."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(32, 4))
+        self.fit(X, (X[:, 0] > 0).astype(int), "classification")
+        self.fit(X, X[:, 0], "regression")
+        self._last_context_bytes = None
+        self._last_fit_peak_bytes = None
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
