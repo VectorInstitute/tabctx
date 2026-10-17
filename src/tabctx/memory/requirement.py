@@ -103,24 +103,37 @@ class WorkingFloorModel:
 class ResidentRateModel:
     """Extrapolates a kv context's resident size to longer tables.
 
-    A TabICL kv context is a column cache that depends on features but not
-    rows, plus an ICL cache with one key/value per training row whose width
-    doesn't depend on features. So for any measured fit (n0 rows, d0 >= d
-    features, resident r0), resident(n, d) <= r0 + rate * (n - n0) for
-    n >= n0, where rate is the steepest per-row slope among long fits
-    (>= slope_min_rows; short fits are dominated by the column cache) at
-    the narrowest measured width >= d: TabPFN's per-row cache grows with
-    features, so only a rate measured at least as wide bounds it, and the
-    narrowest such is the tightest.
-    The estimate is the smallest such bound. Residents are fit-time sizes
-    (before any post-fit compression -- what the fit needs while it runs),
-    the same quantity the calibration measured. This replica's own long
-    fits supersede the calibration slope once any exist."""
+    For any measured fit (n0 rows, d0 >= d features, resident r0),
+    resident(n, d) <= r0 + rate * (n - n0) for n >= n0; the estimate is
+    the smallest such bound. What bounds the per-row rate depends on how
+    the model's cache scales:
+
+    - Width-independent (TabICL): a kv context is a column cache that
+      depends on features but not rows, plus an ICL cache with one
+      key/value per training row whose size doesn't depend on features.
+      The rate is the steepest among long fits (>= slope_min_rows; short
+      fits are dominated by the column cache), preferring the narrowest
+      measured width >= d.
+    - Width-dependent (TabPFN, ``width_dependent=True``): the per-row
+      cache grows with features, so only fits at least as wide bound the
+      rate. It comes from the narrowest measured width >= d -- long fits
+      there if any, else short ones (whose fixed overhead overstates the
+      rate: conservative) -- and shapes wider than every measurement get
+      no estimate at all.
+
+    Residents are fit-time sizes (before any post-fit compression -- what
+    the fit needs while it runs), the same quantity the calibration
+    measured. This replica's own fits supersede the calibration's rate
+    once any qualify."""
 
     def __init__(
-        self, calibration: Iterable[FloorPoint] = (), slope_min_rows: int = 10_000
+        self,
+        calibration: Iterable[FloorPoint] = (),
+        slope_min_rows: int = 10_000,
+        width_dependent: bool = False,
     ) -> None:
         self._min_rows = slope_min_rows
+        self._width_dependent = width_dependent
         self._calibration = [
             (p.n_train, p.n_features, p.resident_bytes)
             for p in calibration
@@ -138,12 +151,15 @@ class ResidentRateModel:
     def _slope(
         self, points: list[tuple[int, int, int]], n_features: int
     ) -> float | None:
-        """Steepest per-row rate among long fits at the narrowest measured
-        width >= n_features: residents don't shrink as features grow, so
-        that rate bounds this width's (and TabPFN's grows with width, so a
-        wider one would overshoot). Falls back to every long fit when none
-        is that wide (TabICL's rate barely depends on features)."""
-        long_fits = [(d, res / n) for n, d, res in points if n >= self._min_rows]
+        rates = [(n, d, res / n) for n, d, res in points]
+        long_fits = [(d, r) for n, d, r in rates if n >= self._min_rows]
+        if self._width_dependent:
+            wide = [d for _, d, _ in rates if d >= n_features]
+            if not wide:
+                return None
+            at = min(wide)
+            long_at = [r for d, r in long_fits if d == at]
+            return max(long_at or [r for _, d, r in rates if d == at])
         if not long_fits:
             return None
         widths = [d for d, _ in long_fits if d >= n_features]

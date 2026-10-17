@@ -235,14 +235,46 @@ def test_floor_model_is_monotone_in_rows():
     assert m.bytes(3_000, 1_000) >= m.bytes(2_000, 1_000)
 
 
-def test_factory_wires_floor_and_resident_models_for_tabicl_kv_only():
+def test_factory_wires_floor_and_resident_models_for_calibrated_kv_models():
     from tabctx.serve.factory import ServeSettings, build_estimator
 
-    kv = build_estimator(ServeSettings(backends=("tabicl",)), "tabicl", 40 * GiB)
-    assert kv._working_floor is not None and kv._resident_rate is not None
-    for settings, kind in (
-        (ServeSettings(backends=("tabicl",), kv_cache="repr"), "tabicl"),
-        (ServeSettings(backends=("tabpfn",)), "tabpfn"),
-    ):
-        est = build_estimator(settings, kind, 40 * GiB)
-        assert est._working_floor is None and est._resident_rate is None
+    for kind, width_dependent in (("tabicl", False), ("tabpfn", True)):
+        est = build_estimator(ServeSettings(backends=(kind,)), kind, 40 * GiB)
+        assert est._working_floor is not None and est._resident_rate is not None
+        assert est._resident_rate._width_dependent is width_dependent
+    repr_mode = build_estimator(
+        ServeSettings(backends=("tabicl",), kv_cache="repr"), "tabicl", 40 * GiB
+    )
+    assert repr_mode._working_floor is None and repr_mode._resident_rate is None
+
+
+class TestWidthDependentResidentRate:
+    """TabPFN-like caches: per-row size grows with features."""
+
+    CAL = (
+        FloorPoint(100_000, 10, GiB, resident_bytes=3 * GiB),
+        FloorPoint(20_000, 100, GiB, resident_bytes=1 * GiB),
+        FloorPoint(2_000, 1_000, GiB, resident_bytes=int(1.3 * GiB)),
+    )
+
+    def _model(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        return ResidentRateModel(self.CAL, width_dependent=True)
+
+    def test_wider_than_any_measurement_has_no_estimate(self):
+        assert self._model().estimate(1_000, 2_000) is None
+
+    def test_short_fits_set_the_rate_when_no_long_fit_is_that_wide(self):
+        # Only 2000 rows measured at 1000 features: its whole resident
+        # counts as per-row (conservative), never the 10-feature rate.
+        rate = 1.3 * GiB / 2_000
+        assert self._model().estimate(20_000, 1_000) == pytest.approx(
+            1.3 * GiB + rate * 18_000, rel=1e-6
+        )
+
+    def test_narrow_queries_use_their_own_width(self):
+        rate = 3 * GiB / 100_000
+        assert self._model().estimate(150_000, 10) == pytest.approx(
+            3 * GiB + rate * 50_000, rel=1e-6
+        )
