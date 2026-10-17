@@ -9,6 +9,8 @@
 #   benchmarks/gke/devbox.sh up            # create cluster + pod (MACHINES order)
 #   benchmarks/gke/devbox.sh sync          # copy src/ benchmarks/ tests/ into the pod
 #   benchmarks/gke/devbox.sh exec -- CMD   # run CMD in the pod (cwd /work/tabctx)
+#                                         # (CMD is joined into one shell string: quote
+#                                         #  pipes/redirects as one argument, no bash -c)
 #   benchmarks/gke/devbox.sh fetch PATH    # copy /work/tabctx/PATH back to ./gke-out/
 #   benchmarks/gke/devbox.sh down          # delete the cluster
 #
