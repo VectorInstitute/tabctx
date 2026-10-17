@@ -36,6 +36,10 @@ Environment variables:
   (benchmarks/baselines/kv-precision-tabicl-a100.jsonl): identical labels
   and metrics, max probability drift 0.009, at up to ~1.4x warm predict
   latency on large contexts. TabPFN already stores its cache in int8.
+- ``TABCTX_OFFLOAD_DIR``: where TabICL may spill stage outputs too large
+  for GPU and host memory (memory-mapped files), instead of exhausting the
+  pod's RAM; default ``<TABCTX_SPILL_DIR>/offload``, else a temporary
+  directory. One subdirectory per device.
 - ``TABCTX_BATCH_WINDOW_MS``: coalescing window for same-context predict
   batching (see batching.py); default 5. 0 disables coalescing.
 - ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
@@ -61,6 +65,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -89,6 +94,7 @@ BACKEND_ENV_VAR = "TABCTX_BACKEND"
 GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
 KV_PRECISION_ENV_VAR = "TABCTX_KV_PRECISION"
+OFFLOAD_DIR_ENV_VAR = "TABCTX_OFFLOAD_DIR"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
 MAX_UPLOAD_BYTES_ENV_VAR = "TABCTX_MAX_UPLOAD_BYTES"
 SPILL_DIR_ENV_VAR = "TABCTX_SPILL_DIR"
@@ -117,6 +123,8 @@ class ServeSettings:
     spill_capacity_bytes: int = DEFAULT_SPILL_CAPACITY_BYTES
     # Empty = "auto" (see resolve_devices).
     devices: tuple[str, ...] = ()
+    # None = <spill_dir>/offload, else a temporary directory.
+    offload_dir: str | None = None
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -192,6 +200,7 @@ class ServeSettings:
         if spill_capacity <= 0:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
         devices = _parse_devices(os.environ.get(DEVICES_ENV_VAR, "auto"))
+        offload_dir = os.environ.get(OFFLOAD_DIR_ENV_VAR) or None
         return cls(
             backends=backends,
             gpu_memory_fraction=fraction,
@@ -203,6 +212,7 @@ class ServeSettings:
             spill_dir=spill_dir,
             spill_capacity_bytes=spill_capacity,
             devices=devices,
+            offload_dir=offload_dir,
         )
 
 
@@ -424,12 +434,28 @@ def _build_real_backend(
             False if settings.kv_cache == "off" else settings.kv_cache
         )
         backend = TabICLBackend(
-            device=device, kv_cache=kv_cache, kv_precision=settings.kv_precision
+            device=device,
+            kv_cache=kv_cache,
+            kv_precision=settings.kv_precision,
+            offload_dir=_offload_dir(settings, device),
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.
     backend.warmup()
     return backend
+
+
+def _offload_dir(settings: ServeSettings, device: str) -> str:
+    """Per-device directory for TabICL's disk offload (created)."""
+    if settings.offload_dir:
+        root = settings.offload_dir
+    elif settings.spill_dir:
+        root = os.path.join(settings.spill_dir, "offload")
+    else:
+        root = os.path.join(tempfile.gettempdir(), "tabctx-offload")
+    path = os.path.join(root, device.replace(":", "_"))
+    os.makedirs(path, exist_ok=True)
+    return path
 
 
 def _build_backend(

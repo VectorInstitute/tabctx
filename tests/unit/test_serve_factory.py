@@ -253,6 +253,7 @@ class TestBuildEngine:
             SPILL_CAPACITY_ENV_VAR,
             DEVICES_ENV_VAR,
             "TABCTX_KV_PRECISION",
+            "TABCTX_OFFLOAD_DIR",
         ):
             monkeypatch.delenv(var, raising=False)
         assert ServeSettings.from_env() == ServeSettings()

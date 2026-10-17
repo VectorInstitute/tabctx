@@ -96,6 +96,8 @@ class TabICLBackend:
         device: str | None = None,
         kv_cache: bool | str = "kv",
         kv_precision: KVPrecision = "native",
+        offload_dir: str | None = None,
+        cpu_safety_factor: float = 0.6,
     ) -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
         False). tabicl's own default is False, which makes every
@@ -117,6 +119,16 @@ class TabICLBackend:
             raise ValueError(f"kv_precision must be one of {KV_PRECISIONS}")
         # Storage of the ICL key/value cache (see backends/tabicl_kv.py).
         self._kv_precision: KVPrecision = kv_precision
+        # Large fits offload stage outputs off the GPU (tabicl's
+        # offload="auto"). Without a disk directory, an output too big for
+        # host memory falls through to "cpu (swap)" -- an OOM kill in a
+        # container with no swap (measured: 65,000 x 500 on a 64 GiB pod).
+        # With one, it degrades to disk memmaps instead. tabicl budgets host
+        # memory as cgroup headroom x cpu_safety_factor but doesn't count
+        # its own pinned staging buffers or other devices' concurrent work,
+        # hence 0.6 rather than its 0.85 default.
+        self._offload_dir = offload_dir
+        self._offload_config = {"cpu_safety_factor": cpu_safety_factor}
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
         # task -> attrs of an already-loaded backbone, shared across
@@ -136,14 +148,23 @@ class TabICLBackend:
         _install_restore_hook(TabICLRegressor)
 
     def _make_estimator(self, task: Task) -> Any:
+        options = {
+            "device": self._device,
+            "kv_cache": self._kv_cache,
+            "disk_offload_dir": self._offload_dir,
+            "inference_config": {
+                stage: dict(self._offload_config)
+                for stage in ("COL_CONFIG", "ROW_CONFIG", "ICL_CONFIG")
+            },
+        }
         if task == "classification":
             from tabicl import TabICLClassifier
 
-            est = TabICLClassifier(device=self._device, kv_cache=self._kv_cache)
+            est = TabICLClassifier(**options)
         else:
             from tabicl import TabICLRegressor
 
-            est = TabICLRegressor(device=self._device, kv_cache=self._kv_cache)
+            est = TabICLRegressor(**options)
 
         shared = self._shared_backbones.get(task)
         if shared is not None:

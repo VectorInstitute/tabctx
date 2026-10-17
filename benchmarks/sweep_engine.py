@@ -31,6 +31,7 @@ def main() -> int:
     p.add_argument("--backend", default="tabicl")
     p.add_argument("--features", type=int, nargs="+", default=[10, 100, 500, 1000])
     p.add_argument("--peak-only", action="store_true")
+    p.add_argument("--min-rows", type=int, default=0)
     p.add_argument("--out", default=None)
     args = p.parse_args()
     if args.peak_only:
@@ -41,7 +42,7 @@ def main() -> int:
     out = open(args.out, "a") if args.out else None  # noqa: SIM115
     policy = "peak-only" if args.peak_only else "requirement"
     for d in args.features:
-        for n in ROWS:
+        for n in (r for r in ROWS if r >= args.min_rows):
             X = rng.normal(size=(n, d)).astype(np.float32)
             y = (X[:, 0] > 0).astype(int)
             rec = {"policy": policy, "rows": n, "features": d}
