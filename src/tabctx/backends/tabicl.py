@@ -49,6 +49,7 @@ the before/after delta.
 
 from __future__ import annotations
 
+import logging
 import threading
 from typing import Any
 
@@ -63,6 +64,10 @@ from tabctx.types import ArrayLike, PredictOutcome, Task
 # calls _load_model(), which would otherwise torch.load the full checkpoint
 # and move a second backbone onto the GPU on every spill restore.
 _restoring = threading.local()
+_warned = [False]  # one missing-hook warning per process
+# Offloaded stage-output bytes per cell (see TabICLBackend.may_offload).
+_OUTPUT_BYTES_PER_CELL = 2560
+logger = logging.getLogger(__name__)
 _TASK_TAGS = {"classification": b"C", "regression": b"R"}
 
 
@@ -131,6 +136,7 @@ class TabICLBackend:
         self._offload_config = {"cpu_safety_factor": cpu_safety_factor}
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
+        self._last_fit_resident_bytes: int | None = None
         # task -> attrs of an already-loaded backbone, shared across
         # fits. Loading is ~hundreds of MB of torch.load + H2D transfer
         # PER FIT without this. Sharing one nn.Module across estimators
@@ -201,40 +207,43 @@ class TabICLBackend:
         before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
         if measuring:
             torch.cuda.reset_peak_memory_stats(device)
+        self._last_context_bytes = None
+        self._last_fit_peak_bytes = None
+        self._last_fit_resident_bytes = None
         try:
             with device_scope(device):
                 model.fit(X, y)
-                # Before measuring: the context's resident size is the
-                # compressed one.
+                # The context as the fit built it, at full precision: what
+                # the fit needed resident, and so what admission must
+                # learn -- compression only shrinks it afterwards.
+                fit_resident = (
+                    torch.cuda.memory_allocated(device) - before_bytes
+                    if measuring
+                    else None
+                )
                 compress_icl_cache(model, self._kv_precision)
         except torch.cuda.OutOfMemoryError as e:
-            self._last_context_bytes = None
-            self._last_fit_peak_bytes = None
             raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
-        # Two DIFFERENT real measurements, for two different consumers --
-        # conflating them was the v0.4.0 design flaw fixed in v0.9.0:
-        # - resident delta (context_bytes_hint): what the fitted context
-        #   occupies afterward -> cache capacity/eviction accounting.
-        # - peak delta (fit_peak_bytes_hint): the transient high-water
-        #   during fit -> what ADMISSION must bound, since this is what
-        #   actually OOMs. Peak can exceed resident by orders of
-        #   magnitude (activations, ensemble intermediates).
+        finally:
+            # Even on failure: a large fit that dies after offloading leaves
+            # tens of GiB pinned, and its host slot is released right after.
+            self._unpin_shared_module(model)
+            self._release_host_memory(model)
+        # Three real measurements, for different consumers:
+        # - resident (context_bytes_hint): what the fitted context occupies
+        #   afterwards, compressed -> cache capacity/eviction accounting.
+        # - fit-time resident (fit_resident_bytes_hint): the context before
+        #   compression -> what admission learns the fit needed resident.
+        # - peak (fit_peak_bytes_hint): the transient high-water during fit.
         # None on CPU; the engine falls back to the formula estimator.
         if measuring:
             after_bytes = torch.cuda.memory_allocated(device)
             self._last_context_bytes = max(0, after_bytes - before_bytes)
+            self._last_fit_resident_bytes = max(0, fit_resident or 0)
             self._last_fit_peak_bytes = max(
                 0, torch.cuda.max_memory_allocated(device) - before_bytes
             )
-        else:
-            self._last_context_bytes = None
-            self._last_fit_peak_bytes = None
         self._stash_backbone(task, model)
-        # Explicit even though tabicl's fit path clears internally today:
-        # a future tabicl change must not silently re-pin (see
-        # _unpin_shared_module for the OOM this prevents).
-        self._unpin_shared_module(model)
-        self._release_host_memory(model)
         return model
 
     def _unpin_shared_module(self, model: Any) -> None:
@@ -253,6 +262,20 @@ class TabICLBackend:
         if module is not None and hasattr(module, "clear_cache"):
             module.clear_cache()
 
+    def may_offload(self, n_rows: int, n_features: int) -> bool:
+        """Whether a call over n_rows x n_features may offload stage outputs
+        to host memory. Mirrors tabicl's auto-offload trigger -- an output
+        above auto_offload_threshold (0.5) x the device's CURRENTLY free GPU
+        memory -- with the output size calibrated on an A100 (no offload at
+        5M cells, offload at 10M, ~38 GB free): ~2.5 KB per cell for 8
+        estimators. So on a busy card, smaller tables offload too."""
+        if not is_cuda(self._device):
+            return False
+        import torch
+
+        free, _ = torch.cuda.mem_get_info(torch.device(self._device))
+        return _OUTPUT_BYTES_PER_CELL * n_rows * n_features > 0.4 * free
+
     def _release_host_memory(self, model: Any) -> None:
         """Return the offload staging memory a large call leaves pinned.
 
@@ -264,12 +287,16 @@ class TabICLBackend:
         cache, none of it the context's -- two large tables would exhaust a
         64 GiB pod and get the replica OOM-killed. Clearing the pools and
         emptying the host cache returns it (only unused cached blocks are
-        freed, so a concurrent call on another device is unaffected)."""
+        freed; cudaFreeHost synchronizes, so a concurrent call on another
+        device may stall briefly, but its buffers are untouched)."""
         module = getattr(model, "model_", None)
         if module is None:
             return
-        for sub in module.modules():
-            pool = getattr(getattr(sub, "inference_mgr", None), "_buffer_pool", None)
+        pools = [
+            getattr(getattr(sub, "inference_mgr", None), "_buffer_pool", None)
+            for sub in module.modules()
+        ]
+        for pool in pools:
             if pool is not None:
                 pool.clear()
         import torch
@@ -277,6 +304,17 @@ class TabICLBackend:
         empty_host_cache = getattr(torch._C, "_host_emptyCache", None)
         if callable(empty_host_cache):
             empty_host_cache()
+        if (not any(pools) or not callable(empty_host_cache)) and not _warned[0]:
+            # Private hooks (tabicl's pools, torch's host cache): a rename
+            # would silently bring back tens of GiB of retained host memory.
+            _warned[0] = True
+            logger.warning(
+                "tabctx could not release TabICL's pinned host memory "
+                "(buffer pools found: %s, torch host cache API: %s); large "
+                "fits may retain host RAM -- check tabicl/torch versions",
+                any(pools),
+                callable(empty_host_cache),
+            )
 
     def predict(
         self, payload: Any, X_test: ArrayLike, return_proba: bool = False
@@ -331,6 +369,12 @@ class TabICLBackend:
         # module docstring); None on CPU or if fit() OOM'd, in which case
         # the engine falls back to the formula-based MemoryEstimator.
         return self._last_context_bytes
+
+    def fit_resident_bytes_hint(self) -> int | None:
+        """The most recent fit's context before compression -- what it
+        needed resident while it ran (== context_bytes_hint at native
+        precision); None on CPU/after OOM."""
+        return self._last_fit_resident_bytes
 
     def fit_peak_bytes_hint(self) -> int | None:
         """Transient high-water memory of the most recent fit() -- the

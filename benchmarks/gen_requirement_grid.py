@@ -41,11 +41,11 @@ def main() -> int:
     for r in ok:
         n, d = r["rows"], r["features"]
         resident = int(r["resident_gib"] * GiB)
-        # The floor can't exceed what the fit used unconstrained: a search
-        # result above that is ballast fragmentation, not need.
-        used = int((r["unconstrained_peak_gib"] - r["resident_gib"]) * GiB)
-        working = min(int(r["min_working_gib"] * GiB), used)
-        need = resident + working
+        # Uncapped: min_free is what a live device needs (it includes
+        # allocator fragmentation and workspaces that max_memory_allocated
+        # doesn't see), even where it exceeds the unconstrained peak.
+        working = int(r["min_working_gib"] * GiB)
+        need = int(r["min_free_gib"] * GiB)
         note = (
             f"resident {r['resident_gib']} GiB, unconstrained peak "
             f"{r['unconstrained_peak_gib']} GiB, fit {r['unconstrained_fit_s']}s "

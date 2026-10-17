@@ -412,7 +412,7 @@ def build_estimator(
 
 
 def _build_real_backend(
-    kind: BackendKind, settings: ServeSettings, device: str
+    kind: BackendKind, settings: ServeSettings, device: str, host_slots: int = 1
 ) -> TabularICLBackend:  # pragma: no cover
     # Requires torch + tabicl/tabpfn (GPU or licensed weights), which --
     # like backends/tabicl.py and backends/tabpfn.py themselves -- are not
@@ -438,6 +438,9 @@ def _build_real_backend(
             kv_cache=kv_cache,
             kv_precision=settings.kv_precision,
             offload_dir=_offload_dir(settings, device),
+            # Concurrent offloading calls each get their share of host
+            # headroom (see memory/host.py).
+            cpu_safety_factor=0.6 / host_slots,
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.
@@ -459,7 +462,7 @@ def _offload_dir(settings: ServeSettings, device: str) -> str:
 
 
 def _build_backend(
-    kind: BackendKind, settings: ServeSettings, device: str = "cpu"
+    kind: BackendKind, settings: ServeSettings, device: str = "cpu", host_slots: int = 1
 ) -> TabularICLBackend:
     """One backend bound to `device`. Imports torch/tabicl/tabpfn only on
     the paths that need them, so the fake backend runs with core deps
@@ -468,7 +471,7 @@ def _build_backend(
         from tabctx.backends.fake import FakeBackend
 
         return FakeBackend()
-    return _build_real_backend(kind, settings, device)
+    return _build_real_backend(kind, settings, device, host_slots)
 
 
 def _warn_on_spill_layout(spill_dir: str, multi: bool) -> None:
@@ -541,7 +544,9 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     for device in devices:
         backends: dict[str, TabularICLBackend] = {}
         for kind in settings.backends:
-            backend = _build_backend(kind, settings, device)
+            backend = _build_backend(
+                kind, settings, device, host_guard.slots if host_guard else 1
+            )
             backends[backend.name] = backend
             # One estimator per model, shared by every device: they are
             # identical cards budgeted alike, and observations learned on

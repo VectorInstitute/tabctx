@@ -12,7 +12,12 @@ import uuid
 from tabctx.backends.base import TabularICLBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.chunking import choose_chunk_rows, split_rows
-from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
+from tabctx.errors import (
+    AdmissionRejected,
+    BackendComputeError,
+    DatasetNotFoundError,
+    InvalidInputError,
+)
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
@@ -81,6 +86,24 @@ def _validate_predict_input(X_test: ArrayLike, n_features: int) -> None:
             f"cached training context), saw lengths ranging "
             f"{min(lengths)}-{max(lengths)}"
         )
+
+
+def _predict_splitting_on_oom(
+    backend: TabularICLBackend, payload: object, X_test: ArrayLike, return_proba: bool
+) -> list[PredictOutcome]:
+    """Predict, halving the chunk on a CUDA OOM until it fits (or one row
+    still doesn't). Chunk sizing estimates can't see everything on a nearly
+    full device -- e.g. a compressed kv cache's per-layer decompression --
+    and a model may pick a single batch with no OOM retry of its own."""
+    try:
+        return [backend.predict(payload, X_test, return_proba=return_proba)]
+    except BackendComputeError:
+        if len(X_test) <= 1:
+            raise
+        half = len(X_test) // 2
+        return _predict_splitting_on_oom(
+            backend, payload, X_test[:half], return_proba
+        ) + _predict_splitting_on_oom(backend, payload, X_test[half:], return_proba)
 
 
 class TabctxEngine:
@@ -219,12 +242,7 @@ class TabctxEngine:
         resolved_id = dataset_id or str(uuid.uuid4())
         # Host memory first, outside the cache lock: a large fit waiting for
         # a host slot must not block predicts on this device meanwhile.
-        host_slot = (
-            self._host_guard.reserve(n_train, n_features)
-            if self._host_guard is not None
-            else contextlib.nullcontext()
-        )
-        with host_slot, self._cache.lock:
+        with self._host_slot(chosen, n_train, n_features), self._cache.lock:
             # Usage-aware admission (v0.9.0): what OOMs is the fit's
             # transient PEAK on top of everything resident, so the
             # estimated peak must fit the headroom given current cache
@@ -277,9 +295,17 @@ class TabctxEngine:
                 # only says how much was free), else the transient peak.
                 peak_hint = getattr(chosen, "fit_peak_bytes_hint", None)
                 peak_bytes = peak_hint() if callable(peak_hint) else None
+                # What the fit needed resident while it ran: backends that
+                # compress the context afterwards (TabICL's int8 kv cache)
+                # report the pre-compression size; est_bytes, the compressed
+                # size, stays the cache-accounting quantity.
+                fit_hint = getattr(chosen, "fit_resident_bytes_hint", None)
+                fit_resident = fit_hint() if callable(fit_hint) else None
                 record_fit = getattr(estimator, "record_fit", None)
                 if callable(record_fit):
-                    record_fit(n_train, n_features, est_bytes, peak_bytes)
+                    record_fit(
+                        n_train, n_features, fit_resident or est_bytes, peak_bytes
+                    )
                 else:
                     estimator.record_observation(
                         n_train, n_features, peak_bytes if peak_bytes else est_bytes
@@ -296,6 +322,20 @@ class TabctxEngine:
             )
             self._cache.put(context)
         return resolved_id
+
+    def _host_slot(self, backend: TabularICLBackend, n_rows: int, n_features: int):
+        """A process-wide large-call slot when this call may offload to host
+        memory (the backend's may_offload, else the guard's cell threshold);
+        a no-op without a guard."""
+        if self._host_guard is None:
+            return contextlib.nullcontext()
+        may_offload = getattr(backend, "may_offload", None)
+        large = (
+            may_offload(n_rows, n_features)
+            if callable(may_offload)
+            else self._host_guard.is_large(n_rows, n_features)
+        )
+        return self._host_guard.reserve(large)
 
     def feature_names(self, dataset_id: str) -> list[str] | None:
         """Column names recorded at fit() for a cached context, or None
@@ -349,16 +389,20 @@ class TabctxEngine:
         all_predictions: list = []
         all_probabilities: list[list[float]] = []
         classes: list[str] | None = None
-        with self._cache.lock:
+        largest_chunk = max(len(c) for c in chunks)
+        with (
+            self._host_slot(backend, largest_chunk, context.n_features),
+            self._cache.lock,
+        ):
             self._cache.touch(dataset_id)
             for chunk in chunks:
-                outcome = backend.predict(
-                    context.payload, chunk, return_proba=return_proba
-                )
-                all_predictions.extend(outcome.predictions)
-                if return_proba:
-                    all_probabilities.extend(outcome.probabilities or [])
-                    classes = outcome.classes or classes
+                for outcome in _predict_splitting_on_oom(
+                    backend, context.payload, chunk, return_proba
+                ):
+                    all_predictions.extend(outcome.predictions)
+                    if return_proba:
+                        all_probabilities.extend(outcome.probabilities or [])
+                        classes = outcome.classes or classes
 
         return PredictOutcome(
             predictions=all_predictions,
