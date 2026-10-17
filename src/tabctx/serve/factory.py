@@ -36,19 +36,25 @@ Environment variables:
 - ``TABCTX_SPILL_DIR`` (default unset = spillover off) and
   ``TABCTX_SPILL_CAPACITY_BYTES`` (default 50GiB): disk spillover tier
   for capacity-evicted contexts (see cache/spill.py). With several
-  devices, each gets its own subdirectory and the capacity is per device.
+  devices, each gets its own subdirectory (``cuda_0/``, ...) and an equal
+  share of the capacity (the setting is the total for the replica).
 - ``TABCTX_DEVICES``: ``"auto"`` (default: every visible CUDA device, or
   the CPU when there is none) or a comma-separated list such as
   ``cuda:0,cuda:1``. Two or more devices build a MultiDeviceEngine (see
-  tabctx/multidevice.py): one engine per device, fits placed on the
-  device with the most headroom. ``TABCTX_GPU_MEMORY_FRACTION`` applies
-  to each device.
+  tabctx/multidevice.py): one engine per device; a fit goes where it fits
+  without eviction on the least active device, else to the device with
+  the most headroom. ``TABCTX_GPU_MEMORY_FRACTION`` applies to each
+  device. The replica only sees the GPUs its process is given: under Ray
+  Serve that is ``ray_actor_options.num_gpus`` (or, for a ``num_gpus: 0``
+  actor on a GPU pod, ``RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1``).
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from tabctx.backends.base import TabularICLBackend
@@ -77,6 +83,8 @@ SPILL_DIR_ENV_VAR = "TABCTX_SPILL_DIR"
 SPILL_CAPACITY_ENV_VAR = "TABCTX_SPILL_CAPACITY_BYTES"
 UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
+
+logger = logging.getLogger(__name__)
 
 BackendKind = Literal["tabicl", "tabpfn", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
@@ -189,6 +197,17 @@ def _parse_devices(raw: str) -> tuple[str, ...]:
             )
     if len(set(devices)) != len(devices):
         raise ValueError(f"{DEVICES_ENV_VAR} lists a device twice")
+    if len(devices) > 1:
+        if "cpu" in devices:
+            raise ValueError(
+                f"{DEVICES_ENV_VAR}={raw!r}: several devices must all be GPUs "
+                "(a CPU engine would get a GPU budget and an equal share of users)"
+            )
+        if "cuda" in devices:
+            raise ValueError(
+                f"{DEVICES_ENV_VAR}={raw!r}: name GPUs by index (cuda:0,cuda:1); "
+                "a bare 'cuda' may be the same GPU as one listed by index"
+            )
     return devices
 
 
@@ -255,9 +274,9 @@ def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | Non
         return None
     if not torch.cuda.is_available():
         return None
-    cuda = [torch.device(d) for d in devices if d.startswith("cuda")] or [
-        torch.device("cuda")
-    ]
+    cuda = [torch.device(d) for d in devices if d.startswith("cuda")]
+    if not cuda:
+        return None
     return min(
         int(torch.cuda.get_device_properties(d.index or 0).total_memory) for d in cuda
     )
@@ -272,11 +291,26 @@ def _visible_cuda_count() -> int:
 
 
 def resolve_devices(settings: ServeSettings) -> tuple[str, ...]:
-    """The devices to build one engine for each. Explicit settings win;
-    "auto" means every visible GPU. A single auto-detected GPU stays
-    "cuda" (the pre-multi-device layout); the fake backend never touches
-    a GPU, so auto means one CPU engine for it."""
+    """The devices to build one engine for each. Explicit settings win
+    (GPU indices are checked against what this process can see); "auto"
+    means every visible GPU. A single auto-detected GPU stays "cuda" (the
+    pre-multi-device layout); the fake backend never touches a GPU, so
+    auto means one CPU engine for it."""
     if settings.devices:
+        if set(settings.backends) != {"fake"}:
+            visible = _visible_cuda_count()
+            for d in settings.devices:
+                index = d.removeprefix("cuda:")
+                if (
+                    d == "cuda"
+                    and visible == 0
+                    or index.isdigit()
+                    and int(index) >= visible
+                ):
+                    raise ValueError(
+                        f"{DEVICES_ENV_VAR} names {d}, but this process sees "
+                        f"{visible} GPU(s)"
+                    )
         return settings.devices
     if set(settings.backends) == {"fake"}:
         return ("cpu",)
@@ -355,10 +389,35 @@ def _build_backend(
     return _build_real_backend(kind, settings, device)
 
 
+def _warn_on_spill_layout(spill_dir: str, multi: bool) -> None:
+    """Spill files from the other layout (one device writes to the root,
+    several to per-device subdirectories) are invisible to this process:
+    never restored, counted or cleaned. Say so instead of silently
+    leaking disk."""
+    root = Path(spill_dir)
+    if not root.is_dir():
+        return
+    stray = (
+        list(root.glob("*.meta.json"))
+        if multi
+        else [p for p in root.glob("cuda_*/*.meta.json")]
+    )
+    if stray:
+        logger.warning(
+            "%d spilled context(s) under %s were written by a %s-device replica "
+            "and will not be restored by this one (layout changed); remove them "
+            "to reclaim disk",
+            len(stray),
+            spill_dir,
+            "single" if multi else "multi",
+        )
+
+
 def _build_spill_store(
     settings: ServeSettings,
     backends: dict[str, TabularICLBackend],
     subdir: str | None,
+    capacity_bytes: int,
 ) -> DiskSpillStore | None:
     if not settings.spill_dir:
         return None
@@ -372,11 +431,7 @@ def _build_spill_store(
         if hasattr(b, "dumps_payload")
     }
     path = os.path.join(settings.spill_dir, subdir) if subdir else settings.spill_dir
-    return DiskSpillStore(
-        path,
-        capacity_bytes=settings.spill_capacity_bytes,
-        serializers=serializers,
-    )
+    return DiskSpillStore(path, capacity_bytes=capacity_bytes, serializers=serializers)
 
 
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
@@ -390,6 +445,8 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         else detect_gpu_capacity_bytes(devices)
     )
     multi = len(devices) > 1
+    if settings.spill_dir:
+        _warn_on_spill_layout(settings.spill_dir, multi)
     estimators: dict[str, MemoryEstimator] = {}
     shards: list[TabctxEngine] = []
     spill_stores: list[DiskSpillStore | None] = []
@@ -409,7 +466,10 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         # first-listed kind's model is the default.
         default = next(iter(backends))
         spill_store = _build_spill_store(
-            settings, backends, device.replace(":", "_") if multi else None
+            settings,
+            backends,
+            device.replace(":", "_") if multi else None,
+            settings.spill_capacity_bytes // len(devices),
         )
         # ONE cache and budget shared by every model on a device -- the
         # whole point of serving them behind one endpoint (see engine.py).

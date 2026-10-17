@@ -23,17 +23,25 @@ routes between them:
   exactly as on a single GPU. A table's ceiling is therefore one
   device's memory; what more devices buy is N x the resident cache and
   concurrency.
-- predict() runs on whichever device holds the context. Ownership is
-  tracked on fit; a context the map doesn't know (e.g. spilled before a
-  restart) is found by asking each device, which reloads it from that
-  device's own spill tier.
-- Re-fitting a dataset_id drops it from every device first, so a stale
-  copy on another device can never answer a later predict.
+- predict() runs on the device that holds the context, found from each
+  device's residency and spill index (so a context spilled before a
+  restart is found on, and restored to, its own device).
 
-Placement is a snapshot taken outside the per-device locks: two
-concurrent fits may pick the same device, in which case the second simply
-evicts-ahead there like any single-GPU fit would. Serializing placement
-would cost the concurrency this class exists for.
+Concurrency. Each device's engine holds its cache lock across its whole
+GPU call, so this router never takes another device's lock to make a
+decision: placement and lookup read lock-free snapshots (used bytes,
+residency, spill index). Work on different devices therefore runs
+concurrently, fits included. Per-dataset_id locks serialize fits and
+evicts of the SAME id, so two concurrent fits of one id end with a single
+copy. A re-fit happens on the chosen device first; only after it succeeds
+are copies on other devices removed -- a failed re-fit (413, OOM) leaves
+the previous context serving, as on a single GPU. A predict racing a
+re-fit is answered by whichever copy it reaches (old or new), never 404.
+
+Placement is a snapshot: two concurrent fits of different ids may pick
+the same device, in which case the second evicts-ahead there like any
+single-GPU fit would. Serializing placement would cost the concurrency
+this class exists for.
 
 Same public surface as TabctxEngine, so the serving layer and batching
 use either interchangeably.
@@ -56,6 +64,35 @@ from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 ACTIVITY_WINDOW_S = 30.0
 
 
+class _KeyedLocks:
+    """One lock per key, created on demand and dropped when unused."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._locks: dict[str, list] = {}  # key -> [lock, users]
+
+    @contextlib.contextmanager
+    def hold(self, key: str) -> Iterator[None]:
+        with self._guard:
+            entry = self._locks.setdefault(key, [threading.Lock(), 0])
+            entry[1] += 1
+        try:
+            with entry[0]:
+                yield
+        finally:
+            with self._guard:
+                entry[1] -= 1
+                if entry[1] == 0:
+                    del self._locks[key]
+
+
+def _not_found(dataset_id: str) -> DatasetNotFoundError:
+    return DatasetNotFoundError(
+        f"no cached context for dataset_id={dataset_id!r} -- it was never "
+        "fit, was evicted, or was lost to a replica restart"
+    )
+
+
 class MultiDeviceEngine:
     def __init__(
         self,
@@ -72,8 +109,7 @@ class MultiDeviceEngine:
             raise ValueError("every device must serve the same models")
         self._shards = shards
         self._devices = devices
-        self._owner: dict[str, int] = {}
-        self._owner_lock = threading.Lock()
+        self._id_locks = _KeyedLocks()
         self._window_s = activity_window_s
         self._clock = clock
         self._inflight = [0] * len(shards)
@@ -97,7 +133,16 @@ class MultiDeviceEngine:
 
     def admission_headroom_bytes(self, backend: str | None = None) -> int:
         """The best any one device offers: a fit lands on a single device."""
-        return max(s.admission_headroom_bytes(backend) for s in self._shards)
+        return max(self.device_headroom_bytes(backend))
+
+    def device_headroom_bytes(self, backend: str | None = None) -> list[int]:
+        return [s.admission_headroom_bytes(backend) for s in self._shards]
+
+    # ---- activity --------------------------------------------------
+
+    def _prune(self, recent: deque[float], cutoff: float) -> None:
+        while recent and recent[0] < cutoff:
+            recent.popleft()
 
     @contextlib.contextmanager
     def _active(self, index: int) -> Iterator[None]:
@@ -105,6 +150,7 @@ class MultiDeviceEngine:
         with self._activity_lock:
             self._inflight[index] += 1
             self._recent[index].append(now)
+            self._prune(self._recent[index], now - self._window_s)
         try:
             yield
         finally:
@@ -116,12 +162,13 @@ class MultiDeviceEngine:
         cutoff = self._clock() - self._window_s
         with self._activity_lock:
             for recent in self._recent:
-                while recent and recent[0] < cutoff:
-                    recent.popleft()
+                self._prune(recent, cutoff)
             return [(self._inflight[i], len(r)) for i, r in enumerate(self._recent)]
 
-    def _place(self, estimated_bytes: int, backend: str | None) -> int:
-        headrooms = [s.admission_headroom_bytes(backend) for s in self._shards]
+    # ---- placement and lookup (lock-free snapshots) ----------------
+
+    def _place(self, estimated_bytes: int, backend: str) -> int:
+        headrooms = self.device_headroom_bytes(backend)
         activity = self._activity()
         indices = range(len(self._shards))
         fits = [i for i in indices if headrooms[i] >= estimated_bytes]
@@ -129,11 +176,17 @@ class MultiDeviceEngine:
             return min(fits, key=lambda i: (activity[i], -headrooms[i], i))
         return max(indices, key=lambda i: (headrooms[i], -i))
 
-    def _drop_everywhere(self, dataset_id: str) -> None:
-        with self._owner_lock:
-            self._owner.pop(dataset_id, None)
-        for shard in self._shards:
-            shard.evict(dataset_id)
+    def _locate(self, dataset_id: str) -> list[int]:
+        """Devices holding the id: resident first, then spilled copies."""
+        resident = [i for i, s in enumerate(self._shards) if s.holds(dataset_id)]
+        spilled = [
+            i
+            for i, s in enumerate(self._shards)
+            if i not in resident and s.has(dataset_id)
+        ]
+        return resident + spilled
+
+    # ---- API -------------------------------------------------------
 
     def fit(
         self,
@@ -145,12 +198,25 @@ class MultiDeviceEngine:
         feature_names: list[str] | None = None,
     ) -> str:
         n_features = _validate_fit_input(X, y)
-        if dataset_id is not None:
-            self._drop_everywhere(dataset_id)
-        estimated = self.estimator_for(backend).estimate_bytes(len(X), 0, n_features)
-        index = self._place(estimated, backend)
+        name = self._shards[0].resolve_backend_name(backend)
+        estimated = self.estimator_for(name).estimate_bytes(len(X), 0, n_features)
+        if dataset_id is None:
+            return self._fit_on(
+                self._place(estimated, name), X, y, task, None, name, feature_names
+            )
+        with self._id_locks.hold(dataset_id):
+            index = self._place(estimated, name)
+            resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
+            # Only now that the new context is in place: drop copies on
+            # other devices (a failed fit above leaves the old one serving).
+            for i in self._locate(dataset_id):
+                if i != index:
+                    self._shards[i].evict(dataset_id)
+            return resolved
+
+    def _fit_on(self, index, X, y, task, dataset_id, backend, feature_names) -> str:
         with self._active(index):
-            resolved = self._shards[index].fit(
+            return self._shards[index].fit(
                 X,
                 y,
                 task=task,
@@ -158,41 +224,23 @@ class MultiDeviceEngine:
                 backend=backend,
                 feature_names=feature_names,
             )
-        with self._owner_lock:
-            self._owner[resolved] = index
-        return resolved
-
-    def _search_order(self, dataset_id: str) -> list[int]:
-        with self._owner_lock:
-            owner = self._owner.get(dataset_id)
-        if owner is not None:
-            return [owner]
-        resident = [i for i, s in enumerate(self._shards) if s.holds(dataset_id)]
-        return resident + [i for i in range(len(self._shards)) if i not in resident]
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome:
-        last_error: DatasetNotFoundError | None = None
-        for index in self._search_order(dataset_id):
+        for index in self._locate(dataset_id):
             try:
                 with self._active(index):
-                    outcome = self._shards[index].predict(
+                    return self._shards[index].predict(
                         dataset_id, X_test, return_proba=return_proba
                     )
-            except DatasetNotFoundError as e:
-                last_error = e
+            except DatasetNotFoundError:
+                # Moved or evicted between the snapshot and the call.
                 continue
-            with self._owner_lock:
-                self._owner[dataset_id] = index
-            return outcome
-        with self._owner_lock:
-            self._owner.pop(dataset_id, None)
-        assert last_error is not None
-        raise last_error
+        raise _not_found(dataset_id)
 
     def feature_names(self, dataset_id: str) -> list[str] | None:
-        for index in self._search_order(dataset_id):
+        for index in self._locate(dataset_id):
             names = self._shards[index].feature_names(dataset_id)
             if names is not None:
                 return names
@@ -213,7 +261,9 @@ class MultiDeviceEngine:
             self.evict(dataset_id)
 
     def evict(self, dataset_id: str) -> None:
-        self._drop_everywhere(dataset_id)
+        with self._id_locks.hold(dataset_id):
+            for index in self._locate(dataset_id):
+                self._shards[index].evict(dataset_id)
 
     def stats(self) -> EngineStats:
         per_device = self.device_stats()
@@ -225,7 +275,8 @@ class MultiDeviceEngine:
         )
 
     def device_stats(self) -> list[EngineStats]:
-        return [s.stats() for s in self._shards]
+        """Lock-free: monitoring never waits on a device's GPU work."""
+        return [s.stats_nowait() for s in self._shards]
 
     def device_activity(self) -> list[dict[str, int]]:
         return [

@@ -75,7 +75,13 @@ class DiskSpillStore:
         # first to go under disk pressure.
         self._index: dict[str, float] = {}
         for meta_path in self._dir.glob("*.meta.json"):
-            self._index[meta_path.name[: -len(".meta.json")]] = 0.0
+            # File names are hex-encoded dataset_ids (see _paths); index by
+            # the id itself, like entries this process spills.
+            stem = meta_path.name[: -len(".meta.json")]
+            try:
+                self._index[bytes.fromhex(stem).decode()] = 0.0
+            except ValueError:
+                continue  # not one of ours
 
     def _paths(self, dataset_id: str) -> tuple[Path, Path]:
         # dataset_ids may contain ':' (tenant scoping) -- hex-encode for
@@ -147,6 +153,12 @@ class DiskSpillStore:
             # Absent from files written before feature_names existed.
             feature_names=meta.get("feature_names"),
         )
+
+    def contains(self, dataset_id: str) -> bool:
+        """Whether a spilled copy exists. Lock-free snapshot (a dict
+        membership read is atomic), for routing decisions that must not
+        wait on another thread's spill I/O."""
+        return dataset_id in self._index
 
     def delete(self, dataset_id: str) -> None:
         meta_path, payload_path = self._paths(dataset_id)

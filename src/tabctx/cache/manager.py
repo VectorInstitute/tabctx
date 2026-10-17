@@ -169,6 +169,34 @@ class ContextCacheManager:
             if self._spill is not None:
                 self._spill.delete(dataset_id)
 
+    # ---- lock-free snapshots ---------------------------------------
+    # The engine holds this cache's lock across whole GPU calls, so a
+    # reader that only needs bookkeeping (a multi-device router choosing
+    # a device, /readyz) must not take it: it would wait for that GPU's
+    # work to finish. Single int / dict-membership reads are atomic under
+    # the GIL; these are snapshots, and every mutation stays locked.
+
+    def holds(self, dataset_id: str) -> bool:
+        """Resident in the primary tier (snapshot, lock-free)."""
+        return dataset_id in self._entries
+
+    def has(self, dataset_id: str) -> bool:
+        """Resident or spilled (snapshot, lock-free)."""
+        return dataset_id in self._entries or (
+            self._spill is not None and self._spill.contains(dataset_id)
+        )
+
+    def stats_nowait(self) -> EngineStats:
+        """stats() without the lock: fields may be from slightly different
+        instants, which is fine for placement and monitoring."""
+        used = self._used_bytes
+        return EngineStats(
+            n_cached_contexts=len(self._entries),
+            used_bytes=used,
+            free_bytes=max(0, self._capacity_bytes - used),
+            capacity_bytes=self._capacity_bytes,
+        )
+
     def dataset_ids(self) -> list[str]:
         """Ids currently resident in the primary tier (not spilled)."""
         with self._lock:

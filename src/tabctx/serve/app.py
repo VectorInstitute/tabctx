@@ -264,8 +264,9 @@ class TabctxService:
         n_train, n_test = len(req.train_X), len(req.test_X)
         n_features = len(req.train_X[0]) if n_train else 0
 
-        if cuda:
-            torch.cuda.reset_peak_memory_stats()
+        gpus = self._cuda_devices() if cuda else []
+        for d in gpus:
+            torch.cuda.reset_peak_memory_stats(d)
         start = time.monotonic()
         try:
             outcome = self._engine.fit_predict(
@@ -286,10 +287,13 @@ class TabctxService:
         latency_ms = (time.monotonic() - start) * 1000
 
         gpu_memory = None
-        if cuda:
+        if gpus:
+            # The fit ran on one of the devices; the peak over all of them
+            # is that device's (the others had no new work from this call).
             gpu_memory = GpuMemory(
-                allocated_mb=torch.cuda.max_memory_allocated() / 1e6,
-                reserved_mb=torch.cuda.max_memory_reserved() / 1e6,
+                allocated_mb=max(torch.cuda.max_memory_allocated(d) for d in gpus)
+                / 1e6,
+                reserved_mb=max(torch.cuda.max_memory_reserved(d) for d in gpus) / 1e6,
             )
         logger.info(
             "[%s] legacy predict train=%d test=%d feats=%d latency_ms=%.1f gpu=%s",
@@ -533,6 +537,13 @@ class TabctxService:
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
             "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "devices": list(self._devices),
+            # Scopes: cache_used_bytes is the replica's total;
+            # memory_ceiling_bytes and the headrooms are per device.
+            "device_admission_headroom_bytes": (
+                self._engine.device_headroom_bytes()
+                if isinstance(self._engine, MultiDeviceEngine)
+                else [headroom]
+            ),
             "max_admissible_train_rows_by_feature_count": max_rows_by_features,
             "note": (
                 "Admission limits are per-replica, usage-aware (they shrink "
@@ -559,19 +570,21 @@ class TabctxService:
             # failing to actually release GPU memory on eviction (Python
             # dropping a reference doesn't guarantee PyTorch's caching
             # allocator returns the memory immediately).
-            real_gpu_memory = {
-                "allocated_mb": torch.cuda.memory_allocated() / 1e6,
-                "reserved_mb": torch.cuda.memory_reserved() / 1e6,
-            }
-            if len(self._devices) > 1:
-                real_gpu_memory = {
-                    d: {
-                        "allocated_mb": torch.cuda.memory_allocated(d) / 1e6,
-                        "reserved_mb": torch.cuda.memory_reserved(d) / 1e6,
-                    }
-                    for d in self._devices
-                    if d.startswith("cuda")
+            per_device = {
+                d: {
+                    "allocated_mb": torch.cuda.memory_allocated(d) / 1e6,
+                    "reserved_mb": torch.cuda.memory_reserved(d) / 1e6,
                 }
+                for d in self._cuda_devices()
+            }
+            # Same flat shape as ever (summed over devices when several),
+            # plus the per-device breakdown on a multi-GPU replica.
+            real_gpu_memory = {
+                "allocated_mb": sum(m["allocated_mb"] for m in per_device.values()),
+                "reserved_mb": sum(m["reserved_mb"] for m in per_device.values()),
+            }
+            if len(per_device) > 1:
+                real_gpu_memory["per_device"] = per_device
         return {
             "status": "ready",
             "device": self._device,
@@ -596,6 +609,11 @@ class TabctxService:
             "real_gpu_memory": real_gpu_memory,
             "devices": self._device_breakdown(),
         }
+
+    def _cuda_devices(self) -> list[str]:
+        """The CUDA devices this replica serves from (just "cuda", the
+        current device, on an auto single-GPU replica)."""
+        return [d for d in self._devices if d.startswith("cuda")]
 
     def _spill_stats(self) -> dict | None:
         if self._spill_store is not None:

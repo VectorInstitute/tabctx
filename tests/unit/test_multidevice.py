@@ -6,7 +6,6 @@ rule, so every headroom number in these tests is exact.
 """
 
 import threading
-import time
 
 import pytest
 
@@ -329,40 +328,194 @@ class TestStats:
         assert engine.admission_headroom_bytes() == CAPACITY
 
 
+class GatedFake(SizedFake):
+    """Blocks inside fit/predict until released, to force interleavings
+    deterministically (no wall-clock assertions)."""
+
+    def __init__(self, device: str, **kw) -> None:
+        super().__init__(device, **kw)
+        self.fit_gate: threading.Event | None = None
+        self.predict_gate: threading.Event | None = None
+        self.entered = threading.Event()
+        self.barrier: threading.Barrier | None = None
+
+    def fit(self, X, y, task):
+        if self.fit_gate is not None:
+            self.entered.set()
+            assert self.fit_gate.wait(5), "fit gate never released"
+        return super().fit(X, y, task)
+
+    def predict(self, payload, X_test, return_proba=False):
+        if self.barrier is not None:
+            self.barrier.wait(5)  # BrokenBarrierError if not concurrent
+        if self.predict_gate is not None:
+            self.entered.set()
+            assert self.predict_gate.wait(5), "predict gate never released"
+        return super().predict(payload, X_test, return_proba)
+
+
+def build_gated(n_devices=2, spill_root=None):
+    devices = [f"cuda:{i}" for i in range(n_devices)]
+    estimator = CellEstimator()
+    shards, fakes = [], []
+    for device in devices:
+        fake = GatedFake(device, name="m")
+        spill = (
+            DiskSpillStore(str(spill_root / device.replace(":", "_")), 10**9)
+            if spill_root
+            else None
+        )
+        shards.append(
+            TabctxEngine(
+                backends={"m": fake},
+                estimators={"m": estimator},
+                cache=ContextCacheManager(CAPACITY, spill_store=spill),
+                default_backend="m",
+            )
+        )
+        fakes.append(fake)
+    return MultiDeviceEngine(shards, devices, clock=FakeClock()), shards, fakes
+
+
+def start(fn, *args, **kw):
+    box: dict = {}
+
+    def run():
+        try:
+            box["result"] = fn(*args, **kw)
+        except Exception as e:  # noqa: BLE001 -- surfaced by the caller
+            box["error"] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    return t, box
+
+
 class TestConcurrency:
-    def test_work_on_different_devices_runs_in_parallel(self):
-        engine, shards, fakes = build(2, predict_delay_s=0.3)
+    def test_predicts_on_different_devices_overlap(self):
+        engine, shards, fakes = build_gated(2)
         engine.fit(*table(10), dataset_id="a")
         engine.fit(*table(10), dataset_id="b")
         assert where(shards, "a") != where(shards, "b")
-        threads = [
-            threading.Thread(target=engine.predict, args=(d, [[0.0]])) for d in "ab"
-        ]
-        start = time.monotonic()
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert time.monotonic() - start < 0.5  # ~0.3s, not ~0.6s serialized
+        barrier = threading.Barrier(2)
+        for f in fakes:
+            f.barrier = barrier  # both predicts must be inside at once
+        threads = [start(engine.predict, d, [[0.0]]) for d in "ab"]
+        for t, box in threads:
+            t.join(10)
+            assert "error" not in box, box.get("error")
+
+    def test_fit_on_an_idle_device_is_not_blocked_by_a_busy_one(self):
+        engine, shards, fakes = build_gated(2)
+        engine.fit(*table(10), dataset_id="busy")
+        busy = where(shards, "busy")[0]
+        fakes[busy].predict_gate = threading.Event()
+        t_busy, _ = start(engine.predict, "busy", [[0.0]])
+        assert fakes[busy].entered.wait(5)
+        # Device `busy` is mid-GPU-call holding its lock. A fit (with an
+        # id, as the serve layer always passes) must still complete.
+        t_fit, box = start(engine.fit, *table(10), dataset_id="new")
+        t_fit.join(3)
+        assert not t_fit.is_alive(), "fit waited on another device's GPU call"
+        assert box["result"] == "new" and where(shards, "new") == [1 - busy]
+        fakes[busy].predict_gate.set()
+        t_busy.join(5)
+
+    def test_lookups_and_stats_never_wait_on_a_busy_device(self):
+        engine, shards, fakes = build_gated(2)
+        engine.fit(*table(10), dataset_id="busy")
+        busy = where(shards, "busy")[0]
+        fakes[busy].predict_gate = threading.Event()
+        t_busy, _ = start(engine.predict, "busy", [[0.0]])
+        assert fakes[busy].entered.wait(5)
+        for call in (
+            lambda: engine.predict("missing", [[0.0]]),
+            engine.stats,
+            engine.device_stats,
+            engine.admission_headroom_bytes,
+            lambda: engine.feature_names("missing"),
+        ):
+            t, box = start(call)
+            t.join(3)
+            assert not t.is_alive(), f"{call} waited on a busy device"
+            assert isinstance(box.get("error"), DatasetNotFoundError | type(None))
+        fakes[busy].predict_gate.set()
+        t_busy.join(5)
+
+    def test_concurrent_fits_of_one_id_leave_a_single_copy(self):
+        engine, shards, fakes = build_gated(2)
+        for f in fakes:
+            f.fit_gate = threading.Event()
+        t_a, _ = start(engine.fit, *table(10, label="A"), dataset_id="same")
+        assert any(f.entered.wait(0.5) for f in fakes)
+        t_b, _ = start(engine.fit, *table(10, label="B"), dataset_id="same")
+        for f in fakes:
+            f.fit_gate.set()
+        for t in (t_a, t_b):
+            t.join(5)
+        assert len(where(shards, "same")) == 1
+        assert engine.stats().n_cached_contexts == 1
+        assert engine.predict("same", [[0.0]]).predictions[0] in ("A", "B")
+
+    def test_predict_during_a_refit_is_answered_not_404(self):
+        clock = FakeClock()
+        engine, shards, fakes = build_gated(2)
+        engine._clock = clock
+        engine.fit(*table(10, label="old"), dataset_id="d")
+        first = where(shards, "d")[0]
+        engine._recent[first].extend([clock.now] * 10)  # re-fit goes elsewhere
+        other = 1 - first
+        fakes[other].fit_gate = threading.Event()
+        t_fit, _ = start(engine.fit, *table(10, label="new"), dataset_id="d")
+        assert fakes[other].entered.wait(5)
+        assert engine.predict("d", [[0.0]]).predictions == ["old"]
+        fakes[other].fit_gate.set()
+        t_fit.join(5)
+        assert where(shards, "d") == [other]
+        assert engine.predict("d", [[0.0]]).predictions == ["new"]
 
     def test_concurrent_fits_spread_and_all_succeed(self):
-        engine, shards, _ = build(4, fit_delay_s=0.05)
-        errors = []
-
-        def fit(user):
-            try:
-                engine.fit(*table(20), dataset_id=f"u{user}")
-            except Exception as e:  # pragma: no cover - surfaced below
-                errors.append(e)
-
-        threads = [threading.Thread(target=fit, args=(u,)) for u in range(16)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        assert not errors
+        engine, shards, _ = build(4, fit_delay_s=0.02)
+        threads = [start(engine.fit, *table(20), dataset_id=f"u{u}") for u in range(16)]
+        for t, box in threads:
+            t.join(10)
+            assert "error" not in box, box.get("error")
         counts = [s.stats().n_cached_contexts for s in shards]
         assert sum(counts) == 16
         assert min(counts) >= 2  # spread, not piled on one device
         for u in range(16):
             assert engine.predict(f"u{u}", [[0.0]]).predictions == ["a"]
+
+
+class TestFailures:
+    def test_failed_refit_keeps_the_previous_context(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10, label="kept"), dataset_id="d")
+        with pytest.raises(AdmissionRejected):
+            engine.fit(*table(2000), dataset_id="d")
+        assert engine.predict("d", [[0.0]]).predictions == ["kept"]
+
+    def test_failed_refit_keeps_a_spilled_previous_context(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10, label="kept"), dataset_id="d")
+        owner = where(shards, "d")[0]
+        shards[owner]._cache.make_room(CAPACITY)  # spill it
+        with pytest.raises(AdmissionRejected):
+            engine.fit(*table(2000), dataset_id="d")
+        assert engine.predict("d", [[0.0]]).predictions == ["kept"]
+
+    def test_unknown_model_is_invalid_input_and_loses_nothing(self):
+        engine, _, _ = build(2)
+        engine.fit(*table(10, label="kept"), dataset_id="d")
+        with pytest.raises(InvalidInputError, match="unknown backend"):
+            engine.fit(*table(10), dataset_id="d", backend="xgboost")
+        assert engine.predict("d", [[0.0]]).predictions == ["kept"]
+
+    def test_activity_history_stays_bounded_without_fits(self):
+        clock = FakeClock()
+        engine, _, _ = build(2, clock=clock)
+        engine.fit(*table(10), dataset_id="d")
+        for _ in range(500):
+            clock.now += 1
+            engine.predict("d", [[0.0]])
+        assert max(len(r) for r in engine._recent) <= 31  # one 30s window

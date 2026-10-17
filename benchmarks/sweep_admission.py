@@ -22,12 +22,20 @@ import json
 import sys
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 
 import numpy as np
-from bench_workload import UPLOAD_CELLS, fit_table, make_table
 
-from tabctx.client import TabctxClient
-from tabctx.errors import AdmissionRejected, TabctxError
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bench_workload import (  # noqa: E402
+    UPLOAD_CELLS,
+    encode_table,
+    fit_table,
+    make_table,
+)
+
+from tabctx.client import TabctxClient  # noqa: E402
+from tabctx.errors import AdmissionRejected, TabctxError  # noqa: E402
 
 ROWS = [
     100, 250, 500, 1_000, 2_000, 3_500, 5_000, 7_500, 10_000, 15_000, 20_000,
@@ -65,9 +73,10 @@ def main() -> int:
                 "n_rows": rows,
                 "upload": X.size >= UPLOAD_CELLS,
             }
+            encoded = encode_table(X, y)
             t0 = time.monotonic()
             try:
-                fit_table(client, X, y, dataset_id, args.model)
+                fit_table(client, encoded, dataset_id, args.model)
             except AdmissionRejected as e:
                 point.update(
                     status=413,
@@ -85,12 +94,20 @@ def main() -> int:
             point["fit_s"] = round(time.monotonic() - t0, 3)
             X_test, _ = make_table(args.test_rows, features, rng)
             t0 = time.monotonic()
-            client.predict(dataset_id, X_test.tolist())
-            point.update(status=200, predict_s=round(time.monotonic() - t0, 3))
+            try:
+                client.predict(dataset_id, X_test.tolist())
+                point.update(status=200, predict_s=round(time.monotonic() - t0, 3))
+            except (TabctxError, OSError) as e:
+                point.update(
+                    status="predict_error", detail=f"{type(e).__name__}: {e}"[:300]
+                )
             points.append(point)
             print(json.dumps(point), flush=True)
 
-    limits = client.limits()
+    try:
+        limits = client.limits()
+    except (TabctxError, OSError) as e:
+        limits = {"error": f"{type(e).__name__}: {e}"}
     result = {
         "timestamp": datetime.now(UTC).isoformat(),
         "base_url": args.base_url,
@@ -113,7 +130,7 @@ def main() -> int:
     if args.save:
         with open(args.save, "w") as f:
             json.dump(result, f, indent=2)
-    return 1 if any(q["status"] == "error" for q in points) else 0
+    return 1 if any(str(q["status"]).endswith("error") for q in points) else 0
 
 
 if __name__ == "__main__":

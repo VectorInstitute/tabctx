@@ -176,6 +176,7 @@ class TestDeviceCapacity:
             "tabctx.serve.factory.detect_gpu_capacity_bytes",
             lambda devices: 24 * 1024**3,
         )
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 1)
         built = build_engine(ServeSettings(backends=("tabicl",), devices=("cuda",)))
         assert built.gpu_capacity_bytes == 24 * 1024**3
         assert built.estimator._fallback.gpu_capacity_bytes == 24 * 1024**3
@@ -334,7 +335,10 @@ class TestDevices:
         monkeypatch.setenv(DEVICES_ENV_VAR, "cuda:0, cuda:2")
         assert ServeSettings.from_env().devices == ("cuda:0", "cuda:2")
 
-    @pytest.mark.parametrize("raw", ["gpu0", "cuda:x", "cuda:0,cuda:0", "tpu"])
+    @pytest.mark.parametrize(
+        "raw",
+        ["gpu0", "cuda:x", "cuda:0,cuda:0", "tpu", "cuda,cuda:0", "cpu,cuda:0"],
+    )
     def test_bad_lists_are_rejected(self, monkeypatch, raw):
         monkeypatch.setenv(DEVICES_ENV_VAR, raw)
         with pytest.raises(ValueError, match=DEVICES_ENV_VAR):
@@ -384,11 +388,13 @@ class TestDevices:
             "tabctx.serve.factory.detect_gpu_capacity_bytes",
             lambda devices: 48 * 1024**3,
         )
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 4)
         built = build_engine(
             ServeSettings(
                 backends=("tabicl", "tabpfn"),
                 devices=("cuda:0", "cuda:1", "cuda:2"),
                 spill_dir=str(tmp_path),
+                spill_capacity_bytes=30 * 1024**3,
             )
         )
         assert isinstance(built.engine, MultiDeviceEngine)
@@ -405,9 +411,43 @@ class TestDevices:
         caps = [s.capacity_bytes for s in built.engine.device_stats()]
         assert len(set(caps)) == 1 and caps[0] == built.estimator.ceiling_bytes()
         assert built.spill_store is None and len(built.spill_stores) == 3
+        # The spill capacity setting is the replica's total, split evenly.
+        assert {s.stats()["spill_capacity_bytes"] for s in built.spill_stores} == {
+            10 * 1024**3
+        }
         assert sorted(p.name for p in tmp_path.iterdir()) == [
             "cuda_0",
             "cuda_1",
             "cuda_2",
         ]
         assert built.device == "cuda:0,cuda:1,cuda:2"
+
+
+class TestDeviceValidation:
+    def test_gpu_index_beyond_what_the_process_sees_is_rejected(self, monkeypatch):
+        from tabctx.serve.factory import resolve_devices
+
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 2)
+        with pytest.raises(ValueError, match="sees 2 GPU"):
+            resolve_devices(
+                ServeSettings(backends=("tabicl",), devices=("cuda:0", "cuda:3"))
+            )
+
+    def test_explicit_cpu_never_gets_a_gpu_budget(self, monkeypatch):
+        from tabctx.serve.factory import detect_gpu_capacity_bytes
+
+        torch = pytest.importorskip("torch")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert detect_gpu_capacity_bytes(("cpu",)) is None
+
+    def test_spill_layout_change_is_reported(self, tmp_path, caplog):
+        (tmp_path / "abcd.meta.json").write_text("{}")
+        with caplog.at_level("WARNING"):
+            build_engine(
+                ServeSettings(
+                    backends=("fake",),
+                    devices=("cuda:0", "cuda:1"),
+                    spill_dir=str(tmp_path),
+                )
+            )
+        assert "will not be restored" in caplog.text

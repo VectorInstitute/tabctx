@@ -185,3 +185,19 @@ class TestCacheManagerIntegration:
         outcome = engine.predict("ds-a", [[9.0, 9.0]])
         assert outcome.predictions == ["hot"]
         assert backend.fit_calls == fits_before, "restore must not re-fit"
+
+
+def test_warm_restart_indexes_by_dataset_id(tmp_path):
+    """Regression: the restart index was keyed by the hex file stem, so
+    contains()/delete()/disk-pressure cleanup missed every entry a
+    predecessor process spilled."""
+    from tabctx.cache.manager import CachedContext
+    from tabctx.cache.spill import DiskSpillStore
+
+    first = DiskSpillStore(tmp_path, capacity_bytes=10**6)
+    ctx = CachedContext("t:alice:ds-1", "fake", "classification", 3, 2, {"p": 1}, 10)
+    assert first.spill(ctx)
+    restarted = DiskSpillStore(tmp_path, capacity_bytes=10**6)
+    assert restarted.contains("t:alice:ds-1")
+    restarted.delete("t:alice:ds-1")
+    assert list(tmp_path.iterdir()) == []

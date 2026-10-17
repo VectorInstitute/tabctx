@@ -73,13 +73,22 @@ def to_csv(X: np.ndarray, y: list[str]) -> bytes:
     return ("\n".join(lines) + "\n").encode()
 
 
-def fit_table(
-    client: TabctxClient, X: np.ndarray, y: list[str], dataset_id: str, model
-):
+def encode_table(X: np.ndarray, y: list[str]):
+    """Client-side encoding (CSV or JSON lists), done BEFORE timing a fit:
+    building a large CSV is seconds of GIL-bound work that is not the
+    server's."""
     if X.size >= UPLOAD_CELLS:
-        upload_id = client.upload_csv(to_csv(X, y), dataset_id)
+        return ("csv", to_csv(X, y))
+    return ("json", (X.tolist(), y))
+
+
+def fit_table(client: TabctxClient, encoded, dataset_id: str, model):
+    kind, data = encoded
+    if kind == "csv":
+        upload_id = client.upload_csv(data, dataset_id)
         return client.fit_uploaded(upload_id, dataset_id, model=model)
-    return client.fit(X.tolist(), y, dataset_id=dataset_id, model=model)
+    X, y = data
+    return client.fit(X, y, dataset_id=dataset_id, model=model)
 
 
 def pct(values: list[float], p: float) -> float | None:
@@ -103,11 +112,16 @@ def user_loop(user: int, args, mix, stats: dict[str, ClassStats], lock, stop_at)
     while time.monotonic() < stop_at:
         name, _, rows, features = pick.choices(mix, weights=[m[1] for m in mix])[0]
         X, y = make_table(rows, features, rng)
-        dataset_id = f"wl-{user}-{n}"
+        encoded = encode_table(X, y)
+        # A user works with a few tables at a time: re-fitting a slot
+        # replaces its previous table, so the cache holds about
+        # users x tables_per_user contexts -- "fit once, predict many",
+        # not an ever-growing pile of abandoned contexts.
+        dataset_id = f"wl-{user}-{n % args.tables_per_user}"
         n += 1
         t0 = time.monotonic()
         try:
-            fit_table(client, X, y, dataset_id, args.model)
+            fit_table(client, encoded, dataset_id, args.model)
         except AdmissionRejected:
             with lock:
                 stats[name].rejected += 1
@@ -139,6 +153,7 @@ def main() -> int:
     p.add_argument("--users", type=int, default=6)
     p.add_argument("--duration", type=float, default=120)
     p.add_argument("--predicts", type=int, default=5, help="per fitted table")
+    p.add_argument("--tables-per-user", type=int, default=2)
     p.add_argument("--test-rows", type=int, default=200)
     p.add_argument("--model", default=None)
     p.add_argument("--tenant", default="bench")
@@ -168,7 +183,10 @@ def main() -> int:
         t.join()
     elapsed = time.monotonic() - started
 
-    ready = TabctxClient(args.base_url, timeout_s=args.timeout).ready()
+    try:
+        ready = TabctxClient(args.base_url, timeout_s=args.timeout).ready()
+    except (TabctxError, OSError) as e:
+        ready = {"error": f"{type(e).__name__}: {e}"}
     total_predicts = sum(len(s.predict_s) for s in stats.values())
     result = {
         "timestamp": datetime.now(UTC).isoformat(),

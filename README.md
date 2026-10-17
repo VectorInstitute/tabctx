@@ -217,8 +217,24 @@ behind the same API. No client changes and no routing header needed.
 - **Limits.** Neither TabICL nor TabPFN can split one context across
   GPUs, so a table's ceiling is one GPU's memory. What more GPUs buy is
   N x the resident cache and N fits/predicts in flight at once.
+- **Concurrency.** Routing reads lock-free snapshots, so it never waits
+  on a GPU's work: fits and predicts on different GPUs run at the same
+  time. Fits and evicts of the *same* dataset_id are serialized, so a
+  retried fit can't leave two copies. A re-fit lands first and only then
+  replaces the old copy: a failed re-fit (413, OOM) leaves the previous
+  context serving.
+- **The replica must be given the GPUs.** Under Ray Serve that means
+  `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
+  GPU pod (as in inference-platform's prod config),
+  `RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1`.
+- **Spill.** Each GPU spills to its own subdirectory (`cuda_0/`, ...);
+  `TABCTX_SPILL_CAPACITY_BYTES` is the replica's total, split evenly.
+  Changing between one and several GPUs changes the layout, and the
+  replica logs a warning about spilled files it won't restore.
 - `/readyz` reports per-device contexts, bytes, activity and real GPU
-  memory; `/v1/tabctx/limits` reports the best single GPU's headroom.
+  memory (`real_gpu_memory` keeps its flat fields, summed, plus
+  `per_device`); `/v1/tabctx/limits` reports the best single GPU's
+  headroom and each device's.
 
 ## Large tables: upload, then fit by reference
 
