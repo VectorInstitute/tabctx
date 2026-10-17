@@ -75,7 +75,13 @@ no FP8).
     (ring attention over the replica's devices).
 12. **CUDA graphs for small predicts** ([#36](https://github.com/VectorInstitute/tabctx/issues/36)).
 
-Triton first; CUDA C++/CUTLASS where profiling shows Triton falls short.
+PyTorch-level first: tiling and chunking, `torch.compile` (generated Triton
+kernels, CUDA graphs via `reduce-overhead`), FlexAttention for paged and
+cross-context attention, SDPA, and `torch.distributed` context
+parallelism. Hand-written Triton/CUDA only where a profile (#31) shows a
+gap those can't close -- the models change too often (TabPFN v3 -> v3.5,
+TabICL v1 -> v2 within months) for version-locked kernels to be the
+default.
 
 ## Standing process note
 
