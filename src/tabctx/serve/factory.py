@@ -63,6 +63,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import tempfile
@@ -297,21 +298,34 @@ def _preloaded_observations(
     return fit_grid, predict_grid
 
 
+# Generated requirement calibrations (benchmarks/gen_requirement_grid.py),
+# per (model, cache mode): module under tabctx.memory and its name prefix.
+_REQUIREMENT_CALIBRATIONS: dict[tuple[str, str], tuple[str, str]] = {
+    ("tabicl", "kv"): ("calibration_tabicl_a100_requirement", "A100_40GB_TABICL_KV"),
+    ("tabpfn", "kv"): ("calibration_tabpfn_a100_requirement", "A100_40GB_TABPFN_KV"),
+}
+
+
 def _requirement_calibration(
     kind: BackendKind, kv_cache: KvCacheMode
 ) -> tuple[WorkingFloorModel | None, tuple, tuple]:
-    """Measured working floors + requirements for models whose working
-    memory adapts to what is free (memory/requirement.py), so admission
-    bounds resident + floor instead of an unconstrained peak. Measured for
-    TabICL in kv mode so far; other configurations keep peak semantics."""
-    if kind != "tabicl" or kv_cache != "kv":
+    """Measured working floors + requirements (memory/requirement.py), so
+    admission bounds resident + floor instead of an unconstrained peak.
+    Configurations without a measured calibration keep peak semantics."""
+    entry = _REQUIREMENT_CALIBRATIONS.get((kind, kv_cache))
+    if entry is None:
         return None, (), ()
+    module_name, prefix = entry
     try:
-        from tabctx.memory import calibration_tabicl_a100_requirement as grid
+        grid = importlib.import_module(f"tabctx.memory.{module_name}")
     except ImportError:  # generated module absent: peak semantics, no preload
         return None, (), ()
-    points = grid.A100_40GB_TABICL_KV_FLOOR_POINTS
-    return WorkingFloorModel(points), grid.A100_40GB_TABICL_KV_REQUIREMENT_GRID, points
+    points = getattr(grid, f"{prefix}_FLOOR_POINTS")
+    return (
+        WorkingFloorModel(points),
+        getattr(grid, f"{prefix}_REQUIREMENT_GRID"),
+        points,
+    )
 
 
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:

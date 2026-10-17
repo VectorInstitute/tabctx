@@ -160,6 +160,26 @@ class TestResidentRateModel:
         )
         assert m.estimate(10, 5_000) is None
 
+    def test_narrow_tables_use_the_rate_measured_at_their_width(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        # TabPFN-like: the per-row rate grows with features.
+        m = ResidentRateModel(
+            (
+                FloorPoint(50_000, 10, GiB, resident_bytes=1 * GiB),
+                FloorPoint(20_000, 100, GiB, resident_bytes=4 * GiB),
+            )
+        )
+        narrow = 1 * GiB / 50_000
+        assert m.estimate(100_000, 10) == pytest.approx(
+            1 * GiB + narrow * 50_000, rel=1e-6
+        )
+        # Wider than the narrow anchor: only the 100-feature rate bounds it.
+        wide = 4 * GiB / 20_000
+        assert m.estimate(40_000, 50) == pytest.approx(
+            4 * GiB + wide * 20_000, rel=1e-6
+        )
+
     def test_runtime_long_fits_supersede_the_calibration_slope(self):
         from tabctx.memory.requirement import ResidentRateModel
 
