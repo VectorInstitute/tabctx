@@ -44,6 +44,7 @@ from tabctx import (
     UploadTooLargeError,
 )
 from tabctx.batching import CoalescingPredictor
+from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
@@ -214,6 +215,8 @@ class TabctxService:
         self._estimator = built.estimator
         self._backend_name = built.backend.name  # default model id
         self._spill_store = built.spill_store
+        self._spill_stores = built.spill_stores
+        self._devices = built.devices
         self._device = built.device
         self._gpu_capacity_bytes = built.gpu_capacity_bytes
         # Same-context predict coalescing (see batching.py): concurrent
@@ -508,7 +511,8 @@ class TabctxService:
         the admission gate at representative feature counts, so it
         tightens/loosens as the adaptive estimator learns real costs."""
         used_bytes = self._engine.stats().used_bytes
-        headroom = self._estimator.admission_headroom_bytes(used_bytes)
+        # The best any one device offers: a fit lands on a single device.
+        headroom = self._engine.admission_headroom_bytes()
         max_rows_by_features = {}
         for n_features in (10, 50, 100, 200, 500):
             lo, hi = 0, 2_000_000
@@ -528,13 +532,15 @@ class TabctxService:
             "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
             "gpu_capacity_bytes": self._gpu_capacity_bytes,
+            "devices": list(self._devices),
             "max_admissible_train_rows_by_feature_count": max_rows_by_features,
             "note": (
                 "Admission limits are per-replica, usage-aware (they shrink "
                 "as this replica's cache fills and recover as contexts are "
                 "evicted), and adaptive: they loosen for shapes similar to "
                 "ones this replica has measured. A rejected fit returns 413 "
-                "with the same numbers."
+                "with the same numbers. With several GPUs, a table must fit "
+                "on one of them: the limits are the best single device's."
             ),
         }
 
@@ -557,6 +563,15 @@ class TabctxService:
                 "allocated_mb": torch.cuda.memory_allocated() / 1e6,
                 "reserved_mb": torch.cuda.memory_reserved() / 1e6,
             }
+            if len(self._devices) > 1:
+                real_gpu_memory = {
+                    d: {
+                        "allocated_mb": torch.cuda.memory_allocated(d) / 1e6,
+                        "reserved_mb": torch.cuda.memory_reserved(d) / 1e6,
+                    }
+                    for d in self._devices
+                    if d.startswith("cuda")
+                }
         return {
             "status": "ready",
             "device": self._device,
@@ -577,9 +592,44 @@ class TabctxService:
                 "engine_calls": self._predictor.engine_calls,
             },
             "uploads": self._uploads.stats(),
-            "spill": self._spill_store.stats() if self._spill_store else None,
+            "spill": self._spill_stats(),
             "real_gpu_memory": real_gpu_memory,
+            "devices": self._device_breakdown(),
         }
+
+    def _spill_stats(self) -> dict | None:
+        if self._spill_store is not None:
+            return self._spill_store.stats()
+        if not self._spill_stores:
+            return None
+        per_device = [s.stats() for s in self._spill_stores]
+        totals: dict = {}
+        for stats in per_device:
+            for key, value in stats.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    totals[key] = totals.get(key, 0) + value
+        return {**totals, "per_device": per_device}
+
+    def _device_breakdown(self) -> list[dict] | None:
+        """Per-device cache use and activity on a multi-GPU replica (None
+        on a single device, where cache_stats already says it all)."""
+        if not isinstance(self._engine, MultiDeviceEngine):
+            return None
+        return [
+            {
+                "device": device,
+                "n_cached_contexts": stats.n_cached_contexts,
+                "used_bytes": stats.used_bytes,
+                "capacity_bytes": stats.capacity_bytes,
+                **activity,
+            }
+            for device, stats, activity in zip(
+                self._engine.devices,
+                self._engine.device_stats(),
+                self._engine.device_activity(),
+                strict=True,
+            )
+        ]
 
 
 app = TabctxService.bind()

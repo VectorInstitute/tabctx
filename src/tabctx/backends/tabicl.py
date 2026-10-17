@@ -53,6 +53,7 @@ from typing import Any
 
 import numpy as np
 
+from tabctx.backends._cuda import device_scope, is_cuda
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -132,12 +133,14 @@ class TabICLBackend:
         # shared across fits after the first (see __init__).
         model = self._make_estimator(task)
 
-        measuring = self._device == "cuda"
-        before_bytes = torch.cuda.memory_allocated() if measuring else 0
+        device = self._device
+        measuring = is_cuda(device)
+        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_peak_memory_stats(device)
         try:
-            model.fit(X, y)
+            with device_scope(device):
+                model.fit(X, y)
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
@@ -152,10 +155,10 @@ class TabICLBackend:
         #   magnitude (activations, ensemble intermediates).
         # None on CPU; the engine falls back to the formula estimator.
         if measuring:
-            after_bytes = torch.cuda.memory_allocated()
+            after_bytes = torch.cuda.memory_allocated(device)
             self._last_context_bytes = max(0, after_bytes - before_bytes)
             self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated() - before_bytes
+                0, torch.cuda.max_memory_allocated(device) - before_bytes
             )
         else:
             self._last_context_bytes = None
@@ -190,26 +193,30 @@ class TabICLBackend:
 
         model = payload
         try:
-            if hasattr(model, "predict_proba"):
-                if return_proba:
-                    proba = model.predict_proba(X_test)
-                    class_idx = np.argmax(proba, axis=1)
-                    classes = [str(c) for c in model.classes_]
-                    predictions = [classes[i] for i in class_idx]
-                    return PredictOutcome(
-                        predictions=predictions,
-                        probabilities=proba.tolist(),
-                        classes=classes,
-                    )
-                predictions = model.predict(X_test).tolist()
-                return PredictOutcome(predictions=predictions)
-            # Regressor: no predict_proba to derive from.
-            predictions = model.predict(X_test).tolist()
-            return PredictOutcome(predictions=predictions)
+            with device_scope(self._device):
+                return self._predict(model, X_test, return_proba)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         finally:
             self._unpin_shared_module(model)
+
+    def _predict(
+        self, model: Any, X_test: ArrayLike, return_proba: bool
+    ) -> PredictOutcome:
+        if hasattr(model, "predict_proba"):
+            if return_proba:
+                proba = model.predict_proba(X_test)
+                class_idx = np.argmax(proba, axis=1)
+                classes = [str(c) for c in model.classes_]
+                predictions = [classes[i] for i in class_idx]
+                return PredictOutcome(
+                    predictions=predictions,
+                    probabilities=proba.tolist(),
+                    classes=classes,
+                )
+            return PredictOutcome(predictions=model.predict(X_test).tolist())
+        # Regressor: no predict_proba to derive from.
+        return PredictOutcome(predictions=model.predict(X_test).tolist())
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
@@ -255,7 +262,8 @@ class TabICLBackend:
             # Cold restore on a fresh replica: borrow a throwaway
             # estimator's load path to populate the shared backbone.
             probe = self._make_estimator(task)
-            probe._load_model()
+            with device_scope(self._device):
+                probe._load_model()
             self._stash_backbone(task, probe)
         for attr, value in self._shared_backbones[task].items():
             setattr(model, attr, value)

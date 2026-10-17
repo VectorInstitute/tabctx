@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from tabctx.backends._cuda import device_scope, is_cuda
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -85,12 +86,14 @@ class TabPFNBackend:
         import torch
 
         model = self._make_estimator(task)
-        measuring = self._device == "cuda"
-        before_bytes = torch.cuda.memory_allocated() if measuring else 0
+        device = self._device
+        measuring = is_cuda(device)
+        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_peak_memory_stats(device)
         try:
-            model.fit(np.asarray(X, dtype=float), np.asarray(y))
+            with device_scope(device):
+                model.fit(np.asarray(X, dtype=float), np.asarray(y))
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
@@ -105,10 +108,10 @@ class TabPFNBackend:
         # backends/tabicl.py fit() for the full rationale.
         if measuring:
             self._last_context_bytes = max(
-                0, torch.cuda.memory_allocated() - before_bytes
+                0, torch.cuda.memory_allocated(device) - before_bytes
             )
             self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated() - before_bytes
+                0, torch.cuda.max_memory_allocated(device) - before_bytes
             )
         else:
             self._last_context_bytes = None
@@ -120,26 +123,31 @@ class TabPFNBackend:
     ) -> PredictOutcome:
         import torch
 
-        model = payload
         X_arr = np.asarray(X_test, dtype=float)
         try:
-            if hasattr(model, "predict_proba"):
-                # Single pass regardless of return_proba (protocol
-                # requirement): derive labels from probabilities.
-                proba = model.predict_proba(X_arr)
-                class_idx = np.argmax(proba, axis=1)
-                classes = [str(c) for c in model.classes_]
-                predictions = [classes[i] for i in class_idx]
-                if return_proba:
-                    return PredictOutcome(
-                        predictions=predictions,
-                        probabilities=proba.tolist(),
-                        classes=classes,
-                    )
-                return PredictOutcome(predictions=predictions)
-            return PredictOutcome(predictions=model.predict(X_arr).tolist())
+            with device_scope(self._device):
+                return self._predict(payload, X_arr, return_proba)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
+
+    def _predict(
+        self, model: Any, X_arr: np.ndarray, return_proba: bool
+    ) -> PredictOutcome:
+        if hasattr(model, "predict_proba"):
+            # Single pass regardless of return_proba (protocol
+            # requirement): derive labels from probabilities.
+            proba = model.predict_proba(X_arr)
+            class_idx = np.argmax(proba, axis=1)
+            classes = [str(c) for c in model.classes_]
+            predictions = [classes[i] for i in class_idx]
+            if return_proba:
+                return PredictOutcome(
+                    predictions=predictions,
+                    probabilities=proba.tolist(),
+                    classes=classes,
+                )
+            return PredictOutcome(predictions=predictions)
+        return PredictOutcome(predictions=model.predict(X_arr).tolist())
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features

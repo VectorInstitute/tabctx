@@ -134,6 +134,18 @@ class TabctxEngine:
     def estimator_for(self, backend: str | None = None) -> MemoryEstimator:
         return self._estimators[backend or self._default_backend]
 
+    def admission_headroom_bytes(self, backend: str | None = None) -> int:
+        """Transient headroom a fit could use right now, given what the
+        cache holds resident (the quantity fit admission bounds)."""
+        return self.estimator_for(backend).admission_headroom_bytes(
+            self._cache.stats().used_bytes
+        )
+
+    def holds(self, dataset_id: str) -> bool:
+        """Whether the context is resident in this engine's cache (a
+        spilled copy doesn't count; get() would reload it)."""
+        return dataset_id in self._cache.dataset_ids()
+
     def _resolve_backend(self, backend: str | None) -> tuple[str, TabularICLBackend]:
         name = backend or self._default_backend
         b = self._backends.get(name)
