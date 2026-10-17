@@ -213,9 +213,10 @@ class TabctxService:
         built = build_engine(settings)
         self._engine = built.engine
         self._estimator = built.estimator
-        self._backend_name = built.backend.name  # default model id
+        self._backend_name = built.default  # default model id
         self._spill_store = built.spill_store
         self._spill_stores = built.spill_stores
+        self._workers = built.worker_shards
         self._host_guard = built.host_guard
         self._devices = built.devices
         self._device = built.device
@@ -491,6 +492,14 @@ class TabctxService:
     def healthz(self):
         return {"status": "ok"}
 
+    def check_health(self) -> None:
+        """Ray Serve's replica health probe: a dead per-GPU worker loses that
+        device's contexts and capacity for good, so fail the replica and
+        let Serve restart it whole."""
+        dead = [w.death_reason for w in self._workers if not w.alive]
+        if dead:
+            raise RuntimeError("; ".join(r for r in dead if r))
+
     @fastapi_app.get("/v1/models")
     def models(self):
         """Which models this deployment serves (chat-completions style
@@ -561,8 +570,21 @@ class TabctxService:
         torch = _torch_or_none()
 
         stats = self._engine.stats()
+        dead = [w.death_reason for w in self._workers if not w.alive]
+        if dead:
+            raise HTTPException(503, detail="; ".join(r for r in dead if r))
+        # Worker processes measure their own device (this process holds no
+        # CUDA context and must not create one on every GPU).
+        reports = [w.report() for w in self._workers]
         real_gpu_memory = None
-        if torch is not None and torch.cuda.is_available():
+        per_device: dict[str, dict] = {}
+        if reports:
+            per_device = {
+                w.device: r["gpu_memory"]
+                for w, r in zip(self._workers, reports, strict=True)
+                if r["gpu_memory"] is not None
+            }
+        elif torch is not None and torch.cuda.is_available():
             # Real device memory, independent of our own byte-accounting --
             # cache_stats.used_bytes is the estimator's *prediction* for what
             # cached contexts should cost; this is what the device actually
@@ -578,6 +600,7 @@ class TabctxService:
                 }
                 for d in self._cuda_devices()
             }
+        if per_device:
             # Same flat shape as ever (summed over devices when several),
             # plus the per-device breakdown on a multi-GPU replica.
             real_gpu_memory = {
@@ -606,7 +629,7 @@ class TabctxService:
                 "engine_calls": self._predictor.engine_calls,
             },
             "uploads": self._uploads.stats(),
-            "spill": self._spill_stats(),
+            "spill": self._spill_stats([r["spill"] for r in reports]),
             "real_gpu_memory": real_gpu_memory,
             "devices": self._device_breakdown(),
             "host_memory": self._host_guard.stats() if self._host_guard else None,
@@ -617,12 +640,14 @@ class TabctxService:
         current device, on an auto single-GPU replica)."""
         return [d for d in self._devices if d.startswith("cuda")]
 
-    def _spill_stats(self) -> dict | None:
+    def _spill_stats(self, worker_spill: list[dict | None]) -> dict | None:
         if self._spill_store is not None:
             return self._spill_store.stats()
-        if not self._spill_stores:
+        per_device = [s.stats() for s in self._spill_stores] or [
+            s for s in worker_spill if s is not None
+        ]
+        if not per_device:
             return None
-        per_device = [s.stats() for s in self._spill_stores]
         totals: dict = {}
         for stats in per_device:
             for key, value in stats.items():

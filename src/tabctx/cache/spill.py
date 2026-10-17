@@ -160,6 +160,10 @@ class DiskSpillStore:
         wait on another thread's spill I/O."""
         return dataset_id in self._index
 
+    def ids(self) -> frozenset[str]:
+        """Spilled ids (lock-free snapshot, like contains())."""
+        return frozenset(list(self._index))
+
     def delete(self, dataset_id: str) -> None:
         meta_path, payload_path = self._paths(dataset_id)
         payload_path.unlink(missing_ok=True)

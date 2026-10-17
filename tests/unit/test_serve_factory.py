@@ -208,7 +208,7 @@ class TestDeviceCapacity:
 class TestBuildEngine:
     def test_fake_backend_end_to_end(self):
         built = build_engine(ServeSettings(backends=("fake",)))
-        assert isinstance(built.backend, FakeBackend)
+        assert built.backend_names == ["fake"] and built.default == "fake"
         assert "fake" in built.device
 
         dataset_id = built.engine.fit([[1.0, 2.0], [3.0, 4.0]], ["a", "b"])
@@ -402,6 +402,7 @@ class TestDevices:
                 devices=("cuda:0", "cuda:1", "cuda:2"),
                 spill_dir=str(tmp_path),
                 spill_capacity_bytes=30 * 1024**3,
+                worker_processes=False,  # the patches above are in-process
             )
         )
         assert isinstance(built.engine, MultiDeviceEngine)
@@ -455,6 +456,7 @@ class TestDeviceValidation:
                     backends=("fake",),
                     devices=("cuda:0", "cuda:1"),
                     spill_dir=str(tmp_path),
+                    worker_processes=False,
                 )
             )
         assert "will not be restored" in caplog.text
