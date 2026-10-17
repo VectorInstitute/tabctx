@@ -125,6 +125,7 @@ class TabctxEngine:
         estimators: dict[str, MemoryEstimator] | None = None,
         default_backend: str | None = None,
         host_guard: HostMemoryGuard | None = None,
+        device_baseline_bytes: int = 0,
     ) -> None:
         """Single-backend form: TabctxEngine(backend=, cache=, estimator=).
         Multi-backend form: TabctxEngine(backends={name: b}, cache=,
@@ -151,6 +152,13 @@ class TabctxEngine:
         # Process-wide host-memory admission, shared by every device's
         # engine (see memory/host.py); None = unguarded.
         self._host_guard = host_guard
+        # Device memory in use before any context: CUDA context, model
+        # weights (TabPFN's shared models ~1.7 GB, TabICL's backbone),
+        # allocator overhead -- invisible to the cache's accounting.
+        # Measured after warmup; counted against every headroom check (on a
+        # 22 GB L4 the 15% transient reserve doesn't absorb it: fits the
+        # books said were safe OOMed).
+        self._baseline_bytes = device_baseline_bytes
 
     @property
     def backend_names(self) -> list[str]:
@@ -167,9 +175,12 @@ class TabctxEngine:
         """Transient headroom a fit could use right now, given what the
         cache holds resident (the quantity fit admission bounds).
         Lock-free snapshot: never waits on this engine's GPU work."""
-        return self.estimator_for(backend).admission_headroom_bytes(
-            self._cache.stats_nowait().used_bytes
+        return self._headroom(
+            self.estimator_for(backend), self._cache.stats_nowait().used_bytes
         )
+
+    def _headroom(self, estimator: MemoryEstimator, used_bytes: int) -> int:
+        return estimator.admission_headroom_bytes(used_bytes + self._baseline_bytes)
 
     def holds(self, dataset_id: str) -> bool:
         """Resident in this engine's cache (lock-free snapshot; a
@@ -262,18 +273,17 @@ class TabctxEngine:
             # anything -- otherwise one oversized request drains every
             # tenant's context on its way to a 413 (observed live: a
             # 200k x 60 request spilled 30 contexts and then failed).
-            if estimated > estimator.admission_headroom_bytes(0):
+            max_headroom = self._headroom(estimator, 0)
+            if estimated > max_headroom:
                 raise AdmissionRejected(
                     f"training shape ({n_train} rows x {n_features} "
                     f"features) is estimated to need {estimated} bytes at "
                     f"peak, exceeding this replica's "
-                    f"{estimator.admission_headroom_bytes(0)} byte maximum "
+                    f"{max_headroom} byte maximum "
                     "admission headroom (even with an empty cache)"
                 )
             while True:
-                headroom = estimator.admission_headroom_bytes(
-                    self._cache.stats().used_bytes
-                )
+                headroom = self._headroom(estimator, self._cache.stats().used_bytes)
                 if estimated <= headroom:
                     break
                 # Feasible but blocked by warm contexts: evict-ahead.
@@ -382,7 +392,7 @@ class TabctxEngine:
             estimator,
             context.n_train,
             context.n_features,
-            estimator.admission_headroom_bytes(self._cache.stats().used_bytes),
+            self._headroom(estimator, self._cache.stats().used_bytes),
         )
         chunks = split_rows(X_test, chunk_rows) if chunk_rows < n_test else [X_test]
 
