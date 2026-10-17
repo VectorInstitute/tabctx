@@ -1,10 +1,12 @@
 """Compressed storage for TabICL's ICL key/value cache.
 
-A TabICL context in kv mode is dominated by the ICL transformer's cached
-keys and values: ~0.19 MiB per training row for the default 8 estimators
-(measured on an A100: 100k x 10 = 17.6 GiB resident), stored in fp16 once
-AMP is on (>= 1024 rows) and fp32 below that. That is what bounds the
-longest table a GPU can hold, and how many contexts fit.
+For long tables a TabICL kv context is dominated by the ICL transformer's
+cached keys and values: ~0.19 MiB per training row for the default 8
+estimators (measured on an A100: 100k x 10 = 17.6 GiB resident), stored in
+fp16 once AMP is on (>= 1024 rows) and fp32 below that. That is what
+bounds the longest table a GPU can hold, and how many contexts fit. (Wide,
+short tables are dominated by the column cache instead -- ~0.37 of the
+context at 2,000 x 1,000 is ICL cache -- so compression saves less there.)
 
 This module swaps the ICL cache's entries for ``CompressedKVEntry``, which
 stores them compactly and decompresses on access:
@@ -51,17 +53,31 @@ class _Packed:
 
     @classmethod
     def pack(cls, t: Tensor, precision: KVPrecision) -> _Packed:
-        if precision == "int8":
-            absmax = t.abs().amax(dim=-1, keepdim=True).float().clamp_min(1e-8)
-            scale = (absmax / 127.0).to(torch.float16)
-            q = torch.round(t.float() / scale.float()).clamp_(-127, 127).to(torch.int8)
-            return cls(q, scale, t.dtype)
-        return cls(t.to(torch.float16), None, t.dtype)
+        if precision != "int8":
+            return cls(t.to(torch.float16), None, t.dtype)
+        q = torch.empty(t.shape, dtype=torch.int8, device=t.device)
+        scale = torch.empty((*t.shape[:-1], 1), dtype=torch.float16, device=t.device)
+        # Chunked along the batch dimension: the float32 working copy is one
+        # chunk, not the whole cache, on top of a context that is already
+        # resident at full precision.
+        step = max(1, t.shape[0] // 8) if t.dim() > 1 else t.shape[0]
+        for i in range(0, t.shape[0], step):
+            x = t[i : i + step].float()
+            s = (x.abs().amax(dim=-1, keepdim=True).clamp_min(1e-8) / 127.0).to(
+                torch.float16
+            )
+            scale[i : i + step] = s
+            q[i : i + step] = torch.round(x / s.float()).clamp_(-127, 127)
+        return cls(q, scale, t.dtype)
 
     def unpack(self) -> Tensor:
         if self.scale is None:
             return self.data.to(self.dtype)
-        return (self.data.to(torch.float16) * self.scale).to(self.dtype)
+        # One fp16 buffer, no int8->fp16 temporary: this runs per layer per
+        # predict, on a device that may be nearly full.
+        out = torch.empty(self.data.shape, dtype=torch.float16, device=self.data.device)
+        torch.mul(self.data, self.scale, out=out)
+        return out if self.dtype == torch.float16 else out.to(self.dtype)
 
     def slice(self, indices: Any) -> _Packed:
         # Scale has the same leading dims as data (last dim 1).

@@ -140,10 +140,13 @@ class AdaptiveMemoryEstimator:
         resident_bytes: int,
         peak_bytes: int | None,
     ) -> None:
-        """Learn from a completed fit. With a working-floor model the
-        requirement is resident + floor (the peak of an adaptive model only
-        says how much was free); without one it is the peak, falling back
-        to the resident size for backends that don't report peaks."""
+        """Learn from a completed fit. resident_bytes is what the fit needed
+        resident while it ran (before any post-fit compression). With a
+        working-floor model the requirement is resident + floor -- not
+        capped at the measured peak, which under memory pressure only says
+        how little was free, while the floor is a measured minimum; without
+        one it is the peak, falling back to the resident size for backends
+        that don't report peaks."""
         if self._resident_rate is not None:
             self._resident_rate.record(n_train, n_features, resident_bytes)
         floor = (
@@ -153,8 +156,6 @@ class AdaptiveMemoryEstimator:
         )
         if floor is not None:
             need = resident_bytes + floor
-            if peak_bytes:
-                need = min(need, peak_bytes)  # never more than it actually used
         else:
             need = peak_bytes or resident_bytes
         self.record_observation(n_train, n_features, need)

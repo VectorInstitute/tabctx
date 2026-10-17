@@ -1,6 +1,8 @@
 """Unit tests for requirement-based admission (memory/requirement.py):
 fits are learned as resident + working floor, not unconstrained peaks."""
 
+import math
+
 import pytest
 
 from tabctx.backends.fake import FakeBackend
@@ -67,11 +69,13 @@ class TestRecordFit:
         expected = (4 + 1.6) * GiB * 1.5  # runtime safety margin
         assert est.estimate_bytes(20_000, 0, 100) == pytest.approx(expected, rel=1e-3)
 
-    def test_never_more_than_the_measured_peak(self):
+    def test_not_capped_at_a_peak_measured_under_pressure(self):
+        # A peak below resident + floor only says how little was free; the
+        # floor is a measured minimum, so the requirement keeps it.
         est = _estimator(WorkingFloorModel(POINTS, margin=1.0))
         est.record_fit(20_000, 100, resident_bytes=4 * GiB, peak_bytes=int(4.5 * GiB))
         assert est.estimate_bytes(20_000, 0, 100) == pytest.approx(
-            4.5 * GiB * 1.5, rel=1e-3
+            5.6 * GiB * 1.5, rel=1e-3
         )
 
     def test_without_a_floor_model_learns_the_peak(self):
@@ -95,18 +99,15 @@ class _AdaptiveFake(FakeBackend):
 
 class TestAdmissionEffect:
     def test_wide_table_is_admitted_without_evicting_other_tenants(self):
-        """The motivating case: a 20k x 100 fit's unconstrained peak is 25 GB,
-        but it needs only resident + floor (5.6 GB). Each estimator is
-        calibrated as the factory does (a measured requirement vs a measured
-        peak). Beside a warm cache of five 4 GB tenants, peak semantics evict
-        tenants to make room the fit doesn't need; requirement semantics
-        admit it untouched."""
+        """The motivating case. Both estimators start from the same measured
+        PEAK (25 GB for 20k x 100, as the real peak grid has); the only
+        difference is the working-floor model. With it, the first fit is
+        learned as resident + floor (4 + 2 GB), so the second fit beside five
+        4 GB tenants needs ~9 GB and evicts nobody; without it, the learned
+        peak makes the fit evict tenants for room it doesn't need."""
 
         def run(floor):
-            measured = (5.6 if floor else 25) * GiB
-            est = _estimator(
-                floor, preloaded=(Observation(20_000, 100, int(measured)),)
-            )
+            est = _estimator(floor, preloaded=(Observation(20_000, 100, 25 * GiB),))
             backend = _AdaptiveFake(resident=4 * GiB, peak=25 * GiB)
             cache = ContextCacheManager(capacity_bytes=34 * GiB)
             engine = TabctxEngine(backend=backend, cache=cache, estimator=est)
@@ -124,3 +125,104 @@ class TestAdmissionEffect:
 
         assert len(run(WorkingFloorModel(POINTS))) == 5  # nobody evicted
         assert len(run(None)) < 5  # peak semantics evict tenants
+
+
+class TestResidentRateModel:
+    CAL = (
+        FloorPoint(20_000, 10, GiB, resident_bytes=4 * GiB),
+        FloorPoint(80_000, 10, GiB, resident_bytes=16 * GiB),
+        FloorPoint(2_000, 1_000, GiB, resident_bytes=2 * GiB),
+    )
+
+    def test_extrapolates_linearly_from_the_nearest_anchor(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        m = ResidentRateModel(self.CAL)
+        slope = 16 * GiB / 80_000  # steepest long fit
+        assert m.estimate(100_000, 10) == pytest.approx(
+            16 * GiB + slope * 20_000, rel=1e-6
+        )
+
+    def test_short_wide_fits_do_not_set_the_slope(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        m = ResidentRateModel(self.CAL)
+        # 2000x1000 has 1 MiB/row (column cache) but is too short to set it.
+        assert m.estimate(100_000, 10) < 25 * GiB
+
+    def test_wider_query_uses_only_anchors_at_least_as_wide(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        m = ResidentRateModel(self.CAL)
+        slope = 16 * GiB / 80_000
+        assert m.estimate(10_000, 500) == pytest.approx(
+            2 * GiB + slope * 8_000, rel=1e-6
+        )
+        assert m.estimate(10, 5_000) is None
+
+    def test_runtime_long_fits_supersede_the_calibration_slope(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        m = ResidentRateModel(self.CAL)
+        m.record(50_000, 10, 5 * GiB)  # a replica fit: 0.1 MiB/row
+        assert m.estimate(100_000, 10) == pytest.approx(5 * GiB + 5 * GiB, rel=1e-6)
+
+    def test_runtime_history_is_bounded(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        m = ResidentRateModel()
+        for i in range(700):
+            m.record(10_000 + i, 10, GiB)
+        assert len(m._runtime) == 500
+
+
+class TestExtrapolatedRequirement:
+    def test_beyond_the_grid_uses_resident_plus_floor_not_the_formula(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        floor = WorkingFloorModel(POINTS)
+        rate = ResidentRateModel(TestResidentRateModel.CAL)
+        est = AdaptiveMemoryEstimator(
+            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION),
+            working_floor=floor,
+            resident_rate=rate,
+            resident_margin=1.2,
+        )
+        n, d = 120_000, 10
+        expected = math.ceil(rate.estimate(n, d) * 1.2) + floor.bytes(n, d)
+        assert est.estimate_bytes(n, 0, d) == expected
+
+    def test_wider_than_any_measurement_falls_back(self):
+        from tabctx.memory.requirement import ResidentRateModel
+
+        est = AdaptiveMemoryEstimator(
+            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION),
+            working_floor=WorkingFloorModel(POINTS),
+            resident_rate=ResidentRateModel(TestResidentRateModel.CAL),
+        )
+        assert est.estimate_bytes(100, 0, 5_000) == est._fallback.estimate_bytes(
+            100, 0, 5_000
+        )
+
+
+def test_floor_model_is_monotone_in_rows():
+    m = WorkingFloorModel(
+        (
+            FloorPoint(2_000, 1_000, int(1.15 * GiB)),
+            FloorPoint(20_000, 100, int(1.6 * GiB)),
+        )
+    )
+    assert m.bytes(3_000, 1_000) >= m.bytes(2_000, 1_000)
+
+
+def test_factory_wires_floor_and_resident_models_for_tabicl_kv_only():
+    from tabctx.serve.factory import ServeSettings, build_estimator
+
+    kv = build_estimator(ServeSettings(backends=("tabicl",)), "tabicl", 40 * GiB)
+    assert kv._working_floor is not None and kv._resident_rate is not None
+    for settings, kind in (
+        (ServeSettings(backends=("tabicl",), kv_cache="repr"), "tabicl"),
+        (ServeSettings(backends=("tabpfn",)), "tabpfn"),
+    ):
+        est = build_estimator(settings, kind, 40 * GiB)
+        assert est._working_floor is None and est._resident_rate is None

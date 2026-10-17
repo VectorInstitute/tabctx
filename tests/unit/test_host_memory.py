@@ -20,7 +20,7 @@ def test_slots_from_budget():
 
 def test_small_fits_never_wait():
     guard = HostMemoryGuard(GiB, large_fit_cells=100, large_fit_bytes=GiB)
-    with guard.reserve(50, 1), guard.reserve(50, 1):  # both small: no slot used
+    with guard.reserve(False), guard.reserve(False):  # neither large: no slot used
         assert guard.stats()["large_fits_active"] == 0
 
 
@@ -31,7 +31,7 @@ def test_large_fits_are_limited_to_the_slots():
     inside, release = threading.Semaphore(0), threading.Event()
 
     def large():
-        with guard.reserve(100, 1):
+        with guard.reserve(True):
             inside.release()
             release.wait(5)
 
@@ -97,3 +97,101 @@ def test_a_waiting_large_fit_does_not_block_predicts_on_its_device():
     backends[1].gate.set()
     t0.join(5)
     t1.join(5)
+
+
+def test_budget_from_cgroup_v2_minus_baseline_rss(tmp_path):
+    from tabctx.memory.host import detect_host_budget_bytes
+
+    (tmp_path / "memory.max").write_text(f"{64 * GiB}\n")
+    (tmp_path / "status").write_text("Name: python\nVmRSS:\t 4194304 kB\n")  # 4 GiB
+    budget = detect_host_budget_bytes(
+        fraction=0.85,
+        reserve_bytes=8 * GiB,
+        limit_paths=(str(tmp_path / "memory.max"),),
+        meminfo_path=str(tmp_path / "none"),
+        status_path=str(tmp_path / "status"),
+    )
+    assert budget == int(64 * GiB * 0.85) - 4 * GiB - 8 * GiB
+
+
+def test_unlimited_cgroup_falls_back_to_physical_memory(tmp_path):
+    from tabctx.memory.host import detect_host_budget_bytes
+
+    (tmp_path / "v2").write_text("max\n")
+    (tmp_path / "v1").write_text("9223372036854771712\n")  # v1 "unlimited"
+    (tmp_path / "meminfo").write_text("MemTotal:       16777216 kB\n")  # 16 GiB
+    budget = detect_host_budget_bytes(
+        fraction=1.0,
+        reserve_bytes=0,
+        limit_paths=(str(tmp_path / "v2"), str(tmp_path / "v1")),
+        meminfo_path=str(tmp_path / "meminfo"),
+        status_path=str(tmp_path / "none"),
+    )
+    assert budget == 16 * GiB
+
+
+def test_unreadable_limit_means_no_budget(tmp_path):
+    from tabctx.memory.host import detect_host_budget_bytes
+
+    assert (
+        detect_host_budget_bytes(
+            limit_paths=(str(tmp_path / "x"),), meminfo_path=str(tmp_path / "y")
+        )
+        is None
+    )
+
+
+def test_budget_below_one_large_fit_warns(caplog):
+    with caplog.at_level("WARNING"):
+        assert HostMemoryGuard(20 * GiB, large_fit_bytes=48 * GiB).slots == 1
+    assert "below one large fit" in caplog.text
+
+
+class _Offloading(FakeBackend):
+    """A backend that says its calls offload (like TabICL on a busy card)."""
+
+    def __init__(self, offloads: bool) -> None:
+        super().__init__(bytes_hint=10)
+        self.offloads = offloads
+        self.queries: list[tuple[int, int]] = []
+
+    def may_offload(self, n_rows, n_features):
+        self.queries.append((n_rows, n_features))
+        return self.offloads
+
+
+def _engine(backend, guard):
+    est = AdaptiveMemoryEstimator(
+        fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+    )
+    return TabctxEngine(
+        backend=backend,
+        cache=ContextCacheManager(est.ceiling_bytes()),
+        estimator=est,
+        host_guard=guard,
+    )
+
+
+def test_backend_hint_decides_and_predicts_are_guarded_too():
+    guard = HostMemoryGuard(GiB, large_fit_cells=10**12, large_fit_bytes=GiB)
+    backend = _Offloading(offloads=True)
+    engine = _engine(backend, guard)
+    seen = []
+    real = guard.reserve
+    guard.reserve = lambda large: (seen.append(large), real(large))[1]
+    engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")
+    engine.predict("d", [[1.0, 2.0]] * 5)
+    # The hint, not the (huge) cell threshold, decided -- for fit AND predict.
+    assert seen == [True, True]
+    assert backend.queries == [(3, 2), (5, 2)]
+
+
+def test_without_a_hint_the_cell_threshold_decides():
+    guard = HostMemoryGuard(GiB, large_fit_cells=6, large_fit_bytes=GiB)
+    engine = _engine(FakeBackend(bytes_hint=10), guard)
+    seen = []
+    real = guard.reserve
+    guard.reserve = lambda large: (seen.append(large), real(large))[1]
+    engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")  # 6 cells: large
+    engine.predict("d", [[1.0, 2.0]])  # 2 cells: not
+    assert seen == [True, False]

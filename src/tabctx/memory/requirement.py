@@ -27,7 +27,9 @@ measurement dominates. TabICL's resident context is a kv cache with one
 key/value per training row (plus a column cache independent of rows), so
 it is linear in rows: resident(n, d) <= n * max rate observed at >= d
 features. Rates are per-row bytes from real fits, which take precedence
-over calibration points (calibration may be at another precision).
+over calibration points. Residents are fit-time (pre-compression) sizes:
+a compressed context is smaller at rest, but the fit builds it at full
+precision first.
 """
 
 from __future__ import annotations
@@ -88,7 +90,14 @@ class WorkingFloorModel:
             return math.ceil(min(p.working_bytes for p in dominating) * self._margin)
         if n_features > self._max_features:
             return None
-        return math.ceil(self._base + self._per_row * n_train)
+        # Monotone in rows: never below a measured floor at >= these
+        # features and fewer rows (the per-row line ignores features).
+        shorter = [
+            p.working_bytes * self._margin
+            for p in self._points
+            if p.n_features >= n_features and p.n_train <= n_train
+        ]
+        return math.ceil(max([self._base + self._per_row * n_train, *shorter]))
 
 
 class ResidentRateModel:
@@ -100,9 +109,10 @@ class ResidentRateModel:
     features, resident r0), resident(n, d) <= r0 + rate * (n - n0) for
     n >= n0, where rate is the steepest per-row slope among long fits
     (>= slope_min_rows; short fits are dominated by the column cache).
-    The estimate is the smallest such bound. This replica's own fits feed
-    both the anchors and the slope, and supersede calibration slopes once
-    any long fit exists: calibration may be at another KV precision."""
+    The estimate is the smallest such bound. Residents are fit-time sizes
+    (before any post-fit compression -- what the fit needs while it runs),
+    the same quantity the calibration measured. This replica's own long
+    fits supersede the calibration slope once any exist."""
 
     def __init__(
         self, calibration: Iterable[FloorPoint] = (), slope_min_rows: int = 10_000

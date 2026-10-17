@@ -170,7 +170,9 @@ class TestDeviceCapacity:
     def test_build_engine_uses_detected_capacity_for_real_backends(self, monkeypatch):
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         monkeypatch.setattr(
             "tabctx.serve.factory.detect_gpu_capacity_bytes",
@@ -232,7 +234,9 @@ class TestBuildEngine:
         # model, resolved through that mapping.
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         built = build_engine(
             ServeSettings(backends=("tabpfn", "fake"), devices=("cpu",))
@@ -276,7 +280,7 @@ class TestBuildEngine:
         calls = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 calls.append((kind, settings, device)) or object()
             ),
         )
@@ -383,7 +387,7 @@ class TestDevices:
         created = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 created.append(device) or FakeBackend(name=f"{kind}-model")
             ),
         )
