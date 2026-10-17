@@ -6,6 +6,7 @@ This is the one class most callers (including serve/app.py) actually use.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 
 from tabctx.backends.base import TabularICLBackend
@@ -13,6 +14,7 @@ from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.chunking import choose_chunk_rows, split_rows
 from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
 from tabctx.memory.estimator import MemoryEstimator
+from tabctx.memory.host import HostMemoryGuard
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 
@@ -99,6 +101,7 @@ class TabctxEngine:
         backends: dict[str, TabularICLBackend] | None = None,
         estimators: dict[str, MemoryEstimator] | None = None,
         default_backend: str | None = None,
+        host_guard: HostMemoryGuard | None = None,
     ) -> None:
         """Single-backend form: TabctxEngine(backend=, cache=, estimator=).
         Multi-backend form: TabctxEngine(backends={name: b}, cache=,
@@ -122,6 +125,9 @@ class TabctxEngine:
         self._estimators = estimators
         self._default_backend = default_backend
         self._cache = cache
+        # Process-wide host-memory admission, shared by every device's
+        # engine (see memory/host.py); None = unguarded.
+        self._host_guard = host_guard
 
     @property
     def backend_names(self) -> list[str]:
@@ -211,7 +217,14 @@ class TabctxEngine:
         estimator = self._estimators[backend_name]
 
         resolved_id = dataset_id or str(uuid.uuid4())
-        with self._cache.lock:
+        # Host memory first, outside the cache lock: a large fit waiting for
+        # a host slot must not block predicts on this device meanwhile.
+        host_slot = (
+            self._host_guard.reserve(n_train, n_features)
+            if self._host_guard is not None
+            else contextlib.nullcontext()
+        )
+        with host_slot, self._cache.lock:
             # Usage-aware admission (v0.9.0): what OOMs is the fit's
             # transient PEAK on top of everything resident, so the
             # estimated peak must fit the headroom given current cache
