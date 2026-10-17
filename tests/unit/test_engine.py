@@ -342,3 +342,43 @@ class TestPredictOomFallback:
         engine.fit([[1.0]], ["a"], dataset_id="d")
         with pytest.raises(BackendComputeError):
             engine.predict("d", [[0.0]] * 4)
+
+
+def test_device_baseline_counts_against_headroom():
+    """Weights + CUDA context occupy the device before any context; a fit
+    that fits an empty card must be rejected when they leave too little."""
+    import pytest
+
+    from tabctx.backends.fake import FakeBackend
+    from tabctx.cache.manager import ContextCacheManager
+    from tabctx.engine import TabctxEngine
+    from tabctx.errors import AdmissionRejected
+    from tabctx.memory import (
+        A100_40GB_TABICL_CALIBRATION,
+        AdaptiveMemoryEstimator,
+        PowerLawMemoryEstimator,
+    )
+    from tabctx.memory.adaptive import Observation
+
+    GiB = 1024**3
+
+    def engine(baseline):
+        fallback = PowerLawMemoryEstimator(
+            A100_40GB_TABICL_CALIBRATION,
+            hard_ceiling_bytes=12 * GiB,
+            gpu_capacity_bytes=22 * GiB,
+        )
+        est = AdaptiveMemoryEstimator(
+            fallback=fallback, preloaded=(Observation(1_000, 2, int(15 * GiB / 1.1)),)
+        )
+        return TabctxEngine(
+            backend=FakeBackend(bytes_hint=GiB),
+            cache=ContextCacheManager(12 * GiB),
+            estimator=est,
+            device_baseline_bytes=baseline,
+        )
+
+    X, y = [[1.0, 2.0]] * 1_000, ["a"] * 1_000
+    engine(0).fit(X, y)  # 15 GB need <= 0.85 x 22 = 18.7 GB
+    with pytest.raises(AdmissionRejected):
+        engine(4 * GiB).fit(X, y)  # 18.7 - 4 = 14.7 GB < 15 GB

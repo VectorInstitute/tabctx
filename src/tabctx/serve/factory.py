@@ -340,6 +340,22 @@ def _visible_cuda_count() -> int:
     return torch.cuda.device_count() if torch.cuda.is_available() else 0
 
 
+def measure_device_baseline(device: str) -> int:
+    """Device memory in use before any context (call after the backends'
+    warmup): total - free, so it includes the CUDA context and allocator
+    overhead as well as the model weights. 0 off CUDA."""
+    if not device.startswith("cuda"):
+        return 0
+    try:
+        import torch
+    except ImportError:
+        return 0
+    if not torch.cuda.is_available():
+        return 0
+    free, total = torch.cuda.mem_get_info(torch.device(device))
+    return int(total - free)
+
+
 def resolve_devices(settings: ServeSettings) -> tuple[str, ...]:
     """The devices to build one engine for each. Explicit settings win
     (GPU indices are checked against what this process can see); "auto"
@@ -530,6 +546,7 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         else detect_gpu_capacity_bytes(devices)
     )
     multi = len(devices) > 1
+    fake_only = set(settings.backends) == {"fake"}
     if settings.spill_dir:
         _warn_on_spill_layout(settings.spill_dir, multi)
     estimators: dict[str, MemoryEstimator] = {}
@@ -575,6 +592,9 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
                 cache=cache,
                 default_backend=default,
                 host_guard=host_guard,
+                device_baseline_bytes=0
+                if fake_only
+                else measure_device_baseline(device),
             )
         )
         spill_stores.append(spill_store)
@@ -582,7 +602,6 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     engine: TabctxEngine | MultiDeviceEngine = (
         MultiDeviceEngine(shards, list(devices)) if multi else shards[0]
     )
-    fake_only = set(settings.backends) == {"fake"}
     return BuiltEngine(
         engine=engine,
         estimators={name: estimators[name] for name in first_backends},
