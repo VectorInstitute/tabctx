@@ -319,8 +319,9 @@ class TestCalibrationPreload:
         # shortcut finds the real module other tests already imported.
         import tabctx.memory as memory_pkg
 
-        monkeypatch.delattr(memory_pkg, "calibration_tabicl_a100", raising=False)
-        monkeypatch.setitem(sys.modules, "tabctx.memory.calibration_tabicl_a100", None)
+        for name in ("calibration_tabicl_a100", "calibration_tabicl_a100_requirement"):
+            monkeypatch.delattr(memory_pkg, name, raising=False)
+            monkeypatch.setitem(sys.modules, f"tabctx.memory.{name}", None)
         est = build_estimator(ServeSettings(backends=("tabicl",)))
         assert "0 preloaded calibration measurement" in est.confidence()
 

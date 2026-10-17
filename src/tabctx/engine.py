@@ -256,18 +256,21 @@ class TabctxEngine:
             if est_bytes is None:
                 est_bytes = estimated
             else:
-                # Feed a real measurement back so the PRE-FIT admission
-                # gate can use it (safely, as a bound for smaller/equal
-                # future shapes -- see memory/adaptive.py). What admission
-                # must bound is the fit's transient PEAK (that's what
-                # OOMs), so prefer the peak hint when the backend reports
-                # one; the resident size is only a (low) fallback for
-                # backends without peak measurement.
+                # Feed real measurements back so the PRE-FIT admission gate
+                # can use them (safely, as a bound for smaller/equal future
+                # shapes -- see memory/adaptive.py). The estimator decides
+                # what the fit needed: resident + working floor for models
+                # whose working memory adapts to what is free (their peak
+                # only says how much was free), else the transient peak.
                 peak_hint = getattr(chosen, "fit_peak_bytes_hint", None)
                 peak_bytes = peak_hint() if callable(peak_hint) else None
-                estimator.record_observation(
-                    n_train, n_features, peak_bytes if peak_bytes else est_bytes
-                )
+                record_fit = getattr(estimator, "record_fit", None)
+                if callable(record_fit):
+                    record_fit(n_train, n_features, est_bytes, peak_bytes)
+                else:
+                    estimator.record_observation(
+                        n_train, n_features, peak_bytes if peak_bytes else est_bytes
+                    )
             context = CachedContext(
                 dataset_id=resolved_id,
                 backend_name=backend_name,
