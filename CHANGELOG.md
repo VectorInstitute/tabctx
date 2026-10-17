@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.12.0] - unreleased
+### Added
+- **Multi-GPU replicas** (#30). `MultiDeviceEngine` runs one `TabctxEngine` per device -- backends bound to `cuda:i`, its own cache, lock and spill subdirectory -- behind the single-engine API, built automatically when a replica sees several GPUs (`TABCTX_DEVICES=auto`, or an explicit list). Placement is aimed at the expected workload, a few concurrent users with small and large tables: a fit goes where its estimated peak fits without eviction, on the least active device (in-flight calls, then calls in the last 30s), else to the device with the most headroom. Predicts route to the owning device; spilled contexts are found on their device after a restart; re-fitting an id drops every copy first. Work on different devices runs concurrently. `/readyz` gains a per-device breakdown (contexts, bytes, activity, real GPU memory); `/v1/tabctx/limits` reports the best single device. A single GPU builds exactly the engine it did before.
+- `benchmarks/bench_workload.py`: concurrent users looping fit-then-predict over a small/medium/large table mix (large ones via CSV upload), with per-class latency percentiles, 413s, errors and the per-device spread.
+- `benchmarks/sweep_admission.py`: the table-size sweep (rows up to the first 413 per feature count, fit and predict timed).
+- ROADMAP: multi-GPU and CUDA-level track (#30-#37), PyTorch-level first.
+
+### Fixed
+- The TabICL and TabPFN backends measured memory on, and let library internals allocate on, torch's *current* CUDA device rather than their own. Harmless on one GPU; on `cuda:i` it would have charged every context to `cuda:0`. They now measure on their device and run inside its scope.
+
+### Validated
+- Unit (multi-device placement, routing, spill restore, concurrency) and integration tests (the serve app on two fake devices through Ray).
+- On a local fake 3-device replica with 5 concurrent users: with spill on, 0 failed predicts at ~100 predicts/s. Without spill, capacity eviction cost 12 predicts on three devices versus 115 on one.
+
 ## [0.11.0] - 2026-10-17
 ### Changed
 - **The TabPFN model id follows the checkpoint actually loaded.** It was hardcoded to `tabpfn-3`, but `tabpfn` 9.x loads TabPFN-3.5 by default (a different model under its own license, `tabpfn-3-5-license-v1.0`), so a default install served TabPFN-3.5 named `tabpfn-3`. The id is now derived from `tabpfn`'s resolved `model_version` (`TABPFN_MODEL_VERSION`): `v3.5` -> `tabpfn-3.5` (the 9.x default), `v3` -> `tabpfn-3`, `v3.5-fast` -> `tabpfn-3.5-fast`. **Breaking for callers that send `"model": "tabpfn-3"` to a deployment on the default version**: pin `TABPFN_MODEL_VERSION=v3` to keep serving TabPFN-3 under its old id, or switch callers to `tabpfn-3.5`.

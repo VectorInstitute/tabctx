@@ -200,6 +200,26 @@ Details worth knowing:
   torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
   prove the multi-replica contract on a laptop.
 
+## Several GPUs in one replica
+
+A replica that can see several GPUs serves from all of them
+(`TABCTX_DEVICES=auto`, the default, or an explicit `cuda:0,cuda:1,...`):
+one engine per GPU, with its own backends, cache and spill directory,
+behind the same API. No client changes and no routing header needed.
+
+- **Placement.** Each fit goes to a GPU where the table fits *without
+  evicting* anyone, preferring the least active GPU (calls in flight,
+  then calls in the last 30s). If no GPU can take it without eviction,
+  it goes to the GPU with the most headroom. Concurrent users spread
+  across GPUs, and a large table gets a whole GPU's headroom.
+- **Predicts** run on the GPU that holds the context, including after a
+  spill and restore, or a replica restart.
+- **Limits.** Neither TabICL nor TabPFN can split one context across
+  GPUs, so a table's ceiling is one GPU's memory. What more GPUs buy is
+  N x the resident cache and N fits/predicts in flight at once.
+- `/readyz` reports per-device contexts, bytes, activity and real GPU
+  memory; `/v1/tabctx/limits` reports the best single GPU's headroom.
+
 ## Large tables: upload, then fit by reference
 
 Inline JSON tables are convenient to ~10^4 rows and painful beyond.
