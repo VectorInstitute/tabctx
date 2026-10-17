@@ -108,7 +108,10 @@ class ResidentRateModel:
     doesn't depend on features. So for any measured fit (n0 rows, d0 >= d
     features, resident r0), resident(n, d) <= r0 + rate * (n - n0) for
     n >= n0, where rate is the steepest per-row slope among long fits
-    (>= slope_min_rows; short fits are dominated by the column cache).
+    (>= slope_min_rows; short fits are dominated by the column cache) at
+    the narrowest measured width >= d: TabPFN's per-row cache grows with
+    features, so only a rate measured at least as wide bounds it, and the
+    narrowest such is the tightest.
     The estimate is the smallest such bound. Residents are fit-time sizes
     (before any post-fit compression -- what the fit needs while it runs),
     the same quantity the calibration measured. This replica's own long
@@ -132,14 +135,28 @@ class ResidentRateModel:
                 self._runtime.append((n_train, n_features, resident_bytes))
                 del self._runtime[:-500]  # bounded, newest kept
 
-    def _slope(self, points: list[tuple[int, int, int]]) -> float | None:
-        long_fits = [res / n for n, _, res in points if n >= self._min_rows]
-        return max(long_fits) if long_fits else None
+    def _slope(
+        self, points: list[tuple[int, int, int]], n_features: int
+    ) -> float | None:
+        """Steepest per-row rate among long fits at the narrowest measured
+        width >= n_features: residents don't shrink as features grow, so
+        that rate bounds this width's (and TabPFN's grows with width, so a
+        wider one would overshoot). Falls back to every long fit when none
+        is that wide (TabICL's rate barely depends on features)."""
+        long_fits = [(d, res / n) for n, d, res in points if n >= self._min_rows]
+        if not long_fits:
+            return None
+        widths = [d for d, _ in long_fits if d >= n_features]
+        if not widths:
+            return max(rate for _, rate in long_fits)
+        return max(rate for d, rate in long_fits if d == min(widths))
 
     def estimate(self, n_train: int, n_features: int) -> int | None:
         with self._lock:
             runtime = list(self._runtime)
-        slope = self._slope(runtime) or self._slope(self._calibration)
+        slope = self._slope(runtime, n_features) or self._slope(
+            self._calibration, n_features
+        )
         if slope is None:
             return None
         bounds = [
