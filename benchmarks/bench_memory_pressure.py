@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing as mp
 import sys
 import time
 
@@ -77,10 +78,14 @@ def search(args, backend, rows: int, features: int) -> dict:
     lo = free_all["resident_gib"]  # can't succeed with less than the context
     hi = torch.cuda.mem_get_info(torch.device(args.device))[0] / GiB
     best = None
+    # A model that degrades instead of failing (TabPFN falls back to slower
+    # paths under memory pressure) "succeeds" at almost any free memory;
+    # its requirement is where it still runs at an acceptable speed.
+    max_s = free_all["fit_s"] * args.max_slowdown + 1.0 if args.max_slowdown else None
     while hi - lo > args.precision_gib:
         mid = (lo + hi) / 2
         r = run(args, backend, rows, features, round(mid, 2))
-        if r["status"] == "ok":
+        if r["status"] == "ok" and (max_s is None or r["fit_s"] <= max_s):
             hi, best = mid, r
         else:
             lo = mid
@@ -94,7 +99,19 @@ def search(args, backend, rows: int, features: int) -> dict:
         "min_free_gib": round(hi, 2),
         "min_working_gib": round(hi - free_all["resident_gib"], 2),
         "fit_s_at_min": best["fit_s"] if best else free_all["fit_s"],
+        "max_slowdown": args.max_slowdown,
     }
+
+
+def _measure_shape(args, rows: int, features: int, queue) -> None:
+    """One shape in a fresh process: no allocator or library state left
+    over from earlier shapes' OOMs can skew its measurements."""
+    backend = build_backend(args.backend, args.device, args.cache_mode)
+    backend.warmup()
+    if args.search:
+        queue.put([search(args, backend, rows, features)])
+    else:
+        queue.put([run(args, backend, rows, features, f) for f in args.free_gib])
 
 
 def main() -> int:
@@ -109,23 +126,35 @@ def main() -> int:
         "--search", action="store_true", help="binary-search min free memory"
     )
     p.add_argument("--precision-gib", type=float, default=0.5)
+    p.add_argument(
+        "--max-slowdown",
+        type=float,
+        default=None,
+        help="with --search: a fit slower than this x unconstrained counts as "
+        "failed (for models that degrade instead of failing, e.g. 2 for tabpfn)",
+    )
     p.add_argument("--out", default=None)
     args = p.parse_args()
 
-    backend = build_backend(args.backend, args.device, args.cache_mode)
-    backend.warmup()
-    out = open(args.out, "a") if args.out else None  # noqa: SIM115
+    ctx = mp.get_context("spawn")
     for rows, features in args.shapes:
+        queue = ctx.Queue()
+        child = ctx.Process(target=_measure_shape, args=(args, rows, features, queue))
+        child.start()
+        child.join()
         records = (
-            [search(args, backend, rows, features)]
-            if args.search
-            else [run(args, backend, rows, features, free) for free in args.free_gib]
+            queue.get()
+            if not queue.empty()
+            else [
+                {"rows": rows, "features": features, "status": f"exit {child.exitcode}"}
+            ]
         )
         for record in records:
             line = json.dumps(record)
             print(line, flush=True)
-            if out:
-                out.write(line + "\n")
+            if args.out:
+                with open(args.out, "a") as out:
+                    out.write(line + "\n")
     return 0
 
 
