@@ -252,6 +252,7 @@ class TestBuildEngine:
             SPILL_DIR_ENV_VAR,
             SPILL_CAPACITY_ENV_VAR,
             DEVICES_ENV_VAR,
+            "TABCTX_KV_PRECISION",
         ):
             monkeypatch.delenv(var, raising=False)
         assert ServeSettings.from_env() == ServeSettings()
@@ -451,3 +452,14 @@ class TestDeviceValidation:
                 )
             )
         assert "will not be restored" in caplog.text
+
+
+class TestKvPrecision:
+    def test_default_and_parsing(self, monkeypatch):
+        monkeypatch.delenv("TABCTX_KV_PRECISION", raising=False)
+        assert ServeSettings.from_env().kv_precision == "native"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", " INT8 ")
+        assert ServeSettings.from_env().kv_precision == "int8"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", "fp4")
+        with pytest.raises(ValueError, match="TABCTX_KV_PRECISION"):
+            ServeSettings.from_env()

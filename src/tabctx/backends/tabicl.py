@@ -55,6 +55,7 @@ from typing import Any
 import numpy as np
 
 from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
+from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -90,7 +91,12 @@ class TabICLBackend:
     # named for the checkpoint actually loaded (tabicl-classifier-v2-*).
     name = "tabicl-v2"
 
-    def __init__(self, device: str | None = None, kv_cache: bool | str = "kv") -> None:
+    def __init__(
+        self,
+        device: str | None = None,
+        kv_cache: bool | str = "kv",
+        kv_precision: KVPrecision = "native",
+    ) -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
         False). tabicl's own default is False, which makes every
         predict() re-encode the ENTIRE training set through all three
@@ -107,6 +113,10 @@ class TabICLBackend:
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         ensure_initialized(self._device)
         self._kv_cache = kv_cache
+        if kv_precision not in KV_PRECISIONS:
+            raise ValueError(f"kv_precision must be one of {KV_PRECISIONS}")
+        # Storage of the ICL key/value cache (see backends/tabicl_kv.py).
+        self._kv_precision: KVPrecision = kv_precision
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
         # task -> attrs of an already-loaded backbone, shared across
@@ -173,6 +183,9 @@ class TabICLBackend:
         try:
             with device_scope(device):
                 model.fit(X, y)
+                # Before measuring: the context's resident size is the
+                # compressed one.
+                compress_icl_cache(model, self._kv_precision)
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
