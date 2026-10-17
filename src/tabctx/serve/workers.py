@@ -62,8 +62,8 @@ _METHODS = frozenset(
         "report",
     }
 )
-# Concurrent calls per worker: its engine serializes GPU work itself
-# (cache lock); these only need to queue and answer cheap calls promptly.
+# Concurrent calls per worker: its engine schedules GPU work itself (see
+# engine.py); these only need to queue and answer cheap calls promptly.
 _WORKER_THREADS = 16
 
 

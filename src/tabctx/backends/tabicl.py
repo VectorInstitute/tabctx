@@ -42,9 +42,9 @@ already over-estimates small inputs (see memory/estimator.py). This
 needlessly throttled effective multi-tenant capacity to a fraction of what
 the hardware actually supports. Fixed here by measuring the real
 torch.cuda.memory_allocated() delta across fit() and reporting it via
-context_bytes_hint() -- safe because the engine holds its cache lock across
-the whole fit() call (see engine.py), so no concurrent GPU work can pollute
-the before/after delta.
+context_bytes_hint(). Predicts may run beside a fit on the same device, so
+the readings are taken under the engine's predict lock (see
+_cuda.QuiescedMeasurement): no predict's temporaries pollute the delta.
 """
 
 from __future__ import annotations
@@ -55,7 +55,12 @@ from typing import Any
 
 import numpy as np
 
-from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
+from tabctx.backends._cuda import (
+    QuiescedMeasurement,
+    device_scope,
+    ensure_initialized,
+    is_cuda,
+)
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
@@ -127,7 +132,7 @@ def make_cache_thread_local(module: Any) -> None:
     )
 
 
-class TabICLBackend:
+class TabICLBackend(QuiescedMeasurement):
     # The exact model id callers select via the API's `model` field --
     # named for the checkpoint actually loaded (tabicl-classifier-v2-*).
     name = "tabicl-v2"
@@ -179,10 +184,10 @@ class TabICLBackend:
         # is tabicl's own sanctioned pattern (see
         # _unsupervised/unsupervised.py and _finetune/base.py, both of
         # which do exactly this with the comment "prevents redundant
-        # torch.load() calls"). Safe here because the engine serializes
-        # every backend call behind its cache lock -- the shared module's
-        # per-call mutable state (its _cache pointer, InferenceManager
-        # config) is never touched concurrently.
+        # torch.load() calls"). Calls on the shared module may overlap (a
+        # predict beside a fit, see engine.py): its active-context cache is
+        # per thread (make_cache_thread_local), and the InferenceManager
+        # config every call reapplies is identical for this backend.
         self._shared_backbones: dict[str, dict[str, Any]] = {}
         from tabicl import TabICLClassifier, TabICLRegressor
 
@@ -241,9 +246,11 @@ class TabICLBackend:
 
         device = self._device
         measuring = is_cuda(device)
-        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
+        before_bytes = 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats(device)
+            with self.quiesced():
+                before_bytes = torch.cuda.memory_allocated(device)
+                torch.cuda.reset_peak_memory_stats(device)
         self._last_context_bytes = None
         self._last_fit_peak_bytes = None
         self._last_fit_resident_bytes = None
@@ -253,11 +260,12 @@ class TabICLBackend:
                 # The context as the fit built it, at full precision: what
                 # the fit needed resident, and so what admission must
                 # learn -- compression only shrinks it afterwards.
-                fit_resident = (
-                    torch.cuda.memory_allocated(device) - before_bytes
-                    if measuring
-                    else None
-                )
+                fit_resident = None
+                if measuring:
+                    with self.quiesced():
+                        fit_resident = (
+                            torch.cuda.memory_allocated(device) - before_bytes
+                        )
                 compress_icl_cache(model, self._kv_precision)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
@@ -274,12 +282,12 @@ class TabICLBackend:
         # - peak (fit_peak_bytes_hint): the transient high-water during fit.
         # None on CPU; the engine falls back to the formula estimator.
         if measuring:
-            after_bytes = torch.cuda.memory_allocated(device)
+            with self.quiesced():
+                after_bytes = torch.cuda.memory_allocated(device)
+                peak_bytes = torch.cuda.max_memory_allocated(device)
             self._last_context_bytes = max(0, after_bytes - before_bytes)
             self._last_fit_resident_bytes = max(0, fit_resident or 0)
-            self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated(device) - before_bytes
-            )
+            self._last_fit_peak_bytes = max(0, peak_bytes - before_bytes)
         self._stash_backbone(task, model)
         return model
 

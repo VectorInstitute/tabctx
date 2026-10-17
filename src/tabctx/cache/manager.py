@@ -19,8 +19,10 @@ does finer-grained locking or real multi-replica routing.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +74,12 @@ class ContextCacheManager:
         # (has) must still see them: a multi-device router that saw
         # neither would answer 404 for a context that is merely moving.
         self._in_transit: set[str] = set()
+        # Contexts a call is using right now (see pinned()): never chosen as
+        # eviction victims, so a fit's evict-ahead can't spill a context out
+        # from under a predict running beside it -- the predict would keep
+        # the GPU memory alive while the books count it free.
+        self._pins: dict[str, int] = {}
+        self._unpinned = threading.Condition(self._lock)
 
     def get(self, dataset_id: str) -> CachedContext | None:
         with self._lock:
@@ -99,6 +107,40 @@ class ContextCacheManager:
             finally:
                 self._in_transit.discard(dataset_id)
 
+    @contextlib.contextmanager
+    def pinned(self, dataset_id: str) -> Iterator[None]:
+        """Keep a context out of eviction's reach for the duration (explicit
+        evict() and re-fits still replace it: caller intent)."""
+        with self._lock:
+            self._pins[dataset_id] = self._pins.get(dataset_id, 0) + 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                left = self._pins[dataset_id] - 1
+                if left:
+                    self._pins[dataset_id] = left
+                else:
+                    del self._pins[dataset_id]
+                    self._unpinned.notify_all()
+
+    def wait_for_unpin(self, timeout_s: float) -> bool:
+        """Wait until some pinned context is released. False if nothing is
+        pinned (nothing to wait for) or on timeout."""
+        with self._unpinned:
+            if not self._pins:
+                return False
+            before = sum(self._pins.values())
+            return self._unpinned.wait_for(
+                lambda: sum(self._pins.values()) < before, timeout_s
+            )
+
+    def peek(self, dataset_id: str) -> CachedContext | None:
+        """The resident context, or None -- never reloads a spilled one (a
+        restore needs device memory, which only an exclusive call may take)."""
+        with self._lock:
+            return self._entries.get(dataset_id)
+
     def touch(self, dataset_id: str) -> None:
         with self._lock:
             entry = self._entries.get(dataset_id)
@@ -116,7 +158,9 @@ class ContextCacheManager:
     def _evict_victim(self) -> str | None:
         """Policy-chosen eviction, spilling when a tier is attached.
         Caller holds the lock."""
-        victim_id = self._policy.select_victim(list(self._entries.values()))
+        victim_id = self._policy.select_victim(
+            [e for e in self._entries.values() if e.dataset_id not in self._pins]
+        )
         if victim_id is None:
             return None
         if self._spill is None:
