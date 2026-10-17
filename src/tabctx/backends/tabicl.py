@@ -213,6 +213,7 @@ class TabICLBackend:
         # a future tabicl change must not silently re-pin (see
         # _unpin_shared_module for the OOM this prevents).
         self._unpin_shared_module(model)
+        self._release_host_memory(model)
         return model
 
     def _unpin_shared_module(self, model: Any) -> None:
@@ -231,6 +232,31 @@ class TabICLBackend:
         if module is not None and hasattr(module, "clear_cache"):
             module.clear_cache()
 
+    def _release_host_memory(self, model: Any) -> None:
+        """Return the offload staging memory a large call leaves pinned.
+
+        Above ~5M cells tabicl offloads stage outputs to pinned host memory.
+        Each stage's InferenceManager keeps its PinnedBufferPool afterwards,
+        on the SHARED backbone, and the CUDA pinned-host allocator caches
+        what was freed. Measured on an A100 (20,000 x 500): +43 GiB of host
+        RSS after one fit, 10 GiB of it pooled buffers and 33 GiB allocator
+        cache, none of it the context's -- two large tables would exhaust a
+        64 GiB pod and get the replica OOM-killed. Clearing the pools and
+        emptying the host cache returns it (only unused cached blocks are
+        freed, so a concurrent call on another device is unaffected)."""
+        module = getattr(model, "model_", None)
+        if module is None:
+            return
+        for sub in module.modules():
+            pool = getattr(getattr(sub, "inference_mgr", None), "_buffer_pool", None)
+            if pool is not None:
+                pool.clear()
+        import torch
+
+        empty_host_cache = getattr(torch._C, "_host_emptyCache", None)
+        if callable(empty_host_cache):
+            empty_host_cache()
+
     def predict(
         self, payload: Any, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome:
@@ -244,6 +270,7 @@ class TabICLBackend:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         finally:
             self._unpin_shared_module(model)
+            self._release_host_memory(model)
 
     def _predict(
         self, model: Any, X_test: ArrayLike, return_proba: bool

@@ -80,6 +80,7 @@ from tabctx.memory.estimator import (
     DEFAULT_HARD_CEILING_BYTES,
     MemoryEstimator,
 )
+from tabctx.memory.host import HostMemoryGuard, detect_host_budget_bytes
 from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
@@ -247,6 +248,7 @@ class BuiltEngine:
     devices: tuple[str, ...] = ()
     # One per device when there are several (spill_store is then None).
     spill_stores: tuple = ()
+    host_guard: HostMemoryGuard | None = None
 
     # Single-model conveniences (the common deployment):
     @property
@@ -502,6 +504,11 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     if settings.spill_dir:
         _warn_on_spill_layout(settings.spill_dir, multi)
     estimators: dict[str, MemoryEstimator] = {}
+    # One host-memory guard per process: host RAM is shared by every device.
+    host_budget = (
+        None if set(settings.backends) == {"fake"} else detect_host_budget_bytes()
+    )
+    host_guard = HostMemoryGuard(host_budget) if host_budget else None
     shards: list[TabctxEngine] = []
     spill_stores: list[DiskSpillStore | None] = []
     first_backends: dict[str, TabularICLBackend] = {}
@@ -536,6 +543,7 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
                 estimators={name: estimators[name] for name in backends},
                 cache=cache,
                 default_backend=default,
+                host_guard=host_guard,
             )
         )
         spill_stores.append(spill_store)
@@ -554,4 +562,5 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         gpu_capacity_bytes=gpu_capacity,
         devices=devices,
         spill_stores=tuple(s for s in spill_stores if s is not None) if multi else (),
+        host_guard=host_guard,
     )

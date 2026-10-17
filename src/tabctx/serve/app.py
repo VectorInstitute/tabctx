@@ -216,6 +216,7 @@ class TabctxService:
         self._backend_name = built.backend.name  # default model id
         self._spill_store = built.spill_store
         self._spill_stores = built.spill_stores
+        self._host_guard = built.host_guard
         self._devices = built.devices
         self._device = built.device
         self._gpu_capacity_bytes = built.gpu_capacity_bytes
@@ -608,6 +609,7 @@ class TabctxService:
             "spill": self._spill_stats(),
             "real_gpu_memory": real_gpu_memory,
             "devices": self._device_breakdown(),
+            "host_memory": self._host_guard.stats() if self._host_guard else None,
         }
 
     def _cuda_devices(self) -> list[str]:
