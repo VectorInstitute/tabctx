@@ -40,15 +40,20 @@ def main() -> int:
     floors, needs = [], []
     for r in ok:
         n, d = r["rows"], r["features"]
-        working = int(r["min_working_gib"] * GiB)
-        need = int(r["min_free_gib"] * GiB)
+        resident = int(r["resident_gib"] * GiB)
+        # The floor can't exceed what the fit used unconstrained: a search
+        # result above that is ballast fragmentation, not need.
+        used = int((r["unconstrained_peak_gib"] - r["resident_gib"]) * GiB)
+        working = min(int(r["min_working_gib"] * GiB), used)
+        need = resident + working
         note = (
             f"resident {r['resident_gib']} GiB, unconstrained peak "
             f"{r['unconstrained_peak_gib']} GiB, fit {r['unconstrained_fit_s']}s "
             f"-> {r['fit_s_at_min']}s at the floor"
         )
         floors.append(
-            f"    FloorPoint(n_train={n}, n_features={d}, working_bytes={working}),  # {note}"
+            f"    FloorPoint(n_train={n}, n_features={d}, working_bytes={working}, "
+            f"resident_bytes={resident}),  # {note}"
         )
         needs.append(
             f"    Observation(n_train={n}, n_features={d}, real_bytes={need}),"

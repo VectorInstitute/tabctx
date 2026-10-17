@@ -35,7 +35,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from tabctx.memory.estimator import MemoryEstimator
-from tabctx.memory.requirement import WorkingFloorModel
+from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 
 # The n_test basis at which calibration predict-peaks were measured
 # (benchmarks/calibrate_memory.py's N_TEST_ROWS).
@@ -71,6 +71,8 @@ class AdaptiveMemoryEstimator:
         # of the device is treated as unbudgetable.
         transient_capacity_fraction: float = 0.85,
         working_floor: WorkingFloorModel | None = None,
+        resident_rate: ResidentRateModel | None = None,
+        resident_margin: float = 1.2,
     ) -> None:
         """preloaded: factory-installed observations (e.g. a measured
         calibration grid -- see memory/calibration_data.py), consulted
@@ -96,7 +98,12 @@ class AdaptiveMemoryEstimator:
         working_floor: when given (a model whose working memory adapts to
         what is free, e.g. TabICL -- see memory/requirement.py), fits are
         learned as resident + working floor, the memory they actually need,
-        instead of their unconstrained peak."""
+        instead of their unconstrained peak.
+
+        resident_rate: with working_floor, extrapolates shapes no
+        measurement dominates as (extrapolated resident x resident_margin)
+        + floor -- a kv context grows linearly in rows -- instead of the
+        fallback formula. Learns from every fit."""
         self._fallback = fallback
         self._safety_margin = safety_margin
         self._preloaded: tuple[Observation, ...] = tuple(preloaded)
@@ -110,6 +117,8 @@ class AdaptiveMemoryEstimator:
         self._preloaded_margin = preloaded_margin
         self._transient_capacity_fraction = transient_capacity_fraction
         self._working_floor = working_floor
+        self._resident_rate = resident_rate
+        self._resident_margin = resident_margin
         # Bounded FIFO -- simple, avoids unbounded growth over a long-
         # running replica's lifetime. A future version could prune to a
         # Pareto frontier of dominating points instead of dropping
@@ -135,13 +144,29 @@ class AdaptiveMemoryEstimator:
         requirement is resident + floor (the peak of an adaptive model only
         says how much was free); without one it is the peak, falling back
         to the resident size for backends that don't report peaks."""
-        if self._working_floor is not None:
-            need = resident_bytes + self._working_floor.bytes(n_train, n_features)
+        if self._resident_rate is not None:
+            self._resident_rate.record(n_train, n_features, resident_bytes)
+        floor = (
+            self._working_floor.bytes(n_train, n_features)
+            if self._working_floor is not None
+            else None
+        )
+        if floor is not None:
+            need = resident_bytes + floor
             if peak_bytes:
                 need = min(need, peak_bytes)  # never more than it actually used
         else:
             need = peak_bytes or resident_bytes
         self.record_observation(n_train, n_features, need)
+
+    def _extrapolated_requirement(self, n_train: int, n_features: int) -> int | None:
+        if self._working_floor is None or self._resident_rate is None:
+            return None
+        resident = self._resident_rate.estimate(n_train, n_features)
+        floor = self._working_floor.bytes(n_train, n_features)
+        if resident is None or floor is None:
+            return None
+        return math.ceil(resident * self._resident_margin) + floor
 
     def _best_fit_estimate(self, n_train: int, n_features: int) -> int | None:
         """The MINIMUM effective estimate (measurement x its margin)
@@ -169,6 +194,9 @@ class AdaptiveMemoryEstimator:
             best = self._best_fit_estimate(n_train, n_features)
             if best is not None:
                 return best
+            extrapolated = self._extrapolated_requirement(n_train, n_features)
+            if extrapolated is not None:
+                return extrapolated
         else:
             # Predict-time (chunking) query: use a measured predict peak
             # when a dominating one exists, scaled linearly in n_test
