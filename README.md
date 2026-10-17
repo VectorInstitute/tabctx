@@ -200,6 +200,42 @@ Details worth knowing:
   torch -- `tests/integration/test_multi_replica_affinity.py` uses it to
   prove the multi-replica contract on a laptop.
 
+## Several GPUs in one replica
+
+A replica that can see several GPUs serves from all of them
+(`TABCTX_DEVICES=auto`, the default, or an explicit `cuda:0,cuda:1,...`):
+one engine per GPU, with its own backends, cache and spill directory,
+behind the same API. No client changes and no routing header needed.
+
+- **Placement.** Each fit goes to a GPU where the table fits *without
+  evicting* anyone, preferring the least active GPU (calls in flight,
+  then calls in the last 30s). If no GPU can take it without eviction,
+  it goes to the GPU with the most headroom. Concurrent users spread
+  across GPUs, and a large table gets a whole GPU's headroom.
+- **Predicts** run on the GPU that holds the context, including after a
+  spill and restore, or a replica restart.
+- **Limits.** Neither TabICL nor TabPFN can split one context across
+  GPUs, so a table's ceiling is one GPU's memory. What more GPUs buy is
+  N x the resident cache and N fits/predicts in flight at once.
+- **Concurrency.** Routing reads lock-free snapshots, so it never waits
+  on a GPU's work: fits and predicts on different GPUs run at the same
+  time. Fits and evicts of the *same* dataset_id are serialized, so a
+  retried fit can't leave two copies. A re-fit lands first and only then
+  replaces the old copy: a failed re-fit (413, OOM) leaves the previous
+  context serving.
+- **The replica must be given the GPUs.** Under Ray Serve that means
+  `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
+  GPU pod (as in inference-platform's prod config),
+  `RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1`.
+- **Spill.** Each GPU spills to its own subdirectory (`cuda_0/`, ...);
+  `TABCTX_SPILL_CAPACITY_BYTES` is the replica's total, split evenly.
+  Changing between one and several GPUs changes the layout, and the
+  replica logs a warning about spilled files it won't restore.
+- `/readyz` reports per-device contexts, bytes, activity and real GPU
+  memory (`real_gpu_memory` keeps its flat fields, summed, plus
+  `per_device`); `/v1/tabctx/limits` reports the best single GPU's
+  headroom and each device's.
+
 ## Large tables: upload, then fit by reference
 
 Inline JSON tables are convenient to ~10^4 rows and painful beyond.

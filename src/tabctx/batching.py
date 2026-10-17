@@ -65,6 +65,7 @@ from dataclasses import dataclass, field
 
 from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
+from tabctx.multidevice import MultiDeviceEngine
 from tabctx.types import ArrayLike, PredictOutcome
 
 
@@ -92,7 +93,9 @@ class CoalescingPredictor:
     when requested) for its own rows, in its own row order.
     """
 
-    def __init__(self, engine: TabctxEngine, window_s: float = 0.005) -> None:
+    def __init__(
+        self, engine: TabctxEngine | MultiDeviceEngine, window_s: float = 0.005
+    ) -> None:
         if window_s < 0:
             raise ValueError(f"window_s must be >= 0, got {window_s}")
         self._engine = engine
