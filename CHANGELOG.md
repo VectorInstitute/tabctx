@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-17
+### Changed
+- **The TabPFN model id follows the checkpoint actually loaded.** It was hardcoded to `tabpfn-3`, but `tabpfn` 9.x loads TabPFN-3.5 by default (a different model under its own license, `tabpfn-3-5-license-v1.0`), so a default install served TabPFN-3.5 named `tabpfn-3`. The id is now derived from `tabpfn`'s resolved `model_version` (`TABPFN_MODEL_VERSION`): `v3.5` -> `tabpfn-3.5` (the 9.x default), `v3` -> `tabpfn-3`, `v3.5-fast` -> `tabpfn-3.5-fast`. **Breaking for callers that send `"model": "tabpfn-3"` to a deployment on the default version**: pin `TABPFN_MODEL_VERSION=v3` to keep serving TabPFN-3 under its old id, or switch callers to `tabpfn-3.5`.
+
+### Fixed
+- The TabPFN pretraining-limit integration test used 2,100 features, which TabPFN-3.5 accepts (its feature limit is 20,000, versus 2,000 on v3). It now exceeds the 160-class limit shared by every v3-series checkpoint.
+
+### Validated
+- `tests/integration/test_tabpfn_backend.py` on CPU with `tabpfn` 9.1.0 against both `v3` and `v3.5`, offline (`HF_HUB_OFFLINE=1`, no `TABPFN_TOKEN`) from a read-only `TABPFN_MODEL_CACHE_DIR` holding only the checkpoint: 4/4 each. TabPFN-3.5 needs one file, `tabpfn-v3.5-20260909.safetensors` (835 MiB), for both classification and regression.
+
 ## [0.10.0] - 2026-09-01
 ### Fixed
 Found by a full-codebase review (2026-09-01), each with a regression test:

@@ -24,20 +24,23 @@ Multi-tenant context caching and serving for tabular in-context-learning
 (ICL) foundation models: [TabICL](https://github.com/soda-inria/tabicl)
 and [TabPFN](https://github.com/PriorLabs/TabPFN) behind **one standard
 endpoint**, chat-completions style -- requests pick a model by exact id
-(`"model": "tabicl-v2"` or `"tabpfn-3"`, discoverable via
+(`"model": "tabicl-v2"` or `"tabpfn-3.5"`, discoverable via
 `GET /v1/models`), and all models on a GPU share one context cache and
 one memory budget. A protocol seam (`backends/base.py`) keeps adding
 models cheap.
 
 ```python
 client = TabctxClient("http://localhost:8000")
-client.models()                                    # -> tabicl-v2, tabpfn-3
-client.fit(X, y, dataset_id="churn", model="tabpfn-3")
-client.predict("churn", X_test)                    # served by tabpfn-3
+client.models()                                    # -> tabicl-v2, tabpfn-3.5
+client.fit(X, y, dataset_id="churn", model="tabpfn-3.5")
+client.predict("churn", X_test)                    # served by tabpfn-3.5
 ```
 
 Deploy one model (`TABCTX_BACKEND=tabicl`) or several
 (`TABCTX_BACKEND=tabicl,tabpfn` -- first listed is the default model).
+The TabPFN id follows the checkpoint `tabpfn` loads, set by its
+`TABPFN_MODEL_VERSION` (`v3.5` by default in `tabpfn` 9.x -> `tabpfn-3.5`;
+`v3` -> `tabpfn-3`).
 
 ## Why does this exist?
 
@@ -269,7 +272,7 @@ what is still missing.
   test CSVs are schema-checked against it.
 - *Select an application* = `predict(<app>, ...)` with the same tenant
   header. Many applications coexist in one deployment under one memory
-  budget; both models can be mixed (`model="tabicl-v2"` / `"tabpfn-3"`).
+  budget; both models can be mixed (`model="tabicl-v2"` / `"tabpfn-3.5"`).
 - *Save the kv cache to disk* = the spill tier (`TABCTX_SPILL_DIR`).
   Contexts evicted under memory pressure are serialized (TabICL's shared
   backbone excluded) and reload transparently on the next predict, and a

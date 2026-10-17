@@ -45,19 +45,28 @@ _FIT_MODES = {
 }
 
 
-class TabPFNBackend:
-    # The exact model id callers select via the API's `model` field --
-    # named for the checkpoint the OSS package loads locally
-    # (tabpfn-v3-*-v3_default.ckpt, i.e. PriorLabs' "TabPFN-3").
-    name = "tabpfn-3"
+def served_model_id(model_version: str) -> str:
+    """The API model id for a tabpfn `model_version`: "v3" -> "tabpfn-3",
+    "v3.5" -> "tabpfn-3.5", "v3.5-fast" -> "tabpfn-3.5-fast"."""
+    return f"tabpfn-{model_version.removeprefix('v')}"
 
+
+class TabPFNBackend:
     def __init__(self, device: str | None = None, cache_mode: str = "kv") -> None:
         import torch
+        from tabpfn.settings import settings
 
         if cache_mode not in _FIT_MODES:
             raise ValueError(
                 f"cache_mode must be one of {sorted(_FIT_MODES)}, got {cache_mode!r}"
             )
+        # The exact model id callers select via the API's `model` field,
+        # named for the checkpoint tabpfn will actually load. That is
+        # whatever its `model_version` setting (TABPFN_MODEL_VERSION)
+        # resolves to; tabpfn >= 9 defaults to v3.5, a different model
+        # (and license) from v3, so a fixed id would mislabel it.
+        self.model_version = settings.tabpfn.model_version.value
+        self.name = served_model_id(self.model_version)
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._fit_mode = _FIT_MODES[cache_mode]
         self._last_context_bytes: int | None = None

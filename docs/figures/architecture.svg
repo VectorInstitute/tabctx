@@ -80,7 +80,7 @@
   <text x="164" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">tabicl-v2 (TabICLBackend)</text>
   <text x="164" y="571" text-anchor="middle" font-size="11.5" fill="#4A5058">kv cache on, shared backbone, GPU deltas</text>
   <rect x="334" y="532" width="248" height="56" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
-  <text x="458" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">tabpfn-3 (TabPFNBackend)</text>
+  <text x="458" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">tabpfn-3.5 (TabPFNBackend)</text>
   <text x="458" y="571" text-anchor="middle" font-size="11.5" fill="#4A5058">fit_with_cache; 422 on pretraining limits</text>
   <rect x="628" y="532" width="248" height="56" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2" stroke-dasharray="5 3"/>
   <text x="752" y="554" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">fake (FakeBackend)</text>
