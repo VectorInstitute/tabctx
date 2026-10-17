@@ -228,15 +228,23 @@ class MultiDeviceEngine:
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome:
-        for index in self._locate(dataset_id):
-            try:
-                with self._active(index):
-                    return self._shards[index].predict(
-                        dataset_id, X_test, return_proba=return_proba
-                    )
-            except DatasetNotFoundError:
-                # Moved or evicted between the snapshot and the call.
-                continue
+        tried: set[int] = set()
+        # Two passes: a re-fit can move the id to another device between
+        # the first snapshot and the calls (it lands there, then the old
+        # copy is evicted), so a miss everywhere looks once more.
+        for _ in range(2):
+            for index in self._locate(dataset_id):
+                if index in tried:
+                    continue
+                tried.add(index)
+                try:
+                    with self._active(index):
+                        return self._shards[index].predict(
+                            dataset_id, X_test, return_proba=return_proba
+                        )
+                except DatasetNotFoundError:
+                    # Moved or evicted between the snapshot and the call.
+                    continue
         raise _not_found(dataset_id)
 
     def feature_names(self, dataset_id: str) -> list[str] | None:
