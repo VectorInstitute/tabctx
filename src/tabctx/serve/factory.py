@@ -80,6 +80,7 @@ from tabctx.memory.estimator import (
     DEFAULT_HARD_CEILING_BYTES,
     MemoryEstimator,
 )
+from tabctx.memory.requirement import WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
 
@@ -284,6 +285,26 @@ def _preloaded_observations(
     return fit_grid, predict_grid
 
 
+def _requirement_calibration(
+    kind: BackendKind, kv_cache: KvCacheMode
+) -> tuple[WorkingFloorModel | None, tuple]:
+    """Measured working floors + requirements for models whose working
+    memory adapts to what is free (memory/requirement.py), so admission
+    bounds resident + floor instead of an unconstrained peak. Measured for
+    TabICL in kv mode so far; other configurations keep peak semantics."""
+    if kind != "tabicl" or kv_cache != "kv":
+        return None, ()
+    try:
+        from tabctx.memory import calibration_tabicl_a100_requirement as grid
+    except ImportError:  # generated module absent: peak semantics, no preload
+        return None, ()
+
+    return (
+        WorkingFloorModel(grid.A100_40GB_TABICL_KV_FLOOR_POINTS),
+        grid.A100_40GB_TABICL_KV_REQUIREMENT_GRID,
+    )
+
+
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:
     """Total memory of the given CUDA devices (the smallest, since one
     estimator budgets them all), or None when torch is absent or sees no
@@ -368,10 +389,13 @@ def build_estimator(
         gpu_capacity_bytes=int(capacity * fraction),
     )
     fit_grid, predict_grid = _preloaded_observations(kind, settings.kv_cache)
+    working_floor, requirements = _requirement_calibration(kind, settings.kv_cache)
     return AdaptiveMemoryEstimator(
         fallback=fallback,
-        preloaded=fit_grid,
+        # Both are valid upper bounds; the tightest dominating one wins.
+        preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
+        working_floor=working_floor,
     )
 
 

@@ -35,6 +35,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from tabctx.memory.estimator import MemoryEstimator
+from tabctx.memory.requirement import WorkingFloorModel
 
 # The n_test basis at which calibration predict-peaks were measured
 # (benchmarks/calibrate_memory.py's N_TEST_ROWS).
@@ -69,6 +70,7 @@ class AdaptiveMemoryEstimator:
         # run-to-run peak variance eat several hundred MB, so the top ~15%
         # of the device is treated as unbudgetable.
         transient_capacity_fraction: float = 0.85,
+        working_floor: WorkingFloorModel | None = None,
     ) -> None:
         """preloaded: factory-installed observations (e.g. a measured
         calibration grid -- see memory/calibration_data.py), consulted
@@ -89,7 +91,12 @@ class AdaptiveMemoryEstimator:
         transient_capacity_fraction: admission_headroom_bytes() allows a
         fit's estimated peak to use up to this fraction of the
         (fraction-scaled) device capacity MINUS what the cache already
-        holds resident -- peak-plus-resident is what actually OOMs."""
+        holds resident -- peak-plus-resident is what actually OOMs.
+
+        working_floor: when given (a model whose working memory adapts to
+        what is free, e.g. TabICL -- see memory/requirement.py), fits are
+        learned as resident + working floor, the memory they actually need,
+        instead of their unconstrained peak."""
         self._fallback = fallback
         self._safety_margin = safety_margin
         self._preloaded: tuple[Observation, ...] = tuple(preloaded)
@@ -102,6 +109,7 @@ class AdaptiveMemoryEstimator:
         self._preloaded_predict: tuple[Observation, ...] = tuple(preloaded_predict)
         self._preloaded_margin = preloaded_margin
         self._transient_capacity_fraction = transient_capacity_fraction
+        self._working_floor = working_floor
         # Bounded FIFO -- simple, avoids unbounded growth over a long-
         # running replica's lifetime. A future version could prune to a
         # Pareto frontier of dominating points instead of dropping
@@ -112,8 +120,28 @@ class AdaptiveMemoryEstimator:
     def record_observation(
         self, n_train: int, n_features: int, real_bytes: int
     ) -> None:
+        """Record a fit's measured requirement directly."""
         with self._lock:
             self._observations.append(Observation(n_train, n_features, real_bytes))
+
+    def record_fit(
+        self,
+        n_train: int,
+        n_features: int,
+        resident_bytes: int,
+        peak_bytes: int | None,
+    ) -> None:
+        """Learn from a completed fit. With a working-floor model the
+        requirement is resident + floor (the peak of an adaptive model only
+        says how much was free); without one it is the peak, falling back
+        to the resident size for backends that don't report peaks."""
+        if self._working_floor is not None:
+            need = resident_bytes + self._working_floor.bytes(n_train, n_features)
+            if peak_bytes:
+                need = min(need, peak_bytes)  # never more than it actually used
+        else:
+            need = peak_bytes or resident_bytes
+        self.record_observation(n_train, n_features, need)
 
     def _best_fit_estimate(self, n_train: int, n_features: int) -> int | None:
         """The MINIMUM effective estimate (measurement x its margin)
