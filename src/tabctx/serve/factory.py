@@ -28,11 +28,14 @@ Environment variables:
   fastest per predict; "repr" uses far less cache memory per context;
   "off" re-encodes the training set on every predict (tabicl's own
   default, kept only as an escape hatch).
-- ``TABCTX_KV_PRECISION``: ``"native"`` (default), ``"fp16"`` or ``"int8"``
+- ``TABCTX_KV_PRECISION``: ``"int8"`` (default), ``"fp16"`` or ``"native"``
   -- storage of TabICL's ICL key/value cache, which dominates a TabICL
   context (see backends/tabicl_kv.py). ``"int8"`` about halves resident
-  memory per context (and so doubles the longest table and the contexts
-  per GPU). TabPFN already stores its cache in int8 by default.
+  memory per context, so it doubles the longest table and the contexts per
+  GPU. Measured on an A100 over 7 datasets
+  (benchmarks/baselines/kv-precision-tabicl-a100.jsonl): identical labels
+  and metrics, max probability drift 0.009, at up to ~1.4x warm predict
+  latency on large contexts. TabPFN already stores its cache in int8.
 - ``TABCTX_BATCH_WINDOW_MS``: coalescing window for same-context predict
   batching (see batching.py); default 5. 0 disables coalescing.
 - ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
@@ -104,7 +107,7 @@ class ServeSettings:
     backends: tuple[BackendKind, ...] = ("tabicl",)
     gpu_memory_fraction: float = 1.0
     kv_cache: KvCacheMode = "kv"
-    kv_precision: KVPrecision = "native"
+    kv_precision: KVPrecision = "int8"
     batch_window_ms: float = 5.0
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     upload_ttl_s: float = DEFAULT_TTL_S

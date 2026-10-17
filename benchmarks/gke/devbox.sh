@@ -29,6 +29,9 @@ POD=tabctx-devbox
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 mkdir -p "$STATE"
+# A private kubeconfig: get-credentials would otherwise switch the user's (and any
+# concurrently running script's) current kubectl context to this cluster.
+export KUBECONFIG="$STATE/kubeconfig"
 
 accelerator_for() {
   case "$1" in

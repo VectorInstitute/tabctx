@@ -457,7 +457,7 @@ class TestDeviceValidation:
 class TestKvPrecision:
     def test_default_and_parsing(self, monkeypatch):
         monkeypatch.delenv("TABCTX_KV_PRECISION", raising=False)
-        assert ServeSettings.from_env().kv_precision == "native"
+        assert ServeSettings.from_env().kv_precision == "int8"
         monkeypatch.setenv("TABCTX_KV_PRECISION", " INT8 ")
         assert ServeSettings.from_env().kv_precision == "int8"
         monkeypatch.setenv("TABCTX_KV_PRECISION", "fp4")
