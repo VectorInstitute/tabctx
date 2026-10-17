@@ -33,11 +33,15 @@ class TestWorkingFloorModel:
         assert m.bytes(10_000, 50) == pytest.approx(1.6 * GiB * 1.25, rel=1e-6)
         assert m.bytes(1_000, 5) == pytest.approx(0.3 * GiB * 1.25, rel=1e-6)
 
-    def test_extrapolation_never_undershoots_a_measurement(self):
+    def test_row_extrapolation_never_undershoots_a_long_fit(self):
         m = WorkingFloorModel(POINTS, margin=1.25)
         for p in POINTS:
-            # a slightly larger shape than any measurement: extrapolated
-            assert m.bytes(p.n_train + 1, 10_000) >= p.working_bytes * 1.25
+            if p.n_train >= 10_000:  # long fits set the slope
+                # more rows than any measurement at these features
+                assert m.bytes(10 * p.n_train, p.n_features) >= p.working_bytes * 1.25
+
+    def test_wider_than_any_measurement_is_unknown(self):
+        assert WorkingFloorModel(POINTS).bytes(100, 5_000) is None
 
     def test_extrapolation_grows_with_rows(self):
         m = WorkingFloorModel(POINTS)

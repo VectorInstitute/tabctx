@@ -80,7 +80,7 @@ from tabctx.memory.estimator import (
     DEFAULT_HARD_CEILING_BYTES,
     MemoryEstimator,
 )
-from tabctx.memory.requirement import WorkingFloorModel
+from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
 
@@ -287,22 +287,19 @@ def _preloaded_observations(
 
 def _requirement_calibration(
     kind: BackendKind, kv_cache: KvCacheMode
-) -> tuple[WorkingFloorModel | None, tuple]:
+) -> tuple[WorkingFloorModel | None, tuple, tuple]:
     """Measured working floors + requirements for models whose working
     memory adapts to what is free (memory/requirement.py), so admission
     bounds resident + floor instead of an unconstrained peak. Measured for
     TabICL in kv mode so far; other configurations keep peak semantics."""
     if kind != "tabicl" or kv_cache != "kv":
-        return None, ()
+        return None, (), ()
     try:
         from tabctx.memory import calibration_tabicl_a100_requirement as grid
     except ImportError:  # generated module absent: peak semantics, no preload
-        return None, ()
-
-    return (
-        WorkingFloorModel(grid.A100_40GB_TABICL_KV_FLOOR_POINTS),
-        grid.A100_40GB_TABICL_KV_REQUIREMENT_GRID,
-    )
+        return None, (), ()
+    points = grid.A100_40GB_TABICL_KV_FLOOR_POINTS
+    return WorkingFloorModel(points), grid.A100_40GB_TABICL_KV_REQUIREMENT_GRID, points
 
 
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:
@@ -389,13 +386,16 @@ def build_estimator(
         gpu_capacity_bytes=int(capacity * fraction),
     )
     fit_grid, predict_grid = _preloaded_observations(kind, settings.kv_cache)
-    working_floor, requirements = _requirement_calibration(kind, settings.kv_cache)
+    working_floor, requirements, floor_points = _requirement_calibration(
+        kind, settings.kv_cache
+    )
     return AdaptiveMemoryEstimator(
         fallback=fallback,
         # Both are valid upper bounds; the tightest dominating one wins.
         preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
         working_floor=working_floor,
+        resident_rate=ResidentRateModel(floor_points) if working_floor else None,
     )
 
 
