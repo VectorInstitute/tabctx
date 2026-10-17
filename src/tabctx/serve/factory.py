@@ -28,6 +28,11 @@ Environment variables:
   fastest per predict; "repr" uses far less cache memory per context;
   "off" re-encodes the training set on every predict (tabicl's own
   default, kept only as an escape hatch).
+- ``TABCTX_KV_PRECISION``: ``"native"`` (default), ``"fp16"`` or ``"int8"``
+  -- storage of TabICL's ICL key/value cache, which dominates a TabICL
+  context (see backends/tabicl_kv.py). ``"int8"`` about halves resident
+  memory per context (and so doubles the longest table and the contexts
+  per GPU). TabPFN already stores its cache in int8 by default.
 - ``TABCTX_BATCH_WINDOW_MS``: coalescing window for same-context predict
   batching (see batching.py); default 5. 0 disables coalescing.
 - ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
@@ -58,6 +63,7 @@ from pathlib import Path
 from typing import Literal
 
 from tabctx.backends.base import TabularICLBackend
+from tabctx.backends.kv_precision import KV_PRECISIONS, KVPrecision
 from tabctx.cache.manager import ContextCacheManager
 from tabctx.cache.spill import DEFAULT_SPILL_CAPACITY_BYTES, DiskSpillStore
 from tabctx.engine import TabctxEngine
@@ -77,6 +83,7 @@ from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
 BACKEND_ENV_VAR = "TABCTX_BACKEND"
 GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
+KV_PRECISION_ENV_VAR = "TABCTX_KV_PRECISION"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
 MAX_UPLOAD_BYTES_ENV_VAR = "TABCTX_MAX_UPLOAD_BYTES"
 SPILL_DIR_ENV_VAR = "TABCTX_SPILL_DIR"
@@ -97,6 +104,7 @@ class ServeSettings:
     backends: tuple[BackendKind, ...] = ("tabicl",)
     gpu_memory_fraction: float = 1.0
     kv_cache: KvCacheMode = "kv"
+    kv_precision: KVPrecision = "native"
     batch_window_ms: float = 5.0
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     upload_ttl_s: float = DEFAULT_TTL_S
@@ -134,6 +142,14 @@ class ServeSettings:
             raise ValueError(
                 f"{KV_CACHE_ENV_VAR}={kv_cache!r} is not a known mode "
                 "(expected 'kv', 'repr', or 'off')"
+            )
+        kv_precision = (
+            os.environ.get(KV_PRECISION_ENV_VAR, cls.kv_precision).strip().lower()
+        )
+        if kv_precision not in KV_PRECISIONS:
+            raise ValueError(
+                f"{KV_PRECISION_ENV_VAR}={kv_precision!r} must be one of "
+                f"{', '.join(KV_PRECISIONS)}"
             )
         raw_window = os.environ.get(BATCH_WINDOW_MS_ENV_VAR, str(cls.batch_window_ms))
         try:
@@ -175,6 +191,7 @@ class ServeSettings:
             backends=backends,
             gpu_memory_fraction=fraction,
             kv_cache=kv_cache,
+            kv_precision=kv_precision,
             batch_window_ms=batch_window_ms,
             max_upload_bytes=max_upload_bytes,
             upload_ttl_s=upload_ttl_s,
@@ -377,7 +394,9 @@ def _build_real_backend(
         kv_cache: bool | str = (
             False if settings.kv_cache == "off" else settings.kv_cache
         )
-        backend = TabICLBackend(device=device, kv_cache=kv_cache)
+        backend = TabICLBackend(
+            device=device, kv_cache=kv_cache, kv_precision=settings.kv_precision
+        )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.
     backend.warmup()

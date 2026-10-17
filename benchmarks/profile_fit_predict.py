@@ -89,42 +89,55 @@ def stage_modules(kind: str, backend, payload, task: str) -> dict[str, torch.nn.
 
 
 class StageRecorder:
-    """CUDA-event timing and peak memory per stage via forward hooks."""
+    """CUDA-event timing and peak memory per stage.
+
+    Wraps each stage's entry methods (forward, plus TabICL's cache-mode
+    entry points forward_with_cache / prepare_repr_cache /
+    forward_with_repr_cache, which bypass nn.Module hooks), recording only
+    the outermost call so a method calling another isn't counted twice."""
+
+    ENTRY_METHODS = (
+        "forward",
+        "forward_with_cache",
+        "prepare_repr_cache",
+        "forward_with_repr_cache",
+    )
 
     def __init__(self, device: str, modules: dict[str, torch.nn.Module]) -> None:
         self.device = torch.device(device)
         self.calls: dict[str, int] = defaultdict(int)
         self.time_ms: dict[str, float] = defaultdict(float)
         self.peak_bytes: dict[str, int] = defaultdict(int)
-        self._open: dict[str, tuple] = {}
-        self._handles = []
+        self._depth: dict[str, int] = defaultdict(int)
+        self._patched: list[tuple[torch.nn.Module, str]] = []
         for name, module in modules.items():
-            self._handles.append(module.register_forward_pre_hook(self._pre(name)))
-            self._handles.append(module.register_forward_hook(self._post(name)))
+            for method in self.ENTRY_METHODS:
+                if callable(getattr(module, method, None)):
+                    setattr(module, method, self._wrap(name, getattr(module, method)))
+                    self._patched.append((module, method))
 
-    def _pre(self, name):
-        def hook(module, args):
+    def _wrap(self, name, fn):
+        def wrapped(*args, **kwargs):
+            if self._depth[name]:
+                return fn(*args, **kwargs)
+            self._depth[name] += 1
             torch.cuda.synchronize(self.device)
             base = torch.cuda.memory_allocated(self.device)
             torch.cuda.reset_peak_memory_stats(self.device)
-            start = torch.cuda.Event(enable_timing=True)
+            start, end = (torch.cuda.Event(enable_timing=True) for _ in range(2))
             start.record()
-            self._open[name] = (start, base)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                end.record()
+                torch.cuda.synchronize(self.device)
+                self._depth[name] -= 1
+                self.calls[name] += 1
+                self.time_ms[name] += start.elapsed_time(end)
+                peak = torch.cuda.max_memory_allocated(self.device) - base
+                self.peak_bytes[name] = max(self.peak_bytes[name], peak)
 
-        return hook
-
-    def _post(self, name):
-        def hook(module, args, output):
-            start, base = self._open.pop(name)
-            end = torch.cuda.Event(enable_timing=True)
-            end.record()
-            torch.cuda.synchronize(self.device)
-            self.calls[name] += 1
-            self.time_ms[name] += start.elapsed_time(end)
-            peak = torch.cuda.max_memory_allocated(self.device) - base
-            self.peak_bytes[name] = max(self.peak_bytes[name], peak)
-
-        return hook
+        return wrapped
 
     def reset(self) -> None:
         self.calls.clear()
@@ -142,8 +155,8 @@ class StageRecorder:
         }
 
     def close(self) -> None:
-        for h in self._handles:
-            h.remove()
+        for module, method in self._patched:
+            delattr(module, method)  # the instance attribute shadowing the method
 
 
 def timed(device: torch.device, fn):
@@ -260,7 +273,7 @@ def main() -> int:
 
     backend = build_backend(args.backend, args.device, args.cache_mode)
     warm_X, warm_y = make_table(200, 8, args.task, seed=0)
-    backend.fit(warm_X, warm_y, args.task)  # load weights outside measurements
+    backend.warmup()  # load weights outside measurements
     recorder_box: dict = {}
     out = open(args.out, "a") if args.out else None  # noqa: SIM115
     for rows, features in args.shapes:
