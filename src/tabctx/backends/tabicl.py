@@ -91,6 +91,42 @@ def _install_restore_hook(cls: type) -> None:
     cls._tabctx_restore_hook = True
 
 
+def make_cache_thread_local(module: Any) -> None:
+    """Give a shared TabICL backbone one active-context cache per thread.
+
+    tabicl's forward_with_cache keeps the context it is working with on
+    the MODULE (``model_._cache``), and every call clears it when done
+    (see _unpin_shared_module). With one backbone shared by every context,
+    two calls running at once -- a predict interleaved with a fit on the
+    same GPU -- would read each other's cache: a predict answered from
+    another tenant's context, or None mid-forward (seen on an A100 as
+    AttributeError: 'NoneType' object has no attribute 'icl_cache').
+    A per-instance subclass whose ``_cache`` is a thread-local property
+    gives each thread its own slot; nothing else about the module changes.
+    """
+    if getattr(type(module), "_tabctx_thread_local_cache", False):
+        return
+    local = threading.local()
+    base = type(module)
+
+    def _get(_self: Any) -> Any:
+        return getattr(local, "cache", None)
+
+    def _set(_self: Any, value: Any) -> None:
+        local.cache = value
+
+    module.__dict__.pop("_cache", None)
+    module.__class__ = type(
+        base.__name__,
+        (base,),
+        {
+            "_cache": property(_get, _set),
+            "_tabctx_thread_local_cache": True,
+            "__module__": base.__module__,
+        },
+    )
+
+
 class TabICLBackend:
     # The exact model id callers select via the API's `model` field --
     # named for the checkpoint actually loaded (tabicl-classifier-v2-*).
@@ -185,6 +221,7 @@ class TabICLBackend:
     def _stash_backbone(self, task: Task, model: Any) -> None:
         if task in self._shared_backbones:
             return
+        make_cache_thread_local(model.model_)
         shared = {"model_": model.model_}
         # Keep save()/pickling of estimators working: __setstate__ only
         # rebuilds from weights when model_config_ exists (see tabicl

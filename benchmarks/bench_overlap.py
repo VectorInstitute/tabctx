@@ -65,10 +65,17 @@ def main() -> int:
     small = backend.fit(Xc, yc, "classification")
     X_test, _ = make_table(args.test_rows, cf, "classification", seed=2)
 
+    reference = backend.predict(small, X_test, False).predictions
+    mismatches = [0]
+
     def predict_once() -> float:
         t0 = time.perf_counter()
-        backend.predict(small, X_test, False)
+        out = backend.predict(small, X_test, False)
         torch.cuda.synchronize(device)
+        # A predict sharing the backbone with a fit must still answer from
+        # its own context.
+        if out.predictions != reference:
+            mismatches[0] += 1
         return time.perf_counter() - t0
 
     for _ in range(3):
@@ -125,6 +132,7 @@ def main() -> int:
         "predict_during_fit": _pcts(during),
         "predict_errors": predict_errors[:5],
         "n_predict_errors": len(predict_errors),
+        "predict_mismatches": mismatches[0],
     }
     print(json.dumps(rec), flush=True)
     if args.out:
