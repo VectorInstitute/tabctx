@@ -27,6 +27,7 @@ import logging
 import threading
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 GiB = 1024**3
 logger = logging.getLogger(__name__)
@@ -87,11 +88,17 @@ def _read_limit(limit_paths: tuple[str, ...], meminfo_path: str) -> int | None:
 
 
 class HostMemoryGuard:
+    """Process-wide by default. With mp_context, its semaphore and counters
+    are multiprocessing primitives, so one guard passed to per-GPU worker
+    processes (as a Process argument) bounds them all: host RAM is shared
+    by every process on the node."""
+
     def __init__(
         self,
         budget_bytes: int,
         large_fit_cells: int = LARGE_FIT_CELLS,
         large_fit_bytes: int = LARGE_FIT_HOST_BYTES,
+        mp_context: Any | None = None,
     ) -> None:
         self.slots = max(1, budget_bytes // large_fit_bytes)
         if budget_bytes < large_fit_bytes:
@@ -103,10 +110,14 @@ class HostMemoryGuard:
                 large_fit_bytes / GiB,
             )
         self._large_fit_cells = large_fit_cells
-        self._semaphore = threading.BoundedSemaphore(self.slots)
-        self._waiting = 0
-        self._active = 0
-        self._lock = threading.Lock()
+        if mp_context is None:
+            self._semaphore: Any = threading.BoundedSemaphore(self.slots)
+            self._lock: Any = threading.Lock()
+            self._counts: Any = [0, 0]  # waiting, active
+        else:
+            self._semaphore = mp_context.BoundedSemaphore(self.slots)
+            self._lock = mp_context.Lock()
+            self._counts = mp_context.Array("i", 2, lock=False)
 
     def is_large(self, n_rows: int, n_features: int) -> bool:
         """The fallback test for backends that can't say whether a call may
@@ -120,22 +131,22 @@ class HostMemoryGuard:
             yield
             return
         with self._lock:
-            self._waiting += 1
+            self._counts[0] += 1
         self._semaphore.acquire()
         with self._lock:
-            self._waiting -= 1
-            self._active += 1
+            self._counts[0] -= 1
+            self._counts[1] += 1
         try:
             yield
         finally:
             with self._lock:
-                self._active -= 1
+                self._counts[1] -= 1
             self._semaphore.release()
 
     def stats(self) -> dict[str, int]:
         with self._lock:
             return {
                 "large_fit_slots": self.slots,
-                "large_fits_active": self._active,
-                "large_fits_waiting": self._waiting,
+                "large_fits_active": self._counts[1],
+                "large_fits_waiting": self._counts[0],
             }

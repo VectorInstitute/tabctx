@@ -206,6 +206,16 @@ class ContextCacheManager:
             or (self._spill is not None and self._spill.contains(dataset_id))
         )
 
+    def residency_nowait(self) -> tuple[frozenset[str], frozenset[str]]:
+        """(resident ids, every id has() reports: resident, in transit or
+        spilled) as lock-free snapshots -- what a router in another
+        process mirrors to answer holds()/has() without a round trip."""
+        resident = frozenset(list(self._entries))
+        known = resident | frozenset(list(self._in_transit))
+        if self._spill is not None:
+            known |= self._spill.ids()
+        return resident, known
+
     def stats_nowait(self) -> EngineStats:
         """stats() without the lock: fields may be from slightly different
         instants, which is fine for placement and monitoring."""

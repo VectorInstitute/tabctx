@@ -191,6 +191,17 @@ class TabctxEngine:
         """Resident or spilled here (lock-free snapshot)."""
         return self._cache.has(dataset_id)
 
+    def residency_nowait(self) -> tuple[frozenset[str], frozenset[str]]:
+        """(resident ids, resident-or-spilled ids), lock-free."""
+        return self._cache.residency_nowait()
+
+    def estimate_fit_bytes(
+        self, n_train: int, n_features: int, backend: str | None = None
+    ) -> int:
+        """What admission would charge a fit of this shape (placement uses
+        it to pick a device; the fit itself re-checks under the lock)."""
+        return self.estimator_for(backend).estimate_bytes(n_train, 0, n_features)
+
     def resolve_backend_name(self, backend: str | None) -> str:
         """The model a fit would use; InvalidInputError if unknown."""
         return self._resolve_backend(backend)[0]
