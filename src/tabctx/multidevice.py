@@ -44,6 +44,7 @@ use either interchangeably.
 from __future__ import annotations
 
 import contextlib
+import logging
 import threading
 import time
 from collections import deque
@@ -60,6 +61,8 @@ from tabctx.placement import (
     PlacementPolicy,
 )
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+
+logger = logging.getLogger(__name__)
 
 # How long a started call counts toward a device's recent activity.
 ACTIVITY_WINDOW_S = 30.0
@@ -87,6 +90,8 @@ class Shard(Protocol):
     def admission_headroom_bytes(self, backend: str | None = None) -> int: ...
 
     def holds(self, dataset_id: str) -> bool: ...
+
+    def residency_nowait(self) -> tuple[frozenset[str], frozenset[str]]: ...
 
     def has(self, dataset_id: str) -> bool: ...
 
@@ -261,25 +266,54 @@ class MultiDeviceEngine:
         backend: str | None = None,
         feature_names: list[str] | None = None,
     ) -> str:
+        return self._fit(X, y, task, dataset_id, backend, feature_names, announce=True)
+
+    def _fit(
+        self,
+        X: ArrayLike,
+        y: ArrayLike,
+        task: Task,
+        dataset_id: str | None,
+        backend: str | None,
+        feature_names: list[str] | None,
+        announce: bool,
+    ) -> str:
+        """fit(); `announce` emits residency events (not for fit_predict's
+        throwaway contexts, which would flood subscribers)."""
         n_features = _validate_fit_input(X, y)
         name = self._shards[0].resolve_backend_name(backend)
         request = FitRequest(len(X), n_features, name, dataset_id)
         if dataset_id is None:
             index = self._place(request)
             resolved = self._fit_on(index, X, y, task, None, name, feature_names)
-            self._emit("placed", resolved, index, name)
+            if announce:
+                self._emit("placed", resolved, index, name)
             return resolved
         with self._id_locks.hold(dataset_id):
             index = self._place(request)
             resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
-            self._emit("placed", resolved, index, name)
+            if announce:
+                self._emit("placed", resolved, index, name)
             # Only now that the new context is in place: drop copies on
             # other devices (a failed fit above leaves the old one serving).
-            for i in self._locate(dataset_id):
-                if i != index:
-                    self._shards[i].evict(dataset_id)
-                    self._emit("removed", dataset_id, i)
+            others = [i for i in self._locate(dataset_id) if i != index]
+            self._evict_from(dataset_id, others, announce)
             return resolved
+
+    def _evict_from(self, dataset_id: str, indices: list[int], announce: bool) -> None:
+        """Evict the id from each device, reporting each removal that
+        happened; a device that fails (a dead worker) is logged and skipped,
+        so the others are still cleaned up."""
+        for i in indices:
+            try:
+                self._shards[i].evict(dataset_id)
+            except Exception:  # noqa: BLE001 -- keep cleaning the others
+                logger.exception(
+                    "evicting %s from %s failed", dataset_id, self._devices[i]
+                )
+                continue
+            if announce:
+                self._emit("removed", dataset_id, i)
 
     def _emit(
         self, kind: EventKind, dataset_id: str, index: int, backend: str | None = None
@@ -336,17 +370,29 @@ class MultiDeviceEngine:
         task: Task = "classification",
         return_proba: bool = False,
     ) -> PredictOutcome:
-        dataset_id = self.fit(X, y, task)
+        dataset_id = self._fit(X, y, task, None, None, None, announce=False)
         try:
             return self.predict(dataset_id, X_test, return_proba=return_proba)
         finally:
-            self.evict(dataset_id)
+            with self._id_locks.hold(dataset_id):
+                self._evict_from(dataset_id, self._locate(dataset_id), announce=False)
 
     def evict(self, dataset_id: str) -> None:
         with self._id_locks.hold(dataset_id):
-            for index in self._locate(dataset_id):
-                self._shards[index].evict(dataset_id)
-                self._emit("removed", dataset_id, index)
+            self._evict_from(dataset_id, self._locate(dataset_id), announce=True)
+
+    def residency(self) -> dict[str, dict[str, list[str]]]:
+        """Where every context is now, per device (lock-free snapshots):
+        what event subscribers reconcile against, since capacity eviction
+        without a spill tier drops contexts without an event."""
+        out = {}
+        for device, shard in zip(self._devices, self._shards, strict=True):
+            resident, known = shard.residency_nowait()
+            out[device] = {
+                "resident": sorted(resident),
+                "spilled": sorted(known - resident),
+            }
+        return out
 
     def stats(self) -> EngineStats:
         per_device = self.device_stats()

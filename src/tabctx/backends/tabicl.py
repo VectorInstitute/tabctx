@@ -49,6 +49,7 @@ _cuda.QuiescedMeasurement): no predict's temporaries pollute the delta.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 from dataclasses import dataclass
@@ -205,6 +206,7 @@ class TabICLBackend(QuiescedMeasurement):
     # The exact model id callers select via the API's `model` field --
     # named for the checkpoint actually loaded (tabicl-classifier-v2-*).
     name = "tabicl-v2"
+    _fast_preprocessing = False
 
     def __init__(
         self,
@@ -275,7 +277,8 @@ class TabICLBackend(QuiescedMeasurement):
         _install_restore_hook(TabICLRegressor)
         if not install_cached_logn():
             logger.warning("tabicl.ssmax._logn not found: per-call GPU syncs remain")
-        if fast_preprocessing and not yeo_johnson.install():
+        self._fast_preprocessing = fast_preprocessing and yeo_johnson.install()
+        if fast_preprocessing and not self._fast_preprocessing:
             logger.warning("tabicl preprocessing not patchable: scipy power transforms")
         self._compiled = False
         if compile_blocks and is_cuda(self._device):
@@ -332,20 +335,29 @@ class TabICLBackend(QuiescedMeasurement):
         """The CPU half of a fit: validation, label encoding and the
         ensemble's preprocessing (per-feature power transforms, shuffles) --
         tabicl's fit() up to building the kv cache, run with the cache
-        disabled. 30-37% of a fit's time (A100, 2k x 20 to 40k x 100); it
-        needs no device memory, so the engine runs it before taking the
-        device, overlapping another fit's GPU half."""
+        disabled. 30-37% of a fit's time (A100, 2k x 20 to 40k x 100) with
+        scikit-learn's power transforms, ~10% with fast_preprocessing. It
+        needs no device memory beyond the power transforms' bounded,
+        measurement-locked temporaries, so the engine runs it before
+        taking the device, overlapping another fit's GPU half."""
         # Fresh estimator instance every call (load-bearing -- see
         # backends/base.py), but the underlying pretrained nn.Module is
         # shared across fits after the first (see __init__).
         model = self._make_estimator(task)
         kv_cache = model.kv_cache
         model.kv_cache = False
-        # Power transforms fit on this backend's GPU when it is one (see
-        # backends/yeo_johnson.py; a no-op unless fast_preprocessing).
-        transforms_on = self._device if is_cuda(self._device) else None
+        # With fast_preprocessing, power transforms fit on this backend's GPU
+        # (backends/yeo_johnson.py), under the measurement lock: this runs
+        # beside another fit's GPU half, whose readings must not see it.
+        fast = (
+            yeo_johnson.on_device(
+                self._device if is_cuda(self._device) else None, self.quiesced
+            )
+            if self._fast_preprocessing
+            else contextlib.nullcontext()
+        )
         try:
-            with device_scope(self._device), yeo_johnson.on_device(transforms_on):
+            with device_scope(self._device), fast:
                 model.fit(X, y)
         finally:
             model.kv_cache = kv_cache

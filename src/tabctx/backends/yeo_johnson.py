@@ -18,6 +18,14 @@ standardization are scikit-learn's (StandardScaler), so the fitted object
 is an ordinary PowerTransformer to everything downstream (transform,
 pickling for spill).
 
+Sharing the device. Preparation runs outside the engine's device locks,
+beside another fit's GPU half (engine.py). So the GPU section runs under
+the backend's measurement lock (the one QuiescedMeasurement readings
+take; ``on_device(device, guard)``) and frees everything before leaving
+it: a concurrent fit's allocator readings never see these temporaries.
+Columns are processed in chunks of at most ``_CHUNK_BYTES`` of
+temporaries, and a CUDA out-of-memory falls back to scikit-learn.
+
 It is not bit-identical: lambdas agree with scipy's to ~1e-6 (they are
 stored in the data's dtype, float32, anyway), and a column whose
 likelihood has two local optima may get the better one where Brent stops
@@ -28,9 +36,10 @@ values, NaNs -- runs scikit-learn's implementation unchanged.
 from __future__ import annotations
 
 import contextlib
+import logging
 import math
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import numpy as np
@@ -38,22 +47,32 @@ from sklearn.preprocessing import PowerTransformer, StandardScaler
 
 # scipy's optimize.brent / fminbound tolerance (yeojohnson_normmax).
 _XTOL = 1.48e-08
+# Device temporaries per chunk of columns: ~48 bytes per cell live while
+# evaluating the likelihood (float64 input, log1p, both branches, output).
+_CHUNK_BYTES = 512 * 1024**2
+_BYTES_PER_CELL = 48
 _GRID_POINTS = 64
 _GOLDEN = (math.sqrt(5.0) - 1.0) / 2.0
 
 _local = threading.local()
+logger = logging.getLogger(__name__)
 
 
 @contextlib.contextmanager
-def on_device(device: str | None) -> Iterator[None]:
-    """Fit lambdas on `device` (e.g. "cuda:1") within this block, on this
-    thread; CPU otherwise."""
-    previous = getattr(_local, "device", None)
-    _local.device = device
+def on_device(
+    device: str | None,
+    guard: Callable[[], contextlib.AbstractContextManager[Any]] | None = None,
+) -> Iterator[None]:
+    """Enable the fast fit on this thread within this block: on `device`
+    (e.g. "cuda:1"; CPU when None), with each device section run inside
+    `guard()` (the backend's measurement lock). Outside such a block,
+    FastPowerTransformer is scikit-learn's PowerTransformer."""
+    previous = getattr(_local, "config", None)
+    _local.config = (device, guard or contextlib.nullcontext)
     try:
         yield
     finally:
-        _local.device = previous
+        _local.config = previous
 
 
 def _bounds(x_abs_max: np.ndarray, any_neg: np.ndarray, all_neg: np.ndarray, dtype):
@@ -102,7 +121,19 @@ def _neg_llf(x: Any, lam: Any, sum_signed_log: Any) -> Any:
 
 
 def fit_lambdas(X: np.ndarray, device: str | None = None) -> np.ndarray:
-    """The maximum-likelihood Yeo-Johnson lambda of each column of finite X."""
+    """The maximum-likelihood Yeo-Johnson lambda of each column of finite X,
+    in column chunks bounded by _CHUNK_BYTES of device temporaries."""
+    n_rows = max(1, X.shape[0])
+    per_chunk = max(1, _CHUNK_BYTES // (_BYTES_PER_CELL * n_rows))
+    return np.concatenate(
+        [
+            _fit_lambdas(X[:, start : start + per_chunk], device)
+            for start in range(0, X.shape[1], per_chunk)
+        ]
+    )
+
+
+def _fit_lambdas(X: np.ndarray, device: str | None) -> np.ndarray:
     import torch
 
     x = torch.as_tensor(np.asarray(X, dtype=np.float64), device=device or "cpu")
@@ -143,40 +174,42 @@ def fit_lambdas(X: np.ndarray, device: str | None = None) -> np.ndarray:
         f_new = _neg_llf(x, torch.where(left, c_new, d_new), sum_signed_log)
         fc, fd = torch.where(left, f_new, fd), torch.where(left, fc, f_new)
         c, d = c_new, d_new
-    return ((a + b) / 2).cpu().numpy()
+    lam = ((a + b) / 2).cpu().numpy()
+    # Values so large that no lambda keeps them within the dtype's range on
+    # both signs (scipy raises here): leave the column untransformed.
+    return np.where(lb_np >= ub_np, 1.0, lam)
 
 
 class FastPowerTransformer(PowerTransformer):
-    """PowerTransformer whose Yeo-Johnson fit is vectorized (module
-    docstring); everything else is scikit-learn's."""
+    """PowerTransformer whose Yeo-Johnson fit is vectorized inside an
+    ``on_device`` block (module docstring); scikit-learn's otherwise.
+    Pickles as a plain PowerTransformer: the fitted state is identical,
+    so spilled contexts don't depend on this module."""
 
     def _fit(self, X, y=None, force_transform=False):
-        if self.method != "yeo-johnson":
+        config = getattr(_local, "config", None)
+        if self.method != "yeo-johnson" or config is None:
             return super()._fit(X, y, force_transform)
         X = self._check_input(X, in_fit=True, check_positive=True)
         if not np.all(np.isfinite(X)):  # NaNs: scikit-learn drops them per column
             return super()._fit(X, y, force_transform)
+        device, guard = config
+        try:
+            with guard():
+                lambdas, transformed = self._fit_columns(
+                    X, device, self.standardize or force_transform
+                )
+                _release_device_cache(device)
+        except Exception as e:  # noqa: BLE001 -- only a device OOM is expected
+            if not _is_out_of_memory(e):
+                raise
+            logger.warning("Yeo-Johnson fit out of device memory: scikit-learn's")
+            return super()._fit(X, y, force_transform)
         if not self.copy and not force_transform:
             X = X.copy()
-        n_samples = X.shape[0]
-        mean = np.mean(X, axis=0, dtype=np.float64)
-        var = np.var(X, axis=0, dtype=np.float64)
-        constant = _constant_features(var, mean, n_samples) | np.all(X == 0, axis=0)
-        lambdas = np.ones(X.shape[1], dtype=X.dtype)
-        varying = np.flatnonzero(~constant)
-        if varying.size:
-            device = getattr(_local, "device", None)
-            lambdas[varying] = fit_lambdas(X[:, varying], device)
         self.lambdas_ = lambdas
-        if self.standardize or force_transform:
-            import torch
-
-            device = getattr(_local, "device", None) or "cpu"
-            for start in range(0, varying.size, 256):  # bound device memory
-                cols = varying[start : start + 256]
-                x = torch.as_tensor(X[:, cols].astype(np.float64), device=device)
-                lam = torch.as_tensor(lambdas[cols].astype(np.float64), device=device)
-                X[:, cols] = _transform(x, lam).cpu().numpy().astype(X.dtype)
+        if transformed is not None:
+            X[:] = transformed
         if self.standardize:
             self._scaler = StandardScaler(copy=False).set_output(transform="default")
             if force_transform:
@@ -184,6 +217,53 @@ class FastPowerTransformer(PowerTransformer):
             else:
                 self._scaler.fit(X)
         return X
+
+    @staticmethod
+    def _fit_columns(X: np.ndarray, device: str | None, transform: bool):
+        """Lambdas (lambda 1 for constant columns, as scikit-learn) and, if
+        asked, X transformed by them (constant columns untouched)."""
+        import torch
+
+        n_samples = X.shape[0]
+        mean = np.mean(X, axis=0, dtype=np.float64)
+        var = np.var(X, axis=0, dtype=np.float64)
+        constant = _constant_features(var, mean, n_samples) | np.all(X == 0, axis=0)
+        lambdas = np.ones(X.shape[1], dtype=X.dtype)
+        varying = np.flatnonzero(~constant)
+        if varying.size:
+            lambdas[varying] = fit_lambdas(X[:, varying], device)
+        if not transform:
+            return lambdas, None
+        out = X.copy()
+        per_chunk = max(1, _CHUNK_BYTES // (_BYTES_PER_CELL * max(1, n_samples)))
+        for start in range(0, varying.size, per_chunk):
+            cols = varying[start : start + per_chunk]
+            x = torch.as_tensor(X[:, cols].astype(np.float64), device=device or "cpu")
+            lam = torch.as_tensor(lambdas[cols].astype(np.float64), device=x.device)
+            out[:, cols] = _transform(x, lam).cpu().numpy().astype(X.dtype)
+        return lambdas, out
+
+    def __reduce__(self):
+        # Rebuilt as scikit-learn's class (constructed, then its own
+        # __setstate__): the blob names nothing from tabctx.
+        return (PowerTransformer, (), self.__getstate__())
+
+
+def _is_out_of_memory(error: BaseException) -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    return isinstance(error, torch.cuda.OutOfMemoryError)
+
+
+def _release_device_cache(device: str | None) -> None:
+    """Return the temporaries' cached blocks, so free-memory readings (tabicl's
+    offload decision) don't see them as used."""
+    if device is not None and device.startswith("cuda"):
+        import torch
+
+        torch.cuda.empty_cache()
 
 
 def _constant_features(var: np.ndarray, mean: np.ndarray, n_samples: int) -> np.ndarray:
@@ -195,8 +275,10 @@ def _constant_features(var: np.ndarray, mean: np.ndarray, n_samples: int) -> np.
 
 
 def install() -> bool:
-    """Use FastPowerTransformer in tabicl's preprocessing. Idempotent;
-    False if tabicl's preprocessing no longer imports PowerTransformer."""
+    """Use FastPowerTransformer in tabicl's preprocessing. Idempotent, and
+    harmless to other backends: it is scikit-learn's PowerTransformer
+    except inside an ``on_device`` block. False if tabicl's preprocessing
+    no longer imports PowerTransformer."""
     try:
         from tabicl._sklearn import preprocessing
     except ImportError:

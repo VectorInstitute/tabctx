@@ -106,3 +106,84 @@ def test_recent_events_are_bounded():
     for i in range(5):
         log(ResidencyEvent("placed", f"d{i}", "cuda:0"))
     assert [e["dataset_id"] for e in log.snapshot()] == ["d2", "d3", "d4"]
+
+
+def old_place(headrooms, needs, activity):
+    """The router's rule before policies were pluggable (607d3db)."""
+    indices = range(len(headrooms))
+    fits = [i for i in indices if headrooms[i] >= needs[i]]
+    if fits:
+        return min(fits, key=lambda i: (activity[i], -headrooms[i], i))
+    return max(indices, key=lambda i: (headrooms[i] - needs[i], -i))
+
+
+def test_default_policy_is_the_previous_rule_exactly():
+    import random
+
+    rng = random.Random(0)
+    for _ in range(5000):
+        n = rng.randint(2, 6)
+        headrooms = [rng.choice([0, 50, 100, 150, 400, 900]) for _ in range(n)]
+        needs = [rng.choice([1, 100, 200, 500, 1000]) for _ in range(n)]
+        activity = [(rng.randint(0, 2), rng.randint(0, 3)) for _ in range(n)]
+        views = [
+            view(i, headrooms[i], needs[i], activity[i][0], activity[i][1])
+            for i in range(n)
+        ]
+        assert LeastActiveThatFits().choose(REQ, views) == old_place(
+            headrooms, needs, activity
+        )
+
+
+def test_fit_predict_reports_nothing():
+    engine, _, _ = build(n_devices=2)
+    log = RecentEvents()
+    engine.events.subscribe(log)
+    engine.fit_predict(*table(10), [[1.0]])
+    assert log.snapshot() == []
+
+
+def test_a_failing_policy_fails_the_fit_without_an_event():
+    engine, shards, _ = build(n_devices=2)
+    log = RecentEvents()
+    engine.events.subscribe(log)
+
+    class Raises:
+        def choose(self, request, devices):
+            raise RuntimeError("scheduler unavailable")
+
+    engine._placement = Raises()
+    with pytest.raises(RuntimeError):
+        engine.fit(*table(10), dataset_id="d")
+    assert log.snapshot() == [] and where(shards, "d") == []
+
+
+def test_a_device_that_fails_to_evict_is_skipped_and_not_reported():
+    engine, shards, _ = build(n_devices=2)
+    log = RecentEvents()
+    engine.events.subscribe(log)
+    engine.fit(*table(10), dataset_id="d")
+    first = where(shards, "d")[0]
+    other = 1 - first
+    engine._placement = type("P", (), {"choose": lambda self, r, d: other})()
+
+    def dead(dataset_id):
+        raise RuntimeError("worker died")
+
+    shards[first].evict = dead
+    engine.fit(*table(10), dataset_id="d")  # the re-fit still succeeds
+    assert [e["kind"] for e in log.snapshot()] == ["placed", "placed"]
+
+
+def test_residency_reports_resident_and_spilled_per_device(tmp_path):
+    engine, shards, _ = build(n_devices=2, spill_root=tmp_path)
+    engine.fit(*table(10), dataset_id="a")
+    engine.fit(*table(10), dataset_id="b")
+    view_now = engine.residency()
+    assert set(view_now) == {"cuda:0", "cuda:1"}
+    resident = sorted(i for d in view_now.values() for i in d["resident"])
+    assert resident == ["a", "b"]
+    index = where(shards, "a")[0]
+    shards[index]._cache.evict_one(ignore_pins=True)  # capacity eviction: spills
+    after = engine.residency()[f"cuda:{index}"]
+    assert after["spilled"] and not set(after["spilled"]) & set(after["resident"])

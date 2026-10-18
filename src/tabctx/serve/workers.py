@@ -509,6 +509,12 @@ class ProcessShard:
     def holds(self, dataset_id: str) -> bool:
         return self.alive and dataset_id in self._snap().resident
 
+    def residency_nowait(self) -> tuple[frozenset[str], frozenset[str]]:
+        if not self.alive:
+            return frozenset(), frozenset()
+        snap = self._snap()
+        return snap.resident, snap.known
+
     def has(self, dataset_id: str) -> bool:
         return self.alive and dataset_id in self._snap().known
 

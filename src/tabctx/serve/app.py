@@ -533,11 +533,17 @@ class TabctxService:
 
     @fastapi_app.get("/v1/tabctx/residency")
     def residency(self):
-        """Where contexts were placed and removed, latest last (multi-GPU
-        replicas): the router's decisions, for a platform scheduler or an
-        operator. Empty on a single-GPU replica, whose contexts all live
-        on its one device."""
-        return {"devices": list(self._devices), "events": self._residency.snapshot()}
+        """Where contexts are now, per device, and the router's latest
+        placements and removals (multi-GPU replicas): for a platform
+        scheduler or an operator. Events are advisory (contexts dropped by
+        capacity eviction without spill aren't reported); `devices` is the
+        current truth to reconcile against. A single-GPU replica reports
+        no per-device view or events."""
+        residency = getattr(self._engine, "residency", None)
+        return {
+            "devices": residency() if callable(residency) else {},
+            "events": self._residency.snapshot(),
+        }
 
     @fastapi_app.get("/v1/tabctx/limits")
     def limits(self):

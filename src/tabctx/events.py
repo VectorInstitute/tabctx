@@ -8,8 +8,11 @@ Sinks are plain callables, so any transport plugs in: a log, a metrics
 counter, a Ray actor, a Dynamo event plane publisher.
 
 Events report the router's decisions, not every cache-internal move:
-capacity eviction to the spill tier and restores stay on their device,
-so a context's device doesn't change until the router says so.
+spill and restore keep a context on its device, so its device doesn't
+change until the router says so. They are advisory: capacity eviction
+without a spill tier (or with a full one) drops a context silently, so
+subscribers reconcile against MultiDeviceEngine.residency() (served at
+/v1/tabctx/residency). fit_predict's throwaway contexts aren't reported.
 
 Sinks run on the request's thread after the change, so they must be
 fast and must not raise (one that does is logged and skipped).
