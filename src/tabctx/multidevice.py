@@ -7,22 +7,13 @@ one complete TabctxEngine per device -- its own backend instances bound
 to that device, its own cache, lock and spill tier -- and this class
 routes between them:
 
-- fit() places each context with a rule aimed at the usual workload --
-  a few concurrent users, each fitting a table (small or large) and then
-  predicting against it repeatedly:
-    1. Devices where the table's estimated peak fits WITHOUT evicting
-       anything are preferred; among them, the least active one wins
-       (fewest calls in flight, then fewest started recently), ties to
-       the most headroom. Each device runs one fit at a time, so
-       spreading active users across devices is what lets them run
-       concurrently.
-    2. If no device can take it without eviction (a large table, or a
-       full replica), it goes to the device with the most headroom,
-       evicting the fewest contexts.
-  Each device's own usage-aware admission gate then has the final say,
-  exactly as on a single GPU. A table's ceiling is therefore one
-  device's memory; what more devices buy is N x the resident cache and
-  concurrency.
+- fit() places each context where a PlacementPolicy says (placement.py;
+  the default, LeastActiveThatFits, prefers devices where the table fits
+  without eviction, the least active among them, else the one with most
+  headroom). Each device's own usage-aware admission gate then has the
+  final say, exactly as on a single GPU. A table's ceiling is therefore
+  one device's memory; what more devices buy is N x the resident cache
+  and concurrency.
 - predict() runs on the device that holds the context, found from each
   device's residency and spill index (so a context spilled before a
   restart is found on, and restored to, its own device).
@@ -43,6 +34,9 @@ the same device, in which case the second evicts-ahead there like any
 single-GPU fit would. Serializing placement would cost the concurrency
 this class exists for.
 
+Residency events (events.py) report each placement and removal, so a
+platform scheduler can follow where contexts live without polling.
+
 Same public surface as TabctxEngine, so the serving layer and batching
 use either interchangeably.
 """
@@ -58,6 +52,13 @@ from typing import Protocol
 
 from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
+from tabctx.events import EventBus, EventKind, ResidencyEvent
+from tabctx.placement import (
+    DeviceView,
+    FitRequest,
+    LeastActiveThatFits,
+    PlacementPolicy,
+)
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 # How long a started call counts toward a device's recent activity.
@@ -146,6 +147,8 @@ class MultiDeviceEngine:
         devices: list[str],
         activity_window_s: float = ACTIVITY_WINDOW_S,
         clock: Callable[[], float] = time.monotonic,
+        placement: PlacementPolicy | None = None,
+        events: EventBus | None = None,
     ) -> None:
         if len(shards) < 2 or len(shards) != len(devices):
             raise ValueError("need one engine per device, and at least two devices")
@@ -161,6 +164,8 @@ class MultiDeviceEngine:
         self._inflight = [0] * len(shards)
         self._recent: list[deque[float]] = [deque() for _ in shards]
         self._activity_lock = threading.Lock()
+        self._placement: PlacementPolicy = placement or LeastActiveThatFits()
+        self.events = events or EventBus()
 
     @property
     def devices(self) -> list[str]:
@@ -210,19 +215,30 @@ class MultiDeviceEngine:
 
     # ---- placement and lookup (lock-free snapshots) ----------------
 
-    def _place(self, n_train: int, n_features: int, backend: str) -> int:
-        headrooms = self.device_headroom_bytes(backend)
-        # Each shard prices the fit with its own estimator (worker
-        # processes learn separately; in-process shards share one).
-        needs = [
-            s.estimate_fit_bytes(n_train, n_features, backend) for s in self._shards
-        ]
+    def _place(self, request: FitRequest) -> int:
+        """Ask the policy, from lock-free snapshots of every device."""
+        headrooms = self.device_headroom_bytes(request.backend)
         activity = self._activity()
-        indices = range(len(self._shards))
-        fits = [i for i in indices if headrooms[i] >= needs[i]]
-        if fits:
-            return min(fits, key=lambda i: (activity[i], -headrooms[i], i))
-        return max(indices, key=lambda i: (headrooms[i] - needs[i], -i))
+        views = [
+            DeviceView(
+                index=i,
+                device=self._devices[i],
+                headroom_bytes=headrooms[i],
+                # Each shard prices the fit with its own estimator (worker
+                # processes learn separately; in-process shards share one).
+                need_bytes=s.estimate_fit_bytes(
+                    request.n_train, request.n_features, request.backend
+                ),
+                in_flight=activity[i][0],
+                recent_calls=activity[i][1],
+                alive=getattr(s, "alive", True),
+            )
+            for i, s in enumerate(self._shards)
+        ]
+        index = self._placement.choose(request, views)
+        if not 0 <= index < len(self._shards):
+            raise ValueError(f"placement policy chose device {index} of {len(views)}")
+        return index
 
     def _locate(self, dataset_id: str) -> list[int]:
         """Devices holding the id: resident first, then spilled copies."""
@@ -247,25 +263,30 @@ class MultiDeviceEngine:
     ) -> str:
         n_features = _validate_fit_input(X, y)
         name = self._shards[0].resolve_backend_name(backend)
+        request = FitRequest(len(X), n_features, name, dataset_id)
         if dataset_id is None:
-            return self._fit_on(
-                self._place(len(X), n_features, name),
-                X,
-                y,
-                task,
-                None,
-                name,
-                feature_names,
-            )
+            index = self._place(request)
+            resolved = self._fit_on(index, X, y, task, None, name, feature_names)
+            self._emit("placed", resolved, index, name)
+            return resolved
         with self._id_locks.hold(dataset_id):
-            index = self._place(len(X), n_features, name)
+            index = self._place(request)
             resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
+            self._emit("placed", resolved, index, name)
             # Only now that the new context is in place: drop copies on
             # other devices (a failed fit above leaves the old one serving).
             for i in self._locate(dataset_id):
                 if i != index:
                     self._shards[i].evict(dataset_id)
+                    self._emit("removed", dataset_id, i)
             return resolved
+
+    def _emit(
+        self, kind: EventKind, dataset_id: str, index: int, backend: str | None = None
+    ) -> None:
+        self.events.emit(
+            ResidencyEvent(kind, dataset_id, self._devices[index], backend)
+        )
 
     def _fit_on(self, index, X, y, task, dataset_id, backend, feature_names) -> str:
         with self._active(index):
@@ -325,6 +346,7 @@ class MultiDeviceEngine:
         with self._id_locks.hold(dataset_id):
             for index in self._locate(dataset_id):
                 self._shards[index].evict(dataset_id)
+                self._emit("removed", dataset_id, index)
 
     def stats(self) -> EngineStats:
         per_device = self.device_stats()

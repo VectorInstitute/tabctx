@@ -112,9 +112,13 @@ no FP8).
     the graph), so it stays off until those are traced down.
 14. **Serving-framework-agnostic core** ([#39](https://github.com/VectorInstitute/tabctx/issues/39)): the router, per-GPU workers
     and scheduling are plain Python with no Ray dependency; a Dynamo
-    worker hosts the same core. Next: residency events and pluggable
-    placement so a platform scheduler can co-optimize LLMs and tabular
-    models.
+    worker hosts the same core. Placement is a pluggable policy
+    (`placement.py`: the router hands it a lock-free view of each device)
+    and the router emits residency events (`events.py`: placed/removed,
+    to any sink; `/v1/tabctx/residency` serves the latest), so a platform
+    scheduler can follow where contexts live and steer tabular work
+    around GPUs it wants for LLMs. Next: a Dynamo worker and event-plane
+    sink once the platform moves.
 
 PyTorch-level first: tiling and chunking, `torch.compile` (generated Triton
 kernels, CUDA graphs via `reduce-overhead`), FlexAttention for paged and

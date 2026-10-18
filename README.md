@@ -233,6 +233,12 @@ behind the same API. No client changes and no routing header needed.
   against a resident context runs beside a fit on the same GPU (~0.1 s
   instead of the fit's full duration); larger predicts and restores of
   spilled contexts wait their turn.
+- **Placement is pluggable.** The rule above is the default
+  `PlacementPolicy` (`tabctx.placement`); pass your own to
+  `MultiDeviceEngine(placement=...)` to steer tabular work, e.g. away
+  from a GPU a platform scheduler wants for an LLM. Each placement and
+  removal is a residency event (`tabctx.events`) for any subscriber;
+  `GET /v1/tabctx/residency` returns the latest.
 - **The replica must be given the GPUs.** Under Ray Serve that means
   `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
   GPU pod (as in inference-platform's prod config),

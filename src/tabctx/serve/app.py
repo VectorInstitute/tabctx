@@ -45,6 +45,7 @@ from tabctx import (
     UploadTooLargeError,
 )
 from tabctx.batching import CoalescingPredictor
+from tabctx.events import RecentEvents
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
@@ -226,6 +227,12 @@ class TabctxService:
         self._devices = built.devices
         self._device = built.device
         self._gpu_capacity_bytes = built.gpu_capacity_bytes
+        # Residency events from the multi-device router (events.py): the
+        # latest, for /v1/tabctx/residency; a platform adds its own sinks.
+        self._residency = RecentEvents()
+        bus = getattr(self._engine, "events", None)
+        if bus is not None:
+            bus.subscribe(self._residency)
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
         self._predictor = CoalescingPredictor(
@@ -523,6 +530,14 @@ class TabctxService:
                 for name in self._engine.backend_names
             ]
         }
+
+    @fastapi_app.get("/v1/tabctx/residency")
+    def residency(self):
+        """Where contexts were placed and removed, latest last (multi-GPU
+        replicas): the router's decisions, for a platform scheduler or an
+        operator. Empty on a single-GPU replica, whose contexts all live
+        on its one device."""
+        return {"devices": list(self._devices), "events": self._residency.snapshot()}
 
     @fastapi_app.get("/v1/tabctx/limits")
     def limits(self):
