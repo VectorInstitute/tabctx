@@ -324,7 +324,11 @@ class TestCalibrationPreload:
         # shortcut finds the real module other tests already imported.
         import tabctx.memory as memory_pkg
 
-        for name in ("calibration_tabicl_a100", "calibration_tabicl_a100_requirement"):
+        for name in (
+            "calibration_tabicl_a100",
+            "calibration_tabicl_a100_requirement",
+            "calibration_tabicl_compiled_a100_requirement",
+        ):
             monkeypatch.delattr(memory_pkg, name, raising=False)
             monkeypatch.setitem(sys.modules, f"tabctx.memory.{name}", None)
         est = build_estimator(ServeSettings(backends=("tabicl",)))
@@ -490,3 +494,25 @@ def test_fast_preprocessing_flag_from_env(monkeypatch):
     assert ServeSettings.from_env().fast_preprocessing
     monkeypatch.setenv(FAST_PREPROCESSING_ENV_VAR, "0")
     assert not ServeSettings.from_env().fast_preprocessing
+
+
+def test_compiled_tabicl_uses_its_own_requirement_grid():
+    """Compiled TabICL's minimum need exceeds eager's at some shapes (80k x
+    10: 22.9 vs 20.7 GiB on an A100), so it must not inherit eager's grid."""
+    from tabctx.serve.factory import _requirement_calibration
+
+    _, eager, _ = _requirement_calibration("tabicl", "kv", compiled=False)
+    _, compiled, _ = _requirement_calibration("tabicl", "kv", compiled=True)
+
+    def need(grid, n, d):
+        return next(o.real_bytes for o in grid if (o.n_train, o.n_features) == (n, d))
+
+    assert need(compiled, 80_000, 10) > need(eager, 80_000, 10)
+    # ...and never less than eager anywhere (per shape, the larger of both).
+    for o in eager:
+        assert need(compiled, o.n_train, o.n_features) >= o.real_bytes
+    # TabPFN isn't compiled: the flag doesn't change its grid.
+    assert (
+        _requirement_calibration("tabpfn", "kv", True)[1]
+        == (_requirement_calibration("tabpfn", "kv", False)[1])
+    )

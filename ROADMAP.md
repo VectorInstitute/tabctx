@@ -102,7 +102,10 @@ no FP8).
     forward compiled, so Inductor fuses the layer norms, residual adds and
     GELU MLP around the attention kernel. A100: GPU half 1.7-2.2x faster
     (40k x 100: 7.65 -> 4.30 s), peak memory ~20% lower (33.1 -> 27.0
-    GiB, so larger tables fit), accuracy unchanged on the evaluation sets;
+    GiB unconstrained -- but not the minimum a fit needs, which tabicl's
+    free-memory batch sizing sets; compiled needs up to ~2 GiB more at some
+    shapes, so it has its own requirement grid), accuracy unchanged on the
+    evaluation sets;
     Ray Serve, 6 users on 4x A100: 5.78 -> 6.99 predicts/s. Dynamic
     shapes needed tabicl's ssmax log(n) computed symbolically (math.log on
     the row count recompiled every new table). ~50 graphs (fp16 path

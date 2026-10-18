@@ -337,11 +337,26 @@ def _preloaded_observations(
 
 
 # Generated requirement calibrations (benchmarks/gen_requirement_grid.py),
-# per (model, cache mode): module under tabctx.memory and its name prefix.
-_REQUIREMENT_CALIBRATIONS: dict[tuple[str, str], tuple[str, str]] = {
-    ("tabicl", "kv"): ("calibration_tabicl_a100_requirement", "A100_40GB_TABICL_KV"),
-    ("tabpfn", "kv"): ("calibration_tabpfn_a100_requirement", "A100_40GB_TABPFN_KV"),
+# per (model, cache mode, compiled): module under tabctx.memory and its name
+# prefix. Compiled TabICL needs up to ~2 GiB more than eager at some shapes
+# (its minimum, not its peak: tabicl sizes batches from free memory), so it
+# has its own grid -- per shape the larger of the two measurements.
+_REQUIREMENT_CALIBRATIONS: dict[tuple[str, str, bool], tuple[str, str]] = {
+    ("tabicl", "kv", False): (
+        "calibration_tabicl_a100_requirement",
+        "A100_40GB_TABICL_KV",
+    ),
+    ("tabicl", "kv", True): (
+        "calibration_tabicl_compiled_a100_requirement",
+        "A100_40GB_TABICL_KV_COMPILED",
+    ),
+    ("tabpfn", "kv", False): (
+        "calibration_tabpfn_a100_requirement",
+        "A100_40GB_TABPFN_KV",
+    ),
 }
+# Backends whose compile_models setting changes their memory profile.
+_COMPILED_KINDS = frozenset({"tabicl"})
 # Models whose per-row resident cache grows with features (see
 # ResidentRateModel): TabPFN caches per (row, feature group); TabICL's ICL
 # cache is per row only.
@@ -349,12 +364,13 @@ _WIDTH_DEPENDENT_RESIDENT = frozenset({"tabpfn"})
 
 
 def _requirement_calibration(
-    kind: BackendKind, kv_cache: KvCacheMode
+    kind: BackendKind, kv_cache: KvCacheMode, compiled: bool = False
 ) -> tuple[WorkingFloorModel | None, tuple, tuple]:
     """Measured working floors + requirements (memory/requirement.py), so
     admission bounds resident + floor instead of an unconstrained peak.
     Configurations without a measured calibration keep peak semantics."""
-    entry = _REQUIREMENT_CALIBRATIONS.get((kind, kv_cache))
+    compiled = compiled and kind in _COMPILED_KINDS
+    entry = _REQUIREMENT_CALIBRATIONS.get((kind, kv_cache, compiled))
     if entry is None:
         return None, (), ()
     module_name, prefix = entry
@@ -471,7 +487,7 @@ def build_estimator(
     )
     fit_grid, predict_grid = _preloaded_observations(kind, settings.kv_cache)
     working_floor, requirements, floor_points = _requirement_calibration(
-        kind, settings.kv_cache
+        kind, settings.kv_cache, settings.compile_models
     )
     return AdaptiveMemoryEstimator(
         fallback=fallback,
