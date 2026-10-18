@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -94,6 +95,26 @@ def _install_restore_hook(cls: type) -> None:
 
     cls._load_model = _load_model
     cls._tabctx_restore_hook = True
+
+
+@dataclass
+class _PreparedFit:
+    """A fit whose CPU half is done (see TabICLBackend.prepare_fit)."""
+
+    task: Task
+    model: Any
+
+
+def _build_cache(model: Any) -> None:
+    """tabicl's fit() from the kv-cache step on (it follows the ensemble's
+    preprocessing in both TabICLClassifier and TabICLRegressor): pick the
+    cache mode from the estimator's kv_cache setting and build it."""
+    mode = model.kv_cache
+    if not mode:
+        model.model_kv_cache_ = None
+        return
+    model.cache_mode_ = "repr" if mode == "repr" else "kv"
+    model._build_kv_cache()
 
 
 def make_cache_thread_local(module: Any) -> None:
@@ -237,13 +258,35 @@ class TabICLBackend(QuiescedMeasurement):
         self._shared_backbones[task] = shared
 
     def fit(self, X: ArrayLike, y: ArrayLike, task: Task) -> Any:
-        import torch
+        return self.fit_prepared(self.prepare_fit(X, y, task))
 
+    def prepare_fit(self, X: ArrayLike, y: ArrayLike, task: Task) -> _PreparedFit:
+        """The CPU half of a fit: validation, label encoding and the
+        ensemble's preprocessing (per-feature power transforms, shuffles) --
+        tabicl's fit() up to building the kv cache, run with the cache
+        disabled. 30-37% of a fit's time (A100, 2k x 20 to 40k x 100); it
+        needs no device memory, so the engine runs it before taking the
+        device, overlapping another fit's GPU half."""
         # Fresh estimator instance every call (load-bearing -- see
         # backends/base.py), but the underlying pretrained nn.Module is
         # shared across fits after the first (see __init__).
         model = self._make_estimator(task)
+        kv_cache = model.kv_cache
+        model.kv_cache = False
+        try:
+            with device_scope(self._device):
+                model.fit(X, y)
+        finally:
+            model.kv_cache = kv_cache
+        return _PreparedFit(task, model)
 
+    def fit_prepared(self, prepared: _PreparedFit) -> Any:
+        """The GPU half: build the context's kv cache from a prepared fit,
+        measuring what it occupies. Re-runnable after a device OOM (tabicl
+        rebuilds the cache from scratch)."""
+        import torch
+
+        model = prepared.model
         device = self._device
         measuring = is_cuda(device)
         before_bytes = 0
@@ -256,7 +299,7 @@ class TabICLBackend(QuiescedMeasurement):
         self._last_fit_resident_bytes = None
         try:
             with device_scope(device):
-                model.fit(X, y)
+                _build_cache(model)
                 # The context as the fit built it, at full precision: what
                 # the fit needed resident, and so what admission must
                 # learn -- compression only shrinks it afterwards.
@@ -288,7 +331,7 @@ class TabICLBackend(QuiescedMeasurement):
             self._last_context_bytes = max(0, after_bytes - before_bytes)
             self._last_fit_resident_bytes = max(0, fit_resident or 0)
             self._last_fit_peak_bytes = max(0, peak_bytes - before_bytes)
-        self._stash_backbone(task, model)
+        self._stash_backbone(prepared.task, model)
         return model
 
     def _unpin_shared_module(self, model: Any) -> None:

@@ -34,11 +34,18 @@ class _Module:
 
 
 class _Estimator:
+    """tabicl's two halves: fit() preprocesses (kv_cache off, as
+    prepare_fit runs it), _build_kv_cache() is the device work."""
+
     def __init__(self, fail: bool):
         self.model_ = _Module()
         self.fail = fail
+        self.kv_cache = "kv"
 
     def fit(self, X, y):
+        assert self.kv_cache is False  # prepare_fit disables the cache
+
+    def _build_kv_cache(self):
         if self.fail:
             raise RuntimeError("Failed to execute even with minimum batch size 1")
 
