@@ -30,6 +30,12 @@ A100_40GB_TABPFN_KV_FLOOR_POINTS: tuple[FloorPoint, ...] = (
         resident_bytes=3103113871,
     ),  # resident 2.89 GiB, unconstrained peak 9.64 GiB, fit 55.163s -> 58.662s at the floor
     FloorPoint(
+        n_train=200000,
+        n_features=10,
+        working_bytes=1589137899,
+        resident_bytes=6174015488,
+    ),  # resident 5.75 GiB, unconstrained peak 15.27 GiB, fit 202.293s -> 209.459s at the floor
+    FloorPoint(
         n_train=2000, n_features=100, working_bytes=622770257, resident_bytes=236223201
     ),  # resident 0.22 GiB, unconstrained peak 6.67 GiB, fit 0.845s -> 1.068s at the floor
     FloorPoint(
@@ -42,6 +48,12 @@ A100_40GB_TABPFN_KV_FLOOR_POINTS: tuple[FloorPoint, ...] = (
         n_train=20000, n_features=100, working_bytes=311385128, resident_bytes=858993459
     ),  # resident 0.8 GiB, unconstrained peak 7.3 GiB, fit 9.669s -> 11.485s at the floor
     FloorPoint(
+        n_train=100000,
+        n_features=100,
+        working_bytes=569083166,
+        resident_bytes=3317862236,
+    ),  # resident 3.09 GiB, unconstrained peak 6.94 GiB, fit 83.702s -> 84.091s at the floor
+    FloorPoint(
         n_train=1000, n_features=500, working_bytes=2448131358, resident_bytes=869730877
     ),  # resident 0.81 GiB, unconstrained peak 7.0 GiB, fit 2.11s -> 3.492s at the floor
     FloorPoint(
@@ -53,6 +65,18 @@ A100_40GB_TABPFN_KV_FLOOR_POINTS: tuple[FloorPoint, ...] = (
         working_bytes=2426656522,
         resident_bytes=1181116006,
     ),  # resident 1.1 GiB, unconstrained peak 7.38 GiB, fit 8.321s -> 10.432s at the floor
+    FloorPoint(
+        n_train=30000,
+        n_features=500,
+        working_bytes=300647710,
+        resident_bytes=2104533975,
+    ),  # resident 1.96 GiB, unconstrained peak 6.65 GiB, fit 52.225s -> 54.784s at the floor
+    FloorPoint(
+        n_train=60000,
+        n_features=500,
+        working_bytes=579820584,
+        resident_bytes=3027951943,
+    ),  # resident 2.82 GiB, unconstrained peak 7.39 GiB, fit 109.403s -> 115.808s at the floor
     FloorPoint(
         n_train=500,
         n_features=1000,
@@ -71,6 +95,18 @@ A100_40GB_TABPFN_KV_FLOOR_POINTS: tuple[FloorPoint, ...] = (
         working_bytes=4831838208,
         resident_bytes=1417339207,
     ),  # resident 1.32 GiB, unconstrained peak 7.64 GiB, fit 5.257s -> 6.9s at the floor
+    FloorPoint(
+        n_train=10000,
+        n_features=1000,
+        working_bytes=590558003,
+        resident_bytes=2126008811,
+    ),  # resident 1.98 GiB, unconstrained peak 7.07 GiB, fit 26.707s -> 41.427s at the floor
+    FloorPoint(
+        n_train=30000,
+        n_features=1000,
+        working_bytes=289910292,
+        resident_bytes=2738041651,
+    ),  # resident 2.55 GiB, unconstrained peak 7.01 GiB, fit 79.403s -> 84.952s at the floor
 )
 
 A100_40GB_TABPFN_KV_REQUIREMENT_GRID: tuple[Observation, ...] = (
@@ -78,14 +114,20 @@ A100_40GB_TABPFN_KV_REQUIREMENT_GRID: tuple[Observation, ...] = (
     Observation(n_train=10000, n_features=10, real_bytes=3124588707),
     Observation(n_train=50000, n_features=10, real_bytes=4574140170),
     Observation(n_train=100000, n_features=10, real_bytes=9169755176),
+    Observation(n_train=200000, n_features=10, real_bytes=7763153387),
     Observation(n_train=2000, n_features=100, real_bytes=858993459),
     Observation(n_train=5000, n_features=100, real_bytes=1299227607),
     Observation(n_train=10000, n_features=100, real_bytes=1170378588),
     Observation(n_train=20000, n_features=100, real_bytes=1170378588),
+    Observation(n_train=100000, n_features=100, real_bytes=3886945402),
     Observation(n_train=1000, n_features=500, real_bytes=3317862236),
     Observation(n_train=2000, n_features=500, real_bytes=3393024163),
     Observation(n_train=5000, n_features=500, real_bytes=3607772528),
+    Observation(n_train=30000, n_features=500, real_bytes=2405181685),
+    Observation(n_train=60000, n_features=500, real_bytes=3607772528),
     Observation(n_train=500, n_features=1000, real_bytes=6120328396),
     Observation(n_train=1000, n_features=1000, real_bytes=6152540651),
     Observation(n_train=2000, n_features=1000, real_bytes=6249177415),
+    Observation(n_train=10000, n_features=1000, real_bytes=2716566814),
+    Observation(n_train=30000, n_features=1000, real_bytes=3027951943),
 )
