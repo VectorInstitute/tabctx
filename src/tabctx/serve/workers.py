@@ -40,6 +40,7 @@ from __future__ import annotations
 import atexit
 import itertools
 import logging
+import multiprocessing.util  # noqa: F401 -- registers its exit handler first
 import pickle
 import threading
 import time
@@ -74,15 +75,18 @@ _NEVER_FITS = 1 << 62
 
 
 # Live shards, closed at interpreter exit -- before multiprocessing's own
-# exit handler (registered earlier, so run later) terminates the daemon
-# workers, which each reader thread would otherwise report as a death.
+# exit handler terminates the daemon workers, which each reader thread
+# would otherwise report as a death. atexit runs handlers in reverse, and
+# importing multiprocessing.util above registers mp's first, so ours runs
+# before it whatever imported this module.
 _LIVE_SHARDS: weakref.WeakSet = weakref.WeakSet()
+# How long a worker gets to exit after its pipe closes, before it is killed.
+_CLOSE_GRACE_S = 10.0
 
 
 @atexit.register
 def _close_live_shards() -> None:
-    for shard in list(_LIVE_SHARDS):
-        shard.close()
+    ProcessShard.close_all(list(_LIVE_SHARDS))
 
 
 class WorkerDiedError(BackendComputeError):
@@ -172,12 +176,15 @@ def _worker_main(
     n_devices: int,
     gpu_capacity: int | None,
     host_guard: Any,
+    index: int,
 ) -> None:
     """Entry point of a worker process: build the device's engine, then
     serve calls until the pipe closes."""
     logging.basicConfig(level=logging.INFO)
     from tabctx.serve.factory import build_shard
 
+    if host_guard is not None:
+        host_guard.bind(index)  # so the parent can release it if we die
     try:
         shard = build_shard(
             settings,
@@ -257,13 +264,16 @@ class ProcessShard:
         gpu_capacity: int | None,
         host_guard: Any,
         mp_context: Any,
+        index: int = 0,
     ) -> None:
         self.device = device
+        self._index = index
+        self._host_guard = host_guard
         parent, child = mp_context.Pipe()
         self._conn = parent
         self._proc = mp_context.Process(
             target=_worker_main,
-            args=(child, settings, device, n_devices, gpu_capacity, host_guard),
+            args=(child, settings, device, n_devices, gpu_capacity, host_guard, index),
             name=f"tabctx-worker-{device}",
             daemon=True,
         )
@@ -327,20 +337,35 @@ class ProcessShard:
                 gpu_capacity=gpu_capacity,
                 host_guard=host_guard,
                 mp_context=mp_context,
+                index=i,
             )
-            for d in devices
+            for i, d in enumerate(devices)
         ]
         try:
             deadline = time.monotonic() + ready_timeout_s
             for s in shards:
                 s.wait_ready(max(1.0, deadline - time.monotonic()))
         except BaseException:
-            for s in shards:
-                s.close()
+            cls.close_all(shards)
             raise
         return shards
 
+    @staticmethod
+    def close_all(shards: list[ProcessShard]) -> None:
+        """Shut workers down together: ask them all to exit, then wait with
+        one shared deadline (closing them one by one could take 10 s each,
+        past a pod's termination grace period)."""
+        for shard in shards:
+            shard._request_exit()
+        deadline = time.monotonic() + _CLOSE_GRACE_S
+        for shard in shards:
+            shard._finish_close(max(0.0, deadline - time.monotonic()))
+
     def close(self) -> None:
+        self._request_exit()
+        self._finish_close(_CLOSE_GRACE_S)
+
+    def _request_exit(self) -> None:
         with self._state_lock:
             if self._dead is None:
                 self._dead = f"worker for {self.device} was shut down"
@@ -349,12 +374,20 @@ class ProcessShard:
                 self._conn.send(None)
             except (OSError, ValueError):
                 pass
-        self._proc.join(10)
+
+    def _finish_close(self, grace_s: float) -> None:
+        self._proc.join(grace_s)
         if self._proc.is_alive():
             self._proc.kill()
             self._proc.join(5)
         self._conn.close()
+        self._release_host_memory()
         self._fail_pending(f"worker for {self.device} was shut down")
+
+    def _release_host_memory(self) -> None:
+        """Return host memory the (now exited) worker had reserved."""
+        if self._host_guard is not None and not self._proc.is_alive():
+            self._host_guard.release_owner(self._index)
 
     @property
     def alive(self) -> bool:
@@ -390,7 +423,11 @@ class ProcessShard:
                 fut.set_result(payload)
             else:
                 fut.set_exception(payload)
-        self._proc.join(1)  # reap it, for a meaningful exit code
+        self._proc.join(5)  # reap it, for a meaningful exit code
+        if self._dead is None and self._proc.is_alive():
+            self._proc.kill()  # its pipe is gone: it can't serve, and must
+            self._proc.join(5)  # exit before its reservations are returned
+        self._release_host_memory()
         reason = (
             f"worker for {self.device} exited (code {self._proc.exitcode}); "
             "its contexts are lost"

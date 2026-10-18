@@ -1,6 +1,9 @@
 """Unit tests for process-wide host-memory admission (memory/host.py)."""
 
 import threading
+import time
+
+import pytest
 
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import ContextCacheManager
@@ -85,6 +88,188 @@ def test_a_multiprocessing_guard_reserves_and_reports():
     with guard.reserve(3 * GiB):
         assert guard.stats()["reserved_bytes"] == 3 * GiB
     assert guard.stats()["calls_active"] == 0
+
+
+def test_calls_under_the_floor_never_wait_even_beside_a_call_running_alone():
+    """An over-budget call runs alone, but small calls (inside the 8 GiB
+    reserve) must keep flowing: they bypass the guard entirely."""
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB)
+    inside, release = threading.Semaphore(0), threading.Event()
+    big = _hold(guard, 50 * GiB, inside, release)
+    assert inside.acquire(timeout=5)
+    with guard.reserve(GiB // 2):  # immediate
+        assert guard.stats()["calls_active"] == 1  # not even counted
+    release.set()
+    big.join(5)
+
+
+def test_admission_is_first_come_first_served():
+    """A large call queued behind running ones isn't overtaken by smaller
+    ones that would fit now: without this, steady modest traffic starves
+    it forever."""
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB)
+    inside, release = threading.Semaphore(0), threading.Event()
+    running = _hold(guard, 4 * GiB, inside, release)
+    assert inside.acquire(timeout=5)
+    order: list[str] = []
+    big_release = threading.Event()
+
+    def call(name, nbytes, done):
+        with guard.reserve(nbytes):
+            order.append(name)
+            done.wait(5)
+
+    big = threading.Thread(target=call, args=("big", 8 * GiB, big_release), daemon=True)
+    big.start()
+    _wait_for(lambda: guard.stats()["calls_waiting"] == 1)
+    small = threading.Thread(target=call, args=("small", 3 * GiB, release), daemon=True)
+    small.start()  # 4 + 3 <= 10 would fit, but "big" was first
+    _wait_for(lambda: guard.stats()["calls_waiting"] == 2)
+    assert order == []
+    release.set()  # the running call ends: big goes first (8 + 3 > 10)
+    _wait_for(lambda: order == ["big"])
+    assert not _settles(lambda: len(order) > 1)
+    big_release.set()
+    for t in (running, big, small):
+        t.join(5)
+    assert order == ["big", "small"]
+
+
+def test_offloading_calls_are_capped_at_slots():
+    """Each offloading call budgets 1/slots of free host memory for its
+    staging, so no more than `slots` may run at once even if bytes fit."""
+    guard = HostMemoryGuard(100 * GiB, large_fit_bytes=50 * GiB)  # 2 slots
+    held = threading.Event()
+    entered = threading.Semaphore(0)
+
+    def offloading():
+        with guard.reserve(10 * GiB, offloads=True):
+            entered.release()
+            held.wait(5)
+
+    threads = [threading.Thread(target=offloading, daemon=True) for _ in range(3)]
+    for t in threads:
+        t.start()
+    assert entered.acquire(timeout=5) and entered.acquire(timeout=5)
+    assert not entered.acquire(timeout=0.3)
+    assert guard.stats()["calls_offloading"] == 2
+    held.set()
+    assert entered.acquire(timeout=5)
+    for t in threads:
+        t.join(5)
+
+
+def test_a_none_estimate_counts_as_nothing():
+    guard = HostMemoryGuard(GiB)
+    with guard.reserve(None):
+        assert guard.stats()["calls_active"] == 0
+
+
+def test_an_interrupted_waiter_leaves_the_queue():
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB)
+    inside, release = threading.Semaphore(0), threading.Event()
+    running = _hold(guard, 8 * GiB, inside, release)
+    assert inside.acquire(timeout=5)
+    real_wait = guard._cond.wait
+
+    def interrupted(timeout=None):
+        guard._cond.wait = real_wait
+        raise KeyboardInterrupt
+
+    guard._cond.wait = interrupted
+    try:
+        with guard.reserve(4 * GiB):
+            raise AssertionError("must not be admitted")
+    except KeyboardInterrupt:
+        pass
+    stats = guard.stats()
+    assert (stats["calls_waiting"], stats["calls_active"]) == (0, 1)
+    release.set()
+    running.join(5)
+
+
+def test_a_stuck_lock_fails_retryably_instead_of_hanging():
+    from tabctx.errors import HostMemoryUnavailableError
+
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB, lock_timeout_s=0.2)
+    holding, done = threading.Event(), threading.Event()
+
+    def hold_lock():  # stands in for a worker killed holding it
+        with guard._cond:
+            holding.set()
+            done.wait(5)
+
+    t = threading.Thread(target=hold_lock, daemon=True)
+    t.start()
+    assert holding.wait(5)
+    with pytest.raises(HostMemoryUnavailableError), guard.reserve(2 * GiB):
+        pass
+    with pytest.raises(HostMemoryUnavailableError):
+        guard.stats()
+    done.set()
+    t.join(5)
+
+
+def _reserve_in_child(guard, owner, nbytes, ready):
+    guard.bind(owner)
+    with guard.reserve(nbytes):
+        ready.set()
+        threading.Event().wait(60)  # until killed
+
+
+def test_reservations_are_node_wide_and_a_dead_owner_is_released():
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB, mp_context=ctx, owners=2)
+    ready = ctx.Event()
+    child = ctx.Process(
+        target=_reserve_in_child, args=(guard, 1, 8 * GiB, ready), daemon=True
+    )
+    child.start()
+    try:
+        assert ready.wait(60)
+        assert guard.stats()["reserved_bytes"] == 8 * GiB  # seen by the parent
+        admitted = threading.Event()
+
+        def parent_call():
+            with guard.reserve(4 * GiB):
+                admitted.set()
+
+        t = threading.Thread(target=parent_call, daemon=True)
+        t.start()
+        assert not admitted.wait(0.5)  # the child's bytes block it
+        child.kill()  # OOM-killed: its finally never runs
+        child.join(10)
+        assert not admitted.wait(0.5)  # leaked until released...
+        guard.release_owner(1)
+        assert admitted.wait(5)  # ...then returned
+        t.join(5)
+        assert guard.stats()["reserved_bytes"] == 0
+    finally:
+        if child.is_alive():
+            child.kill()
+
+
+def test_bind_rejects_unknown_owners():
+    with pytest.raises(ValueError):
+        HostMemoryGuard(GiB, owners=2).bind(2)
+
+
+def _settles(predicate, within=0.3):
+    deadline = time.monotonic() + within
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.01)
 
 
 class GatedFit(FakeBackend):
@@ -196,6 +381,16 @@ class _Offloading(FakeBackend):
         return self.offloads
 
 
+def _spy(guard):
+    seen = []
+    real = guard.reserve
+    guard.reserve = lambda nbytes, offloads=False: (
+        seen.append((nbytes, offloads)),
+        real(nbytes, offloads=offloads),
+    )[1]
+    return seen
+
+
 def _engine(backend, guard):
     est = AdaptiveMemoryEstimator(
         fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
@@ -212,36 +407,30 @@ def test_backend_hint_decides_and_predicts_are_guarded_too():
     guard = HostMemoryGuard(GiB, large_fit_cells=10**12, large_fit_bytes=GiB)
     backend = _Offloading(offloads=True)
     engine = _engine(backend, guard)
-    seen = []
-    real = guard.reserve
-    guard.reserve = lambda nbytes: (seen.append(nbytes), real(nbytes))[1]
+    seen = _spy(guard)
     engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")
     engine.predict("d", [[1.0, 2.0]] * 5)
     # The hint, not the (huge) cell threshold, decided -- for fit AND predict.
-    assert seen == [GiB, GiB]
+    assert seen == [(GiB, True), (GiB, True)]
     assert backend.queries == [(3, 2), (5, 2)]
 
 
 def test_without_a_hint_the_cell_threshold_decides():
     guard = HostMemoryGuard(GiB, large_fit_cells=6, large_fit_bytes=GiB)
     engine = _engine(FakeBackend(bytes_hint=10), guard)
-    seen = []
-    real = guard.reserve
-    guard.reserve = lambda nbytes: (seen.append(nbytes), real(nbytes))[1]
+    seen = _spy(guard)
     engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")  # 6 cells: large
     engine.predict("d", [[1.0, 2.0]])  # 2 cells: not
-    assert seen == [GiB, 0]
+    assert seen == [(GiB, True), (0, False)]
 
 
 def test_a_backend_estimate_wins_over_the_fallbacks():
     class Estimating(_Offloading):
-        def host_bytes_estimate(self, n_rows, n_features):
-            return 7 * n_rows * n_features
+        def host_bytes_estimate(self, n_rows, n_features, *, offloads=False):
+            return 7 * n_rows * n_features * (2 if offloads else 1)
 
     guard = HostMemoryGuard(GiB, large_fit_cells=1, large_fit_bytes=GiB)
     engine = _engine(Estimating(offloads=True), guard)
-    seen = []
-    real = guard.reserve
-    guard.reserve = lambda nbytes: (seen.append(nbytes), real(nbytes))[1]
+    seen = _spy(guard)
     engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")
-    assert seen == [42]
+    assert seen == [(84, True)]

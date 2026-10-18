@@ -349,3 +349,25 @@ def test_an_infeasible_fit_is_rejected_before_preparing():
     with pytest.raises(AdmissionRejected):
         engine.fit(*table(2000), dataset_id="huge")  # 20,000 > 10,000 bytes
     assert backend.prepared_during == []
+
+
+def test_only_one_fit_prepares_ahead_of_the_device():
+    """Prepared data lives in host memory until its fit gets the device:
+    queued fits beyond one ahead wait before preparing, so N queued large
+    tables don't hold N preprocessed copies at once."""
+    backend = PreparingFake()
+    engine = TabctxEngine(
+        backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
+    )
+    backend.engine = engine
+    backend.fit_gate = threading.Event()
+    threads = [start(engine.fit, *table(10), dataset_id=f"d{i}")[0] for i in range(4)]
+    assert backend.fit_entered.wait(5)
+    for _ in range(50):  # give queued fits every chance to prepare
+        threading.Event().wait(0.01)
+    assert len(backend.prepared_during) == 2  # the running fit + one ahead
+    backend.fit_gate.set()
+    for t in threads:
+        t.join(5)
+    assert len(backend.prepared_during) == 4
+    assert all(engine._cache.holds(f"d{i}") for i in range(4))

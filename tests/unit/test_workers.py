@@ -138,3 +138,73 @@ def test_errors_that_cannot_round_trip_become_runtime_errors():
     portable = _portable(TwoArgs(1, 2))
     assert type(portable) is RuntimeError and "TwoArgs" in str(portable)
     assert isinstance(_portable(DatasetNotFoundError("x")), DatasetNotFoundError)
+
+
+def test_a_dead_workers_host_reservations_are_returned():
+    """A worker OOM-killed mid-fit never runs its release: its parent must
+    return the bytes, or every later large call on the node waits forever."""
+    import multiprocessing as mp
+
+    from tabctx.memory.host import GiB, HostMemoryGuard
+
+    ctx = mp.get_context("spawn")
+    guard = HostMemoryGuard(10 * GiB, mp_context=ctx, owners=2)
+    shards = ProcessShard.start_all(
+        _settings(),
+        ("cuda:0", "cuda:1"),
+        gpu_capacity=None,
+        host_guard=guard,
+        mp_context=ctx,
+    )
+    try:
+        victim = shards[1]
+        guard._state[guard._block(1)] = 8 * GiB  # what it held when killed
+        guard._state[guard._block(1) + 1] = 1
+        victim._proc.kill()
+        for _ in range(500):
+            if guard.stats()["reserved_bytes"] == 0:
+                break
+            threading.Event().wait(0.01)
+        assert guard.stats()["reserved_bytes"] == 0
+        assert guard.stats()["calls_active"] == 0
+    finally:
+        ProcessShard.close_all(shards)
+
+
+def test_workers_close_together_within_one_grace_period(monkeypatch):
+    import time
+
+    import tabctx.serve.workers as workers
+
+    b = build_engine(
+        ServeSettings(backends=("fake",), devices=("cuda:0", "cuda:1", "cuda:2"))
+    )
+    shards = list(b.worker_shards)
+    monkeypatch.setattr(workers, "_CLOSE_GRACE_S", 1.0)
+    for s in shards:  # workers that ignore the exit request
+        monkeypatch.setattr(s, "_request_exit", lambda: None)
+    start = time.monotonic()
+    ProcessShard.close_all(shards)
+    # One shared deadline (~1 s), not 1 s per worker, then killed.
+    assert time.monotonic() - start < 2.5
+    assert not any(s._proc.is_alive() for s in shards)
+
+
+def test_mp_exit_handler_is_registered_before_ours():
+    """Our atexit handler must run first (atexit is LIFO), however the
+    module was imported: workers.py imports multiprocessing.util itself."""
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys, tabctx.serve.workers; "
+            "print('multiprocessing.util' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert out.stdout.strip() == "True"

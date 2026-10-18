@@ -54,3 +54,9 @@ class BackendComputeError(TabctxError):
     """Wraps a backend-level compute failure (e.g. a CUDA OOM that slipped
     past admission control) so callers don't need to import torch to catch
     tabctx errors."""
+
+
+class HostMemoryUnavailableError(TabctxError):
+    """Raised when host-memory admission can't be decided right now (its
+    shared accounting is stuck, e.g. a worker died holding the lock);
+    retryable, so the API answers 503."""

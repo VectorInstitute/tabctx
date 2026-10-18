@@ -36,6 +36,8 @@ LIGHT_PREDICT_ROWS = 2048
 # A predict whose context is evicted again (under memory pressure) between
 # its restore and getting the device tries this many times.
 _PREDICT_ATTEMPTS = 3
+# Fits prepared (CPU half done) ahead of the one holding the device.
+_PREPARED_AHEAD = 1
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -180,9 +182,11 @@ class TabctxEngine:
         # large predicts. _predict_lock runs one GPU predict at a time, so
         # a light predict (see LIGHT_PREDICT_ROWS) overlaps a running fit
         # rather than queueing behind it. The cache's own lock only guards
-        # bookkeeping. Lock order: host slot, _fit_lock, _predict_lock (the
-        # cache lock and _release_lock are leaves).
+        # bookkeeping. Lock order: prepare gate (fits only), host slot,
+        # _fit_lock, _predict_lock (the cache lock and _release_lock are
+        # leaves).
         self._fit_lock = threading.Lock()
+        self._prepare_gate = threading.BoundedSemaphore(1 + _PREPARED_AHEAD)
         # Re-entrant: a fit retrying alone holds it while the backend's
         # measurement takes it again (see _cuda.QuiescedMeasurement).
         self._predict_lock = threading.RLock()
@@ -317,33 +321,37 @@ class TabctxEngine:
         # The fit's CPU half (backends that split it: TabICL's preprocessing,
         # ~1/3 of a fit) runs before taking the device, overlapping the GPU
         # half of whatever fit holds it now.
-        prepare = getattr(chosen, "prepare_fit", None)
-        prepared = prepare(X, y, task) if callable(prepare) else None
-        # Lock order everywhere: host slot, _fit_lock, _predict_lock. Host
-        # memory first, so a large fit waiting for a host slot doesn't hold
-        # this device meanwhile.
-        with self._host_slot(chosen, n_train, n_features), self._fit_lock:
-            self._make_room(estimator, estimated)
-            with self._measuring():
-                payload = self._fit_backend(
-                    chosen, X, y, task, estimator, estimated, prepared
+        # At most _PREPARED_AHEAD fits hold prepared (host-resident) data
+        # while waiting for the device, so queued fits don't each keep
+        # their preprocessed copies.
+        # Lock order everywhere: prepare gate, host slot, _fit_lock,
+        # _predict_lock. Host memory before the device, so a large fit
+        # waiting for host memory doesn't hold this device meanwhile.
+        with self._prepare_gate:
+            prepare = getattr(chosen, "prepare_fit", None)
+            prepared = prepare(X, y, task) if callable(prepare) else None
+            with self._host_slot(chosen, n_train, n_features), self._fit_lock:
+                self._make_room(estimator, estimated)
+                with self._measuring():
+                    payload = self._fit_backend(
+                        chosen, X, y, task, estimator, estimated, prepared
+                    )
+                    est_bytes = chosen.context_bytes_hint(n_train, n_features)
+                    if est_bytes is None:
+                        est_bytes = estimated
+                    else:
+                        self._learn(chosen, estimator, n_train, n_features, est_bytes)
+                context = CachedContext(
+                    dataset_id=resolved_id,
+                    backend_name=backend_name,
+                    task=task,
+                    n_train=n_train,
+                    n_features=n_features,
+                    payload=payload,
+                    est_bytes=est_bytes,
+                    feature_names=feature_names,
                 )
-                est_bytes = chosen.context_bytes_hint(n_train, n_features)
-                if est_bytes is None:
-                    est_bytes = estimated
-                else:
-                    self._learn(chosen, estimator, n_train, n_features, est_bytes)
-            context = CachedContext(
-                dataset_id=resolved_id,
-                backend_name=backend_name,
-                task=task,
-                n_train=n_train,
-                n_features=n_features,
-                payload=payload,
-                est_bytes=est_bytes,
-                feature_names=feature_names,
-            )
-            self._cache.put(context)
+                self._cache.put(context)
         return resolved_id
 
     def _check_feasible(
@@ -480,22 +488,25 @@ class TabctxEngine:
 
     def _host_slot(self, backend: TabularICLBackend, n_rows: int, n_features: int):
         """Reserve this call's estimated host memory against the process-
-        wide (or node-wide) budget: the backend's host_bytes_estimate, else
-        one large fit's worth when it may offload (may_offload, or the
-        guard's cell threshold). A no-op without a guard."""
+        wide (or node-wide) budget. Whether it offloads comes from the
+        backend's may_offload (else the guard's cell threshold); its bytes
+        from host_bytes_estimate, else one large fit's worth when it
+        offloads. A no-op without a guard."""
         guard = self._host_guard
         if guard is None:
             return contextlib.nullcontext()
-        estimate = getattr(backend, "host_bytes_estimate", None)
-        if callable(estimate):
-            return guard.reserve(estimate(n_rows, n_features))
         may_offload = getattr(backend, "may_offload", None)
-        large = (
+        offloads = bool(
             may_offload(n_rows, n_features)
             if callable(may_offload)
             else guard.is_large(n_rows, n_features)
         )
-        return guard.reserve(guard.large_fit_bytes if large else 0)
+        estimate = getattr(backend, "host_bytes_estimate", None)
+        if callable(estimate):
+            nbytes = estimate(n_rows, n_features, offloads=offloads)
+        else:
+            nbytes = guard.large_fit_bytes if offloads else 0
+        return guard.reserve(nbytes, offloads=offloads)
 
     def _restore(self, dataset_id: str) -> None:
         """Bring a spilled context back onto the device (DatasetNotFoundError

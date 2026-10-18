@@ -75,3 +75,16 @@ def test_pools_are_cleared_even_when_the_fit_fails():
     with pytest.raises(RuntimeError):
         _backend(est).fit([[1.0]], [0], "classification")
     assert pools(est) == [1, 1]
+
+
+def test_host_estimate_reserves_only_for_offloading_calls():
+    b = object.__new__(TabICLBackend)
+    assert b.host_bytes_estimate(100_000, 100, offloads=False) == 0
+    assert b.host_bytes_estimate(100_000, 100, offloads=True) == 5_000 * 10_000_000
+
+
+def test_tabpfn_host_estimate_scales_with_cells():
+    from tabctx.backends.tabpfn import TabPFNBackend
+
+    b = object.__new__(TabPFNBackend)
+    assert b.host_bytes_estimate(100_000, 100) == 600 * 10_000_000

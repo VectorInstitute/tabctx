@@ -713,7 +713,11 @@ def _build_process_engine(
     from tabctx.serve.workers import ProcessShard
 
     ctx = mp.get_context("spawn")
-    host_guard = HostMemoryGuard(host_budget, mp_context=ctx) if host_budget else None
+    host_guard = (
+        HostMemoryGuard(host_budget, mp_context=ctx, owners=len(devices))
+        if host_budget
+        else None
+    )
     shards = ProcessShard.start_all(
         settings,
         devices,

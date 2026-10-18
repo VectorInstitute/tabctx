@@ -72,8 +72,9 @@ from tabctx.types import ArrayLike, PredictOutcome, Task
 _restoring = threading.local()
 _warned = [False]  # one missing-hook warning per process
 # Offloaded stage-output bytes per cell (see TabICLBackend.may_offload).
-_HOST_BYTES_PER_OFFLOADED_CELL = 5_000
 _OUTPUT_BYTES_PER_CELL = 2560
+# Host bytes per cell of an offloading call (see host_bytes_estimate).
+_HOST_BYTES_PER_OFFLOADED_CELL = 5_000
 logger = logging.getLogger(__name__)
 _TASK_TAGS = {"classification": b"C", "regression": b"R"}
 
@@ -139,6 +140,9 @@ def install_cached_logn() -> bool:
     if original is None or getattr(original, "_tabctx_cached", False):
         return original is not None
 
+    # The cached tensors are created under whatever grad/inference mode the
+    # first call ran in; fine for serving (always inference), but anything
+    # that runs ssmax with autograd (fine-tuning) must not use this cache.
     @functools.lru_cache(maxsize=4096)
     def cached(n: int, device: Any, dtype: Any) -> Any:
         return original(n, device, dtype)
@@ -397,13 +401,16 @@ class TabICLBackend(QuiescedMeasurement):
         free, _ = torch.cuda.mem_get_info(torch.device(self._device))
         return _OUTPUT_BYTES_PER_CELL * n_rows * n_features > 0.4 * free
 
-    def host_bytes_estimate(self, n_rows: int, n_features: int) -> int:
-        """Host memory a call over n_rows x n_features may use: its offloaded
-        stage outputs when it may offload (measured ~46 GiB for 10M-cell
-        fits on an A100, ~4.9 KB per cell), else nothing worth reserving."""
-        if not self.may_offload(n_rows, n_features):
-            return 0
-        return _HOST_BYTES_PER_OFFLOADED_CELL * n_rows * n_features
+    def host_bytes_estimate(
+        self, n_rows: int, n_features: int, *, offloads: bool = False
+    ) -> int:
+        """Host memory a call over n_rows x n_features may use: when it
+        offloads, its staged stage outputs -- which scale with cells (the
+        offloaded tensors are per-cell activations); measured ~46 GiB for
+        10M-cell fits on an A100, ~4.9 KB per cell, budgeted at 5 KB. A
+        call that doesn't offload grows host RSS by < 0.5 GiB up to ~5M
+        cells: nothing worth reserving."""
+        return _HOST_BYTES_PER_OFFLOADED_CELL * n_rows * n_features if offloads else 0
 
     def _release_host_memory(self, model: Any) -> None:
         """Return the offload staging memory a large call leaves pinned.

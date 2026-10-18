@@ -39,6 +39,7 @@ from tabctx import (
     BackendComputeError,
     CacheCapacityError,
     DatasetNotFoundError,
+    HostMemoryUnavailableError,
     InvalidInputError,
     UploadNotFoundError,
     UploadTooLargeError,
@@ -156,6 +157,7 @@ _INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)
 _COMPUTE_ERRORS = (BackendComputeError,)
+_UNAVAILABLE_ERRORS = (HostMemoryUnavailableError,)
 
 
 def _map_error(e: Exception) -> HTTPException:
@@ -167,6 +169,8 @@ def _map_error(e: Exception) -> HTTPException:
         return HTTPException(413, str(e))
     if isinstance(e, _NOT_FOUND_ERRORS):
         return HTTPException(404, str(e))
+    if isinstance(e, _UNAVAILABLE_ERRORS):
+        return HTTPException(503, str(e))
     if isinstance(e, _COMPUTE_ERRORS):
         return HTTPException(507, str(e))
     raise e
@@ -284,6 +288,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             logger.error("[%s] %s: %s", request_id, type(e).__name__, e)
             raise _map_error(e) from e
@@ -414,6 +419,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             raise _map_error(e) from e
         return FitResponse(
@@ -477,6 +483,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
@@ -580,6 +587,10 @@ class TabctxService:
             reports = [w.report() for w in self._workers]
         except (WorkerDiedError, TimeoutError) as e:
             raise HTTPException(503, detail=str(e)) from e
+        try:
+            host_memory = self._host_guard.stats() if self._host_guard else None
+        except HostMemoryUnavailableError as e:
+            raise HTTPException(503, detail=str(e)) from e
         real_gpu_memory = None
         per_device: dict[str, dict] = {}
         if reports:
@@ -636,7 +647,7 @@ class TabctxService:
             "spill": self._spill_stats([r["spill"] for r in reports]),
             "real_gpu_memory": real_gpu_memory,
             "devices": self._device_breakdown(),
-            "host_memory": self._host_guard.stats() if self._host_guard else None,
+            "host_memory": host_memory,
         }
 
     def _cuda_devices(self) -> list[str]:
