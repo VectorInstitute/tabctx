@@ -134,6 +134,30 @@ class TabctxEngine:
     def estimator_for(self, backend: str | None = None) -> MemoryEstimator:
         return self._estimators[backend or self._default_backend]
 
+    def admission_headroom_bytes(self, backend: str | None = None) -> int:
+        """Transient headroom a fit could use right now, given what the
+        cache holds resident (the quantity fit admission bounds).
+        Lock-free snapshot: never waits on this engine's GPU work."""
+        return self.estimator_for(backend).admission_headroom_bytes(
+            self._cache.stats_nowait().used_bytes
+        )
+
+    def holds(self, dataset_id: str) -> bool:
+        """Resident in this engine's cache (lock-free snapshot; a
+        spilled copy doesn't count)."""
+        return self._cache.holds(dataset_id)
+
+    def has(self, dataset_id: str) -> bool:
+        """Resident or spilled here (lock-free snapshot)."""
+        return self._cache.has(dataset_id)
+
+    def resolve_backend_name(self, backend: str | None) -> str:
+        """The model a fit would use; InvalidInputError if unknown."""
+        return self._resolve_backend(backend)[0]
+
+    def stats_nowait(self) -> EngineStats:
+        return self._cache.stats_nowait()
+
     def _resolve_backend(self, backend: str | None) -> tuple[str, TabularICLBackend]:
         name = backend or self._default_backend
         b = self._backends.get(name)

@@ -49,12 +49,40 @@ the before/after delta.
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 import numpy as np
 
+from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
+
+# Set (per thread) while loads_payload unpickles: tabicl's __setstate__
+# calls _load_model(), which would otherwise torch.load the full checkpoint
+# and move a second backbone onto the GPU on every spill restore.
+_restoring = threading.local()
+_TASK_TAGS = {"classification": b"C", "regression": b"R"}
+
+
+def _install_restore_hook(cls: type) -> None:
+    """Wrap cls._load_model: while a restore is in progress on this
+    thread, attach the backend's shared backbone instead of loading the
+    checkpoint. Idempotent; other threads and normal loads are untouched."""
+    if getattr(cls, "_tabctx_restore_hook", False):
+        return
+    original = cls._load_model
+
+    def _load_model(self: Any) -> None:
+        shared = getattr(_restoring, "backbone", None)
+        if shared is None:
+            return original(self)
+        for attr, value in shared.items():
+            setattr(self, attr, value)
+        return None
+
+    cls._load_model = _load_model
+    cls._tabctx_restore_hook = True
 
 
 class TabICLBackend:
@@ -77,6 +105,7 @@ class TabICLBackend:
         import torch
 
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        ensure_initialized(self._device)
         self._kv_cache = kv_cache
         self._last_context_bytes: int | None = None
         self._last_fit_peak_bytes: int | None = None
@@ -91,6 +120,10 @@ class TabICLBackend:
         # per-call mutable state (its _cache pointer, InferenceManager
         # config) is never touched concurrently.
         self._shared_backbones: dict[str, dict[str, Any]] = {}
+        from tabicl import TabICLClassifier, TabICLRegressor
+
+        _install_restore_hook(TabICLClassifier)
+        _install_restore_hook(TabICLRegressor)
 
     def _make_estimator(self, task: Task) -> Any:
         if task == "classification":
@@ -132,12 +165,14 @@ class TabICLBackend:
         # shared across fits after the first (see __init__).
         model = self._make_estimator(task)
 
-        measuring = self._device == "cuda"
-        before_bytes = torch.cuda.memory_allocated() if measuring else 0
+        device = self._device
+        measuring = is_cuda(device)
+        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_peak_memory_stats(device)
         try:
-            model.fit(X, y)
+            with device_scope(device):
+                model.fit(X, y)
         except torch.cuda.OutOfMemoryError as e:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
@@ -152,10 +187,10 @@ class TabICLBackend:
         #   magnitude (activations, ensemble intermediates).
         # None on CPU; the engine falls back to the formula estimator.
         if measuring:
-            after_bytes = torch.cuda.memory_allocated()
+            after_bytes = torch.cuda.memory_allocated(device)
             self._last_context_bytes = max(0, after_bytes - before_bytes)
             self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated() - before_bytes
+                0, torch.cuda.max_memory_allocated(device) - before_bytes
             )
         else:
             self._last_context_bytes = None
@@ -190,26 +225,44 @@ class TabICLBackend:
 
         model = payload
         try:
-            if hasattr(model, "predict_proba"):
-                if return_proba:
-                    proba = model.predict_proba(X_test)
-                    class_idx = np.argmax(proba, axis=1)
-                    classes = [str(c) for c in model.classes_]
-                    predictions = [classes[i] for i in class_idx]
-                    return PredictOutcome(
-                        predictions=predictions,
-                        probabilities=proba.tolist(),
-                        classes=classes,
-                    )
-                predictions = model.predict(X_test).tolist()
-                return PredictOutcome(predictions=predictions)
-            # Regressor: no predict_proba to derive from.
-            predictions = model.predict(X_test).tolist()
-            return PredictOutcome(predictions=predictions)
+            with device_scope(self._device):
+                return self._predict(model, X_test, return_proba)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         finally:
             self._unpin_shared_module(model)
+
+    def _predict(
+        self, model: Any, X_test: ArrayLike, return_proba: bool
+    ) -> PredictOutcome:
+        if hasattr(model, "predict_proba"):
+            if return_proba:
+                proba = model.predict_proba(X_test)
+                class_idx = np.argmax(proba, axis=1)
+                classes = [str(c) for c in model.classes_]
+                predictions = [classes[i] for i in class_idx]
+                return PredictOutcome(
+                    predictions=predictions,
+                    probabilities=proba.tolist(),
+                    classes=classes,
+                )
+            return PredictOutcome(predictions=model.predict(X_test).tolist())
+        # Regressor: no predict_proba to derive from.
+        return PredictOutcome(predictions=model.predict(X_test).tolist())
+
+    def warmup(self) -> None:
+        """Load the model weights for both tasks now, with throwaway fits,
+        instead of inside a tenant's first fit: that fit would otherwise
+        report the weights as part of its context (resident bytes for a
+        tiny table were the whole checkpoint), overcharging the cache and
+        leaving the books wrong once it is evicted -- and would pay the
+        load latency."""
+        rng = np.random.default_rng(0)
+        X = rng.normal(size=(32, 4))
+        self.fit(X, (X[:, 0] > 0).astype(int), "classification")
+        self.fit(X, X[:, 0], "regression")
+        self._last_context_bytes = None
+        self._last_fit_peak_bytes = None
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
@@ -229,17 +282,32 @@ class TabICLBackend:
         """Pickle a fitted estimator for the disk spill tier WITHOUT the
         shared pretrained backbone (hundreds of MB, identical across all
         contexts, unpicklable anyway once _load_model is shadowed with a
-        lambda): strip the shared attributes, pickle, restore."""
+        lambda): strip the shared attributes, pickle, restore. A one-byte
+        task tag leads the blob so loads_payload can attach the right
+        backbone during unpickling."""
         import pickle
 
+        task: Task = (
+            "classification" if hasattr(payload, "predict_proba") else "regression"
+        )
         stripped = {}
         for attr in ("model_", "_load_model"):
             if attr in payload.__dict__:
                 stripped[attr] = payload.__dict__.pop(attr)
         try:
-            return pickle.dumps(payload)
+            return _TASK_TAGS[task] + pickle.dumps(payload)
         finally:
             payload.__dict__.update(stripped)
+
+    def _ensure_backbone(self, task: Task) -> None:
+        if task in self._shared_backbones:
+            return
+        # Cold restore on a fresh replica: borrow a throwaway estimator's
+        # load path to populate the shared backbone.
+        probe = self._make_estimator(task)
+        with device_scope(self._device):
+            probe._load_model()
+        self._stash_backbone(task, probe)
 
     def loads_payload(self, data: bytes) -> Any:
         """Inverse of dumps_payload: unpickle and re-attach this
@@ -247,16 +315,26 @@ class TabICLBackend:
         never fit this task type -- e.g. right after a restart)."""
         import pickle
 
-        model = pickle.loads(data)
+        tagged = {tag: task for task, tag in _TASK_TAGS.items()}
+        task_hint = tagged.get(data[:1])
+        if task_hint is None:
+            # Untagged blob (spilled by tabctx < 0.12): tabicl's
+            # __setstate__ reloads the checkpoint; the shared backbone
+            # replaces it below.
+            with device_scope(self._device):
+                model = pickle.loads(data)
+        else:
+            self._ensure_backbone(task_hint)
+            _restoring.backbone = self._shared_backbones[task_hint]
+            try:
+                with device_scope(self._device):
+                    model = pickle.loads(data[1:])
+            finally:
+                _restoring.backbone = None
         task: Task = (
             "classification" if hasattr(model, "predict_proba") else "regression"
         )
-        if task not in self._shared_backbones:
-            # Cold restore on a fresh replica: borrow a throwaway
-            # estimator's load path to populate the shared backbone.
-            probe = self._make_estimator(task)
-            probe._load_model()
-            self._stash_backbone(task, probe)
+        self._ensure_backbone(task)
         for attr, value in self._shared_backbones[task].items():
             setattr(model, attr, value)
         model._load_model = lambda: None

@@ -9,6 +9,7 @@ from tabctx.cache.spill import DiskSpillStore
 from tabctx.serve.factory import (
     BACKEND_ENV_VAR,
     BATCH_WINDOW_MS_ENV_VAR,
+    DEVICES_ENV_VAR,
     GPU_MEMORY_FRACTION_ENV_VAR,
     KV_CACHE_ENV_VAR,
     MAX_UPLOAD_BYTES_ENV_VAR,
@@ -169,17 +170,19 @@ class TestDeviceCapacity:
     def test_build_engine_uses_detected_capacity_for_real_backends(self, monkeypatch):
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings: (FakeBackend(name=f"{kind}-model"), "cuda"),
+            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
         )
         monkeypatch.setattr(
-            "tabctx.serve.factory.detect_gpu_capacity_bytes", lambda: 24 * 1024**3
+            "tabctx.serve.factory.detect_gpu_capacity_bytes",
+            lambda devices: 24 * 1024**3,
         )
-        built = build_engine(ServeSettings(backends=("tabicl",)))
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 1)
+        built = build_engine(ServeSettings(backends=("tabicl",), devices=("cuda",)))
         assert built.gpu_capacity_bytes == 24 * 1024**3
         assert built.estimator._fallback.gpu_capacity_bytes == 24 * 1024**3
 
     def test_fake_backend_never_probes_the_device(self, monkeypatch):
-        def boom():
+        def boom(*_):
             raise AssertionError("fake backend must not touch torch/cuda")
 
         monkeypatch.setattr("tabctx.serve.factory.detect_gpu_capacity_bytes", boom)
@@ -229,9 +232,11 @@ class TestBuildEngine:
         # model, resolved through that mapping.
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings: (FakeBackend(name=f"{kind}-model"), "cpu"),
+            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
         )
-        built = build_engine(ServeSettings(backends=("tabpfn", "fake")))
+        built = build_engine(
+            ServeSettings(backends=("tabpfn", "fake"), devices=("cpu",))
+        )
         assert built.default == "tabpfn-model"
         assert built.engine.default_backend == "tabpfn-model"
         assert built.engine.backend_names == ["tabpfn-model", "fake"]
@@ -246,6 +251,7 @@ class TestBuildEngine:
             UPLOAD_TTL_S_ENV_VAR,
             SPILL_DIR_ENV_VAR,
             SPILL_CAPACITY_ENV_VAR,
+            DEVICES_ENV_VAR,
         ):
             monkeypatch.delenv(var, raising=False)
         assert ServeSettings.from_env() == ServeSettings()
@@ -268,11 +274,13 @@ class TestBuildEngine:
         calls = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings: calls.append((kind, settings)) or (object(), "cpu"),
+            lambda kind, settings, device: (
+                calls.append((kind, settings, device)) or object()
+            ),
         )
         settings = ServeSettings(backends=("tabicl",))
-        _build_backend("tabicl", settings)
-        assert calls == [("tabicl", settings)]
+        _build_backend("tabicl", settings, "cuda:1")
+        assert calls == [("tabicl", settings, "cuda:1")]
 
 
 class TestCalibrationPreload:
@@ -314,3 +322,132 @@ class TestCalibrationPreload:
         monkeypatch.setitem(sys.modules, "tabctx.memory.calibration_tabicl_a100", None)
         est = build_estimator(ServeSettings(backends=("tabicl",)))
         assert "0 preloaded calibration measurement" in est.confidence()
+
+
+class TestDevices:
+    def test_auto_is_the_default(self, monkeypatch):
+        monkeypatch.delenv(DEVICES_ENV_VAR, raising=False)
+        assert ServeSettings.from_env().devices == ()
+        monkeypatch.setenv(DEVICES_ENV_VAR, " AUTO ")
+        assert ServeSettings.from_env().devices == ()
+
+    def test_explicit_list_is_parsed(self, monkeypatch):
+        monkeypatch.setenv(DEVICES_ENV_VAR, "cuda:0, cuda:2")
+        assert ServeSettings.from_env().devices == ("cuda:0", "cuda:2")
+
+    @pytest.mark.parametrize(
+        "raw",
+        ["gpu0", "cuda:x", "cuda:0,cuda:0", "tpu", "cuda,cuda:0", "cpu,cuda:0"],
+    )
+    def test_bad_lists_are_rejected(self, monkeypatch, raw):
+        monkeypatch.setenv(DEVICES_ENV_VAR, raw)
+        with pytest.raises(ValueError, match=DEVICES_ENV_VAR):
+            ServeSettings.from_env()
+
+    @pytest.mark.parametrize(
+        ("visible", "expected"),
+        [
+            (0, ("cpu",)),
+            (1, ("cuda",)),
+            (4, ("cuda:0", "cuda:1", "cuda:2", "cuda:3")),
+        ],
+    )
+    def test_auto_uses_every_visible_gpu(self, monkeypatch, visible, expected):
+        from tabctx.serve.factory import resolve_devices
+
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: visible)
+        assert resolve_devices(ServeSettings(backends=("tabicl",))) == expected
+
+    def test_explicit_devices_win_and_fake_auto_is_cpu(self, monkeypatch):
+        from tabctx.serve.factory import resolve_devices
+
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 4)
+        assert resolve_devices(
+            ServeSettings(backends=("tabicl",), devices=("cuda:1",))
+        ) == ("cuda:1",)
+        assert resolve_devices(ServeSettings(backends=("fake",))) == ("cpu",)
+
+    def test_single_device_builds_a_plain_engine(self):
+        from tabctx.engine import TabctxEngine
+
+        built = build_engine(ServeSettings(backends=("fake",)))
+        assert type(built.engine) is TabctxEngine
+        assert built.devices == ("cpu",)
+
+    def test_several_devices_build_one_engine_each(self, monkeypatch, tmp_path):
+        from tabctx.multidevice import MultiDeviceEngine
+
+        created = []
+        monkeypatch.setattr(
+            "tabctx.serve.factory._build_real_backend",
+            lambda kind, settings, device: (
+                created.append(device) or FakeBackend(name=f"{kind}-model")
+            ),
+        )
+        monkeypatch.setattr(
+            "tabctx.serve.factory.detect_gpu_capacity_bytes",
+            lambda devices: 48 * 1024**3,
+        )
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 4)
+        built = build_engine(
+            ServeSettings(
+                backends=("tabicl", "tabpfn"),
+                devices=("cuda:0", "cuda:1", "cuda:2"),
+                spill_dir=str(tmp_path),
+                spill_capacity_bytes=30 * 1024**3,
+            )
+        )
+        assert isinstance(built.engine, MultiDeviceEngine)
+        # Every model gets a backend instance on every device.
+        assert created == ["cuda:0", "cuda:0", "cuda:1", "cuda:1", "cuda:2", "cuda:2"]
+        assert built.engine.backend_names == ["tabicl-model", "tabpfn-model"]
+        assert built.default == "tabicl-model"
+        # Estimators are shared across devices (identical cards).
+        shard_estimators = {
+            id(s.estimator_for("tabicl-model")) for s in built.engine._shards
+        }
+        assert len(shard_estimators) == 1
+        # Each device has its own cache, budgeted per device, and spill dir.
+        caps = [s.capacity_bytes for s in built.engine.device_stats()]
+        assert len(set(caps)) == 1 and caps[0] == built.estimator.ceiling_bytes()
+        assert built.spill_store is None and len(built.spill_stores) == 3
+        # The spill capacity setting is the replica's total, split evenly.
+        assert {s.stats()["spill_capacity_bytes"] for s in built.spill_stores} == {
+            10 * 1024**3
+        }
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "cuda_0",
+            "cuda_1",
+            "cuda_2",
+        ]
+        assert built.device == "cuda:0,cuda:1,cuda:2"
+
+
+class TestDeviceValidation:
+    def test_gpu_index_beyond_what_the_process_sees_is_rejected(self, monkeypatch):
+        from tabctx.serve.factory import resolve_devices
+
+        monkeypatch.setattr("tabctx.serve.factory._visible_cuda_count", lambda: 2)
+        with pytest.raises(ValueError, match="sees 2 GPU"):
+            resolve_devices(
+                ServeSettings(backends=("tabicl",), devices=("cuda:0", "cuda:3"))
+            )
+
+    def test_explicit_cpu_never_gets_a_gpu_budget(self, monkeypatch):
+        from tabctx.serve.factory import detect_gpu_capacity_bytes
+
+        torch = pytest.importorskip("torch")
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+        assert detect_gpu_capacity_bytes(("cpu",)) is None
+
+    def test_spill_layout_change_is_reported(self, tmp_path, caplog):
+        (tmp_path / "abcd.meta.json").write_text("{}")
+        with caplog.at_level("WARNING"):
+            build_engine(
+                ServeSettings(
+                    backends=("fake",),
+                    devices=("cuda:0", "cuda:1"),
+                    spill_dir=str(tmp_path),
+                )
+            )
+        assert "will not be restored" in caplog.text

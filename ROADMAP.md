@@ -45,6 +45,44 @@ gets deleted when it empties.
 4. **Docs site** ([#9](https://github.com/VectorInstitute/tabctx/issues/9)): README carries the full story today; a docs site
    matters as external adoption starts.
 
+## Throughput and table size: multi-GPU and CUDA-level work
+
+The LLM serving engines (vLLM, SGLang, TensorRT-LLM) got their gains first
+from memory management and scheduling (paged KV, continuous batching,
+prefix reuse) and then from CUDA kernels. tabctx already has the
+scheduling layer (context cache, usage-aware admission, evict-ahead,
+spill, same-context coalescing). This track adds multi-GPU replicas and
+the kernel work. Everything is developed and tested on a GKE GPU node
+first, then validated on prod's A40s (Ampere sm_86: no FlashAttention-3,
+no FP8).
+
+5. **Multi-GPU replica** ([#30](https://github.com/VectorInstitute/tabctx/issues/30), in progress): one engine per device,
+   fits placed where they fit without eviction on the least active
+   device, predicts routed to the owning device.
+6. **Profiling harness** ([#31](https://github.com/VectorInstitute/tabctx/issues/31)): per-stage time and peak-memory breakdown;
+   picks and sizes everything below. Hypothesis to confirm: the fit
+   peak is per-cell activations in the column/row stages, not attention.
+7. **Per-device calibration grids** ([#37](https://github.com/VectorInstitute/tabctx/issues/37)): admission on non-A100 cards
+   falls back to the conservative formula and is the first ceiling a
+   large-table user hits.
+8. **Tiled/fused column+row stage kernels** ([#32](https://github.com/VectorInstitute/tabctx/issues/32)): cut the fit peak, raising
+   the per-GPU table ceiling (FlashAttention-style tiling; chunked
+   prefill for the context KV).
+9. **Paged context KV + cross-context varlen predict** ([#33](https://github.com/VectorInstitute/tabctx/issues/33)): throughput with
+   many users (PagedAttention + continuous batching analogue).
+10. **INT8 context KV** ([#34](https://github.com/VectorInstitute/tabctx/issues/34)): about 2x contexts per GPU.
+11. **Context parallelism across GPUs** ([#35](https://github.com/VectorInstitute/tabctx/issues/35)): tables larger than one GPU
+    (ring attention over the replica's devices).
+12. **CUDA graphs for small predicts** ([#36](https://github.com/VectorInstitute/tabctx/issues/36)).
+
+PyTorch-level first: tiling and chunking, `torch.compile` (generated Triton
+kernels, CUDA graphs via `reduce-overhead`), FlexAttention for paged and
+cross-context attention, SDPA, and `torch.distributed` context
+parallelism. Hand-written Triton/CUDA only where a profile (#31) shows a
+gap those can't close -- the models change too often (TabPFN v3 -> v3.5,
+TabICL v1 -> v2 within months) for version-locked kernels to be the
+default.
+
 ## Standing process note
 
 Every significant fix in this project came from testing against real
