@@ -82,7 +82,9 @@ no FP8).
    own requirement grid (A100, 20 shapes): it, too, sizes working memory
    from what is free, so admission reaches 100k rows at 100 features on an
    A40 (was 5k on an L4 under TabICL's formula). Still to do: L4/A40-
-   measured grids (A100 grids scale by capacity today).
+   measured grids (A100 grids scale by capacity today; A40 time on GKE doesn't exist, so
+   the A40 grid comes from prod once tabctx runs there). Compiled TabICL
+   has its own A100 grid: its minimum need is up to ~2 GiB above eager's.
 8. **Head-of-line scheduling** ([#39](https://github.com/VectorInstitute/tabctx/issues/39), done): light predicts (resident
    context, <= 2048 rows) run beside a fit on the same GPU instead of
    waiting for it -- ~0.1 s p50 during a 40k x 100 fit instead of its
@@ -91,13 +93,25 @@ no FP8).
    wait. Small-fit p95 under load 10.6 s -> 1.4 s.
 9. **Tiled/fused column+row stage kernels** ([#32](https://github.com/VectorInstitute/tabctx/issues/32)): cut the fit peak and the
    memory-bound layer norms, raising the per-GPU table ceiling.
-10. **Paged context KV + cross-context varlen predict** ([#33](https://github.com/VectorInstitute/tabctx/issues/33)): throughput
-    with many users (PagedAttention + continuous batching analogue).
+10. **Paged context KV + cross-context varlen predict** ([#33](https://github.com/VectorInstitute/tabctx/issues/33), measured;
+    redirected): batching several tenants' predicts into one GPU call only
+    pays if predicts are GPU-bound, and they aren't. A100, compiled, 32
+    contexts of 2,000 x 20, 100-row predicts (`benchmarks/
+    bench_predict_throughput.py`): ~21 predicts/s per GPU at 1 to 8
+    concurrent users, latency growing linearly, GPU ~20% busy. A predict
+    is ~47 ms of host-side kernel launches (dynamo dispatch, Triton and
+    cuBLAS launches over ~36 block calls), so the levers are host
+    overhead: CUDA graphs for the predict path (shapes vary: bucket test
+    rows), or two worker processes per GPU for predict-heavy loads.
+    Cross-context KV paging matters again once predicts are launch-free.
 11. **INT8 context KV** ([#34](https://github.com/VectorInstitute/tabctx/issues/34), done for TabICL): ~0.52x resident, identical
     labels on the evaluation sets; TabPFN already defaults to int8.
-12. **Context parallelism across GPUs** ([#35](https://github.com/VectorInstitute/tabctx/issues/35)): tables larger than one GPU
-    (ring attention over the replica's devices). Disk offload already
-    lets one A100 fit 130k x 500 (65M cells) in 26 min.
+12. **Context parallelism across GPUs** ([#35](https://github.com/VectorInstitute/tabctx/issues/35), not started): tables larger
+    than one GPU (ring attention over the replica's devices). Needs model-
+    level changes in tabicl's attention (its InferenceManager owns
+    batching and offload), so it waits for a workload that exceeds one
+    A40: disk offload already lets one A100 fit 130k x 500 (65M cells) in
+    26 min, and prod's A40s have 48 GB.
 13. **torch.compile** ([#36](https://github.com/VectorInstitute/tabctx/issues/36), done for TabICL): each attention block's
     forward compiled, so Inductor fuses the layer norms, residual adds and
     GELU MLP around the attention kernel. A100: GPU half 1.7-2.2x faster
