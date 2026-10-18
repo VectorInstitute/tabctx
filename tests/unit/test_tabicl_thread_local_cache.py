@@ -58,3 +58,19 @@ def test_module_still_works_and_is_idempotent():
     assert m(torch.zeros(1, 2)).shape == (1, 2)
     assert "linear" in dict(m.named_modules())
     assert len(list(m.parameters())) == 2
+
+
+def test_cached_logn_matches_and_is_installed_once():
+    ssmax = pytest.importorskip("tabicl._model.ssmax")
+    from tabctx.backends.tabicl import install_cached_logn
+
+    original = ssmax._logn
+    try:
+        assert install_cached_logn()
+        patched = ssmax._logn
+        assert install_cached_logn() and ssmax._logn is patched  # idempotent
+        for n in (1, 7, 40_000):
+            expected = original(n, torch.device("cpu"), torch.float16)
+            assert torch.equal(patched(n, torch.device("cpu"), torch.float16), expected)
+    finally:
+        ssmax._logn = original

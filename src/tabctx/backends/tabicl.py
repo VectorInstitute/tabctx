@@ -117,6 +117,36 @@ def _build_cache(model: Any) -> None:
     model._build_kv_cache()
 
 
+def install_cached_logn() -> bool:
+    """Replace tabicl's ssmax._logn with a cached equivalent.
+
+    _logn builds a 0-dim CUDA tensor from a Python float on every attention
+    call -- a host-to-device copy that blocks the CPU until the GPU queue
+    drains, 42 times in a 40k x 100 fit, so kernel launches never run ahead
+    of the GPU. The values depend only on (n, device, dtype); caching them
+    gives bit-identical results with one sync per distinct n. Measured on
+    an A100: 10,000 x 50 fits 1.98 s -> 1.66 s, 40,000 x 100 11.1 s -> 11.0 s,
+    max probability difference 0. Returns False (and changes nothing) if
+    tabicl no longer has the function."""
+    import functools
+
+    try:
+        from tabicl._model import ssmax
+    except ImportError:
+        return False
+    original = getattr(ssmax, "_logn", None)
+    if original is None or getattr(original, "_tabctx_cached", False):
+        return original is not None
+
+    @functools.lru_cache(maxsize=4096)
+    def cached(n: int, device: Any, dtype: Any) -> Any:
+        return original(n, device, dtype)
+
+    cached._tabctx_cached = True  # type: ignore[attr-defined]
+    ssmax._logn = cached
+    return True
+
+
 def make_cache_thread_local(module: Any) -> None:
     """Give a shared TabICL backbone one active-context cache per thread.
 
@@ -214,6 +244,8 @@ class TabICLBackend(QuiescedMeasurement):
 
         _install_restore_hook(TabICLClassifier)
         _install_restore_hook(TabICLRegressor)
+        if not install_cached_logn():
+            logger.warning("tabicl.ssmax._logn not found: per-call GPU syncs remain")
 
     def _make_estimator(self, task: Task) -> Any:
         options = {
