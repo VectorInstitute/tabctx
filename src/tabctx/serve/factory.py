@@ -69,6 +69,7 @@ Environment variables:
 
 from __future__ import annotations
 
+import functools
 import importlib
 import logging
 import os
@@ -77,6 +78,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from tabctx.backends._cuda import device_available_bytes
 from tabctx.backends.base import TabularICLBackend
 from tabctx.backends.kv_precision import KV_PRECISIONS, KVPrecision
 from tabctx.cache.manager import ContextCacheManager
@@ -675,6 +677,9 @@ def build_shard(
         default_backend=default,
         host_guard=host_guard,
         device_baseline_bytes=0 if fake_only else measure_device_baseline(device),
+        device_available=None
+        if fake_only
+        else functools.partial(device_available_bytes, device),
     )
     return Shard(
         engine=engine,

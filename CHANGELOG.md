@@ -30,6 +30,7 @@
 - **Weights load at replica start** (`warmup()` on both backends, called by the factory) instead of inside the first tenant's fit, which reported the checkpoint as part of its context (a 200x6 TabPFN context was booked at 855 MB, TabICL's at 226 MB) and paid the load latency.
 
 ### Fixed
+- **Fits OOMed on GPUs the books said had room** (4x L4 rehearsal: a 250 x 1000 TabPFN fit beside 18 GB of contexts on a 22 GB card). Memory outside the cache's accounting grows after warmup (allocator fragmentation, compiled kernels' workspaces), so making room now also checks the device's real free memory (free plus torch's reusable cache) and evicts until both agree. A fit retrying after an OOM first frees contexts that were parked during its failed attempt.
 - **Router 404 for a context being spilled** (4xL4 rehearsal: a fit returned 200 and the next predict 404'd 27 ms later): a context moving between the GPU cache and the spill tier was listed by neither; it is now tracked in transit, and predict re-locates once after a miss.
 - **TabICL shared-backbone cache was per-module, not per-call**: interleaved calls could read another context's cache. It is now thread-local.
 - A device OOM while restoring a spilled context no longer deletes the spilled copy.

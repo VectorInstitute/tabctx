@@ -393,3 +393,69 @@ def test_small_fits_skip_the_prepare_gate(monkeypatch):
         assert engine._cache.holds("small")
     finally:
         engine._prepare_gate.release()
+
+
+class _Payload:
+    def __init__(self, inner):
+        self.inner = inner
+
+
+class EvictDuringFitFake(GatedFake):
+    """Its first fit fails after another request evicted a context
+    mid-fit; records whether that context was freed before the retry."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.engine = None
+        self.watch = None
+        self.freed_before_retry = None
+
+    def fit(self, X, y, task):
+        if self.fail_next_fits:
+            self.fail_next_fits -= 1
+            self.engine.evict("old")  # parked: this fit is measuring
+            raise BackendComputeError("CUDA OOM during fit()")
+        if self.watch is not None:
+            import gc
+
+            gc.collect()
+            self.freed_before_retry = self.watch() is None
+        return _Payload(super().fit(X, y, task))
+
+    def predict(self, payload, X_test, return_proba=False):
+        return super().predict(payload.inner, X_test, return_proba)
+
+
+def test_a_retry_after_oom_frees_contexts_parked_during_the_failed_attempt():
+    """Contexts removed while a fit measures are parked, not freed; the
+    failed attempt's measurement is void, so the retry gets their memory."""
+    import weakref
+
+    backend = EvictDuringFitFake()
+    engine = TabctxEngine(
+        backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
+    )
+    backend.engine = engine
+    engine.fit(*table(10), dataset_id="old")
+    backend.watch = weakref.ref(engine._cache.peek("old").payload)
+    backend.fail_next_fits = 1
+    engine.fit(*table(10), dataset_id="new")
+    assert backend.freed_before_retry is True
+
+
+def test_making_room_also_respects_the_devices_real_free_memory():
+    """The books say there's room; the device doesn't: evict anyway."""
+    available = [10**12]
+    engine = TabctxEngine(
+        backend=GatedFake(),
+        estimator=CellEstimator(),
+        cache=ContextCacheManager(CAPACITY),
+        device_available=lambda: available[0],
+    )
+    engine.fit(*table(10), dataset_id="a")
+    engine.fit(*table(10), dataset_id="b")
+    available[0] = 50  # less than a 10-row fit needs (100), whatever the books say
+    engine._device_available = lambda: 10**12 if not engine._cache.holds("a") else 50
+    engine.fit(*table(10), dataset_id="c")
+    assert not engine._cache.holds("a")  # the coldest went
+    assert engine._cache.holds("b") and engine._cache.holds("c")

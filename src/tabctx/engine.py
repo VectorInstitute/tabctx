@@ -10,7 +10,7 @@ import contextlib
 import gc
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 from tabctx.backends._cuda import release_cached_device_memory
 from tabctx.backends.base import TabularICLBackend
@@ -156,6 +156,7 @@ class TabctxEngine:
         default_backend: str | None = None,
         host_guard: HostMemoryGuard | None = None,
         device_baseline_bytes: int = 0,
+        device_available: Callable[[], int | None] | None = None,
     ) -> None:
         """Single-backend form: TabctxEngine(backend=, cache=, estimator=).
         Multi-backend form: TabctxEngine(backends={name: b}, cache=,
@@ -211,6 +212,12 @@ class TabctxEngine:
         # 22 GB L4 the 15% transient reserve doesn't absorb it: fits the
         # books said were safe OOMed).
         self._baseline_bytes = device_baseline_bytes
+        # The device's real free memory (see _cuda.device_available_bytes):
+        # making room also checks it, since memory outside the books grows
+        # after warmup (allocator fragmentation, compiled kernels'
+        # workspaces) -- on a 22 GB L4 an admitted fit OOMed beside 18 GB
+        # the books didn't fully see.
+        self._device_available = device_available
 
     @property
     def backend_names(self) -> list[str]:
@@ -400,7 +407,10 @@ class TabctxEngine:
         the device) and those contexts go too."""
 
         def short() -> bool:
-            return needed > self._headroom(estimator, self._cache.stats().used_bytes)
+            if needed > self._headroom(estimator, self._cache.stats().used_bytes):
+                return True
+            available = self._device_available() if self._device_available else None
+            return available is not None and needed > available
 
         while short():
             if self._cache.evict_one() is None:
@@ -424,6 +434,11 @@ class TabctxEngine:
                 self._fitting = False
                 parked, self._parked = self._parked, []
             del parked
+
+    def _drop_parked(self) -> None:
+        with self._release_lock:
+            parked, self._parked = self._parked, []
+        del parked
 
     def _release(self, context: CachedContext | None) -> None:
         """Drop the caller's last reference to a removed context now, or
@@ -459,10 +474,15 @@ class TabctxEngine:
             return attempt()
         except BackendComputeError:
             pass
-        gc.collect()
-        release_cached_device_memory()
         with self._predict_lock:
             self._make_room(estimator, estimated)
+            # Contexts removed during the failed attempt (explicit evicts,
+            # re-fits) were parked so as not to skew its measurement
+            # (_measuring); that measurement is void and the retry measures
+            # afresh, so free them now and give the retry their memory.
+            self._drop_parked()
+            gc.collect()
+            release_cached_device_memory()
             return attempt()
 
     def _learn(

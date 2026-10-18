@@ -40,6 +40,20 @@ def release_cached_device_memory() -> None:
         torch.cuda.empty_cache()
 
 
+def device_available_bytes(device: str) -> int | None:
+    """Device memory a new allocation can use now: free on the device plus
+    what torch's caching allocator holds reserved but unallocated (reused
+    before asking the driver). None off CUDA."""
+    if not is_cuda(device):
+        return None
+    import torch
+
+    d = torch.device(device)
+    free, _ = torch.cuda.mem_get_info(d)
+    cached = torch.cuda.memory_reserved(d) - torch.cuda.memory_allocated(d)
+    return int(free + max(0, cached))
+
+
 def device_scope(device: str) -> contextlib.AbstractContextManager[Any]:
     """Make ``device`` torch's current CUDA device for the block; a no-op
     on CPU."""
