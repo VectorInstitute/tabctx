@@ -38,7 +38,12 @@ from typing import Any
 
 import numpy as np
 
-from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
+from tabctx.backends._cuda import (
+    QuiescedMeasurement,
+    device_scope,
+    ensure_initialized,
+    is_cuda,
+)
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -84,7 +89,7 @@ class _SharedModelUnpickler(pickle.Unpickler):
         return self._resolve(pid)
 
 
-class TabPFNBackend:
+class TabPFNBackend(QuiescedMeasurement):
     def __init__(self, device: str | None = None, cache_mode: str = "kv") -> None:
         import torch
         from tabpfn.settings import settings
@@ -124,9 +129,11 @@ class TabPFNBackend:
         model = self._make_estimator(task)
         device = self._device
         measuring = is_cuda(device)
-        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
+        before_bytes = 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats(device)
+            with self.quiesced():
+                before_bytes = torch.cuda.memory_allocated(device)
+                torch.cuda.reset_peak_memory_stats(device)
         try:
             with device_scope(device):
                 model.fit(np.asarray(X, dtype=float), np.asarray(y))
@@ -143,18 +150,25 @@ class TabPFNBackend:
         # Resident vs peak: two different consumers -- see
         # backends/tabicl.py fit() for the full rationale.
         if measuring:
-            self._last_context_bytes = max(
-                0, torch.cuda.memory_allocated(device) - before_bytes
-            )
-            self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated(device) - before_bytes
-            )
+            with self.quiesced():
+                after_bytes = torch.cuda.memory_allocated(device)
+                peak_bytes = torch.cuda.max_memory_allocated(device)
+            self._last_context_bytes = max(0, after_bytes - before_bytes)
+            self._last_fit_peak_bytes = max(0, peak_bytes - before_bytes)
         else:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None
         for index, module in enumerate(getattr(model, "models_", None) or []):
             self._shared_models.setdefault((task, index), module)
         return model
+
+    def host_bytes_estimate(
+        self, n_rows: int, n_features: int, *, offloads: bool = False
+    ) -> int:
+        """Host memory a fit or predict may use (preprocessing copies):
+        measured on an A100 pod at most ~530 B per cell (100,000 x 100 grew
+        RSS 4.9 GiB; 30M-cell tables 6-6.7 GiB), budgeted at 600."""
+        return 600 * n_rows * n_features
 
     def predict(
         self, payload: Any, X_test: ArrayLike, return_proba: bool = False

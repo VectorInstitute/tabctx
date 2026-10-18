@@ -223,6 +223,22 @@ behind the same API. No client changes and no routing header needed.
   retried fit can't leave two copies. A re-fit lands first and only then
   replaces the old copy: a failed re-fit (413, OOM) leaves the previous
   context serving.
+- **A process per GPU.** Each GPU's engine runs in its own worker process
+  (`TABCTX_WORKER_PROCESSES=1`, the default with several GPUs; `0` runs
+  them as threads). Fits are host-bound, so threads would contend for
+  Python's GIL: on 4x A100, four concurrent fits ran at ~4x aggregate
+  from processes and 2-3x from threads. A worker that dies fails the
+  replica's health check, so the serving framework restarts it.
+- **Small predicts don't wait for fits.** A predict of up to 2,048 rows
+  against a resident context runs beside a fit on the same GPU (~0.1 s
+  instead of the fit's full duration); larger predicts and restores of
+  spilled contexts wait their turn.
+- **Placement is pluggable.** The rule above is the default
+  `PlacementPolicy` (`tabctx.placement`); pass your own to
+  `MultiDeviceEngine(placement=...)` to steer tabular work, e.g. away
+  from a GPU a platform scheduler wants for an LLM. Each placement and
+  removal is a residency event (`tabctx.events`) for any subscriber;
+  `GET /v1/tabctx/residency` returns the latest.
 - **The replica must be given the GPUs.** Under Ray Serve that means
   `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
   GPU pod (as in inference-platform's prod config),
@@ -237,6 +253,11 @@ behind the same API. No client changes and no routing header needed.
   headroom and each device's.
 
 ## Large tables: upload, then fit by reference
+
+Tables too big for GPU and host memory together can still fit: TabICL
+offloads stage outputs to memory-mapped files under `TABCTX_OFFLOAD_DIR`
+(default `<TABCTX_SPILL_DIR>/offload`), slower but without exhausting the
+pod's RAM (one A100 fit 130k x 500 this way).
 
 Inline JSON tables are convenient to ~10^4 rows and painful beyond.
 For big tables, stream a CSV first and reference it (the same
@@ -379,6 +400,21 @@ pip install "tabctx[dev]"        # + test dependencies
   (`TABCTX_KV_CACHE=kv|repr|off`), with predictions verified identical
   to the uncached path -- and loads the pretrained backbone once per
   process instead of per fit.
+- **int8 context cache** (`TABCTX_KV_PRECISION=int8`, the default):
+  TabICL's ICL key/value cache, most of a context, is stored in int8:
+  about half the memory per context, identical labels and metrics on the
+  evaluation sets, probabilities within 0.009 (`native` for exact).
+- **Compiled attention blocks** (`TABCTX_COMPILE=1`, the default):
+  TabICL's attention blocks run through `torch.compile`, which fuses the
+  memory-bound layer norms and residual adds around each attention
+  kernel. Fits are 1.7-2.2x faster on the GPU with ~20% lower peak
+  memory, and accuracy is unchanged. The compile happens mostly once per
+  worker at startup (~130 s); a call shape the startup didn't cover (very
+  large tables, for one) compiles on first use, ~10 s once per worker.
+- **GPU preprocessing** (`TABCTX_FAST_PREPROCESSING=1`, the default):
+  TabICL's per-column Yeo-Johnson fits, most of a fit's CPU time, run
+  vectorized on the GPU (14x faster on a 40k x 100 table) with lambdas
+  matching scikit-learn's to float32 precision.
 - **Same-context coalescing** (`CoalescingPredictor`): concurrent
   requests against one cached context are packed into a single GPU call
   within a ~5ms window and split back per caller, amortizing per-call

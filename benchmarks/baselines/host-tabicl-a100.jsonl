@@ -1,0 +1,12 @@
+{"backend": "tabicl", "rows": 2000, "features": 500, "cells": 1000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 6.3, "peak_growth_gib": 0.13, "retained_gib": 0.13, "table_gib": 0.004}
+{"backend": "tabicl", "rows": 5000, "features": 500, "cells": 2500000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 10.11, "peak_growth_gib": 0.2, "retained_gib": 0.13, "table_gib": 0.009}
+{"backend": "tabicl", "rows": 2000, "features": 1000, "cells": 2000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 13.66, "peak_growth_gib": 0.24, "retained_gib": 0.21, "table_gib": 0.007}
+{"backend": "tabicl", "rows": 10000, "features": 500, "cells": 5000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 15.08, "peak_growth_gib": 0.39, "retained_gib": 0.24, "table_gib": 0.019}
+{"backend": "tabicl", "rows": 100000, "features": 100, "cells": 10000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 66.78, "peak_growth_gib": 45.11, "retained_gib": 42.8, "table_gib": 0.037}
+{"backend": "tabicl", "rows": 5000, "features": 1000, "cells": 5000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 19.42, "peak_growth_gib": 0.39, "retained_gib": 0.24, "table_gib": 0.019}
+{"backend": "tabicl", "rows": 20000, "features": 500, "cells": 10000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 58.84, "peak_growth_gib": 46.0, "retained_gib": 43.3, "table_gib": 0.037}
+{"backend": "tabicl", "rows": 30000, "features": 500, "cells": 15000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 74.84, "peak_growth_gib": 46.17, "retained_gib": 43.37, "table_gib": 0.056}
+{"backend": "tabicl", "rows": 10000, "features": 500, "cells": 5000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 14.89, "peak_growth_gib": 0.39, "retained_gib": 0.24, "table_gib": 0.019}
+{"backend": "tabicl", "rows": 20000, "features": 500, "cells": 10000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 64.97, "peak_growth_gib": 46.0, "retained_gib": 0.29, "table_gib": 0.037}
+{"backend": "tabicl", "rows": 100000, "features": 100, "cells": 10000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 73.18, "peak_growth_gib": 45.05, "retained_gib": 0.23, "table_gib": 0.037}
+{"backend": "tabicl", "rows": 30000, "features": 500, "cells": 15000000, "cgroup_limit_gib": 64.0, "status": "ok", "fit_s": 81.12, "peak_growth_gib": 46.17, "retained_gib": 0.37, "table_gib": 0.056}

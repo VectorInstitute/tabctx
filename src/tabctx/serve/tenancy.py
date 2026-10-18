@@ -146,3 +146,13 @@ def unscope_dataset_id(tenant_id: str | None, scoped_id: str) -> str:
             f"scoped id {scoped_id!r} does not belong to tenant {tenant_id!r}"
         )
     return scoped_id[len(prefix) :]
+
+
+def visible_dataset_id(tenant_id: str | None, scoped_id: str) -> str | None:
+    """The caller-facing id of a cache id the caller may see, else None: a
+    tenant sees only its own datasets; a caller without a tenant sees only
+    unscoped ones (never another tenant's, whose ids embed the tenant)."""
+    if tenant_id is None:
+        return None if scoped_id.startswith(f"{_SCOPE_PREFIX}:") else scoped_id
+    prefix = f"{_SCOPE_PREFIX}:{tenant_id}:"
+    return scoped_id[len(prefix) :] if scoped_id.startswith(prefix) else None

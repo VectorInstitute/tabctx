@@ -35,13 +35,14 @@ narrow coincidence that synthetic benchmarks can't answer honestly. The
 first real-user deployment is what will measure it; until then this
 module's same-context coalescing is the batching layer.
 
-Safety argument (why this can't blow the memory budget): the engine
-serializes all GPU work behind its cache lock, and engine.predict()
-already chunks oversized test sets against the memory ceiling
-(chunking.py). Coalescing therefore never increases the number of
-concurrent GPU calls (still exactly one) -- it only reduces how many
-serialized calls the same amount of work needs. The admission ceiling
-derivation ("exactly one in-flight backend call") still holds.
+Safety argument (why this can't blow the memory budget): the engine runs
+at most one predict per device at a time (beside at most one fit, and only
+when the predict is light -- see engine.py), and engine.predict() already
+chunks oversized test sets against the memory ceiling (chunking.py).
+Coalescing therefore never increases the number of concurrent GPU calls --
+it only reduces how many serialized calls the same amount of work needs.
+A coalesced batch larger than LIGHT_PREDICT_ROWS simply waits for the
+device's fits, like any large predict.
 
 Failure isolation: one malformed request must not poison the others in
 its batch. If a *batched* call fails input validation, every member is

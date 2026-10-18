@@ -39,11 +39,13 @@ from tabctx import (
     BackendComputeError,
     CacheCapacityError,
     DatasetNotFoundError,
+    HostMemoryUnavailableError,
     InvalidInputError,
     UploadNotFoundError,
     UploadTooLargeError,
 )
 from tabctx.batching import CoalescingPredictor
+from tabctx.events import RecentEvents
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
@@ -52,8 +54,10 @@ from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
     scope_dataset_id,
+    visible_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
+from tabctx.serve.workers import WorkerDiedError
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -155,6 +159,7 @@ _INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)
 _COMPUTE_ERRORS = (BackendComputeError,)
+_UNAVAILABLE_ERRORS = (HostMemoryUnavailableError,)
 
 
 def _map_error(e: Exception) -> HTTPException:
@@ -166,6 +171,8 @@ def _map_error(e: Exception) -> HTTPException:
         return HTTPException(413, str(e))
     if isinstance(e, _NOT_FOUND_ERRORS):
         return HTTPException(404, str(e))
+    if isinstance(e, _UNAVAILABLE_ERRORS):
+        return HTTPException(503, str(e))
     if isinstance(e, _COMPUTE_ERRORS):
         return HTTPException(507, str(e))
     raise e
@@ -179,12 +186,12 @@ def _replica_tag() -> str | None:
 
 
 @serve.deployment(
-    # 8 concurrent requests per replica (was 2): safe because the engine
-    # serializes all GPU work behind its cache lock regardless -- extra
-    # in-flight requests wait on the lock (or coalesce, see batching.py)
-    # rather than running concurrent GPU calls, so the memory ceiling's
-    # one-in-flight-call assumption still holds. More in-flight requests
-    # = more same-context coalescing opportunity.
+    # 8 concurrent requests per replica (was 2): safe because each device's
+    # engine schedules its GPU work itself (one fit, plus one light predict
+    # beside it; see engine.py) -- extra in-flight requests queue there (or
+    # coalesce, see batching.py) rather than running unbounded concurrent
+    # GPU calls. More in-flight requests = more same-context coalescing
+    # opportunity.
     max_ongoing_requests=8,
     max_queued_requests=16,
     health_check_period_s=30,
@@ -213,12 +220,20 @@ class TabctxService:
         built = build_engine(settings)
         self._engine = built.engine
         self._estimator = built.estimator
-        self._backend_name = built.backend.name  # default model id
+        self._backend_name = built.default  # default model id
         self._spill_store = built.spill_store
         self._spill_stores = built.spill_stores
+        self._workers = built.worker_shards
+        self._host_guard = built.host_guard
         self._devices = built.devices
         self._device = built.device
         self._gpu_capacity_bytes = built.gpu_capacity_bytes
+        # Residency events from the multi-device router (events.py): the
+        # latest, for /v1/tabctx/residency; a platform adds its own sinks.
+        self._residency = RecentEvents()
+        bus = getattr(self._engine, "events", None)
+        if bus is not None:
+            bus.subscribe(self._residency)
         # Same-context predict coalescing (see batching.py): concurrent
         # requests against one cached context share a single backend call.
         self._predictor = CoalescingPredictor(
@@ -264,7 +279,10 @@ class TabctxService:
         n_train, n_test = len(req.train_X), len(req.test_X)
         n_features = len(req.train_X[0]) if n_train else 0
 
-        gpus = self._cuda_devices() if cuda else []
+        # Peak GPU memory of this call, measured in-process. With worker
+        # processes the call ran elsewhere: this process holds no models,
+        # and touching each GPU would only create CUDA contexts here.
+        gpus = self._cuda_devices() if cuda and not self._workers else []
         for d in gpus:
             torch.cuda.reset_peak_memory_stats(d)
         start = time.monotonic()
@@ -281,6 +299,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             logger.error("[%s] %s: %s", request_id, type(e).__name__, e)
             raise _map_error(e) from e
@@ -411,6 +430,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             raise _map_error(e) from e
         return FitResponse(
@@ -474,6 +494,7 @@ class TabctxService:
             *_ADMISSION_ERRORS,
             *_NOT_FOUND_ERRORS,
             *_COMPUTE_ERRORS,
+            *_UNAVAILABLE_ERRORS,
         ) as e:
             raise _map_error(e) from e
         latency_ms = (time.monotonic() - start) * 1000
@@ -490,6 +511,14 @@ class TabctxService:
     def healthz(self):
         return {"status": "ok"}
 
+    def check_health(self) -> None:
+        """Ray Serve's replica health probe: a dead per-GPU worker loses that
+        device's contexts and capacity for good, so fail the replica and
+        let Serve restart it whole."""
+        dead = [w.death_reason for w in self._workers if not w.alive]
+        if dead:
+            raise RuntimeError("; ".join(r for r in dead if r))
+
     @fastapi_app.get("/v1/models")
     def models(self):
         """Which models this deployment serves (chat-completions style
@@ -504,6 +533,38 @@ class TabctxService:
                 }
                 for name in self._engine.backend_names
             ]
+        }
+
+    @fastapi_app.get("/v1/tabctx/residency")
+    def residency(self, request: Request):
+        """Where the caller's contexts are now, per device, and the router's
+        latest placements and removals of them (multi-GPU replicas). Scoped
+        like every /v1/tabctx route: a tenant sees only its own datasets.
+        Events are advisory (contexts dropped by capacity eviction without
+        spill aren't reported); `devices` is the current truth to
+        reconcile against. A single-GPU replica reports neither."""
+        try:
+            tenant_id = resolve_tenant_id(dict(request.headers))
+        except _AUTH_ERRORS as e:
+            raise _map_error(e) from e
+
+        def mine(ids: list[str]) -> list[str]:
+            visible = (visible_dataset_id(tenant_id, i) for i in ids)
+            return [i for i in visible if i is not None]
+
+        residency = getattr(self._engine, "residency", None)
+        devices = residency() if callable(residency) else {}
+        events = []
+        for event in self._residency.snapshot():
+            shown = visible_dataset_id(tenant_id, event["dataset_id"])
+            if shown is not None:
+                events.append({**event, "dataset_id": shown})
+        return {
+            "devices": {
+                device: {kind: mine(ids) for kind, ids in view.items()}
+                for device, view in devices.items()
+            },
+            "events": events,
         }
 
     @fastapi_app.get("/v1/tabctx/limits")
@@ -560,8 +621,28 @@ class TabctxService:
         torch = _torch_or_none()
 
         stats = self._engine.stats()
+        dead = [w.death_reason for w in self._workers if not w.alive]
+        if dead:
+            raise HTTPException(503, detail="; ".join(r for r in dead if r))
+        # Worker processes measure their own device (this process holds no
+        # CUDA context and must not create one on every GPU).
+        try:
+            reports = [w.report() for w in self._workers]
+        except (WorkerDiedError, TimeoutError) as e:
+            raise HTTPException(503, detail=str(e)) from e
+        try:
+            host_memory = self._host_guard.stats() if self._host_guard else None
+        except HostMemoryUnavailableError as e:
+            raise HTTPException(503, detail=str(e)) from e
         real_gpu_memory = None
-        if torch is not None and torch.cuda.is_available():
+        per_device: dict[str, dict] = {}
+        if reports:
+            per_device = {
+                w.device: r["gpu_memory"]
+                for w, r in zip(self._workers, reports, strict=True)
+                if r["gpu_memory"] is not None
+            }
+        elif torch is not None and torch.cuda.is_available():
             # Real device memory, independent of our own byte-accounting --
             # cache_stats.used_bytes is the estimator's *prediction* for what
             # cached contexts should cost; this is what the device actually
@@ -577,6 +658,7 @@ class TabctxService:
                 }
                 for d in self._cuda_devices()
             }
+        if per_device:
             # Same flat shape as ever (summed over devices when several),
             # plus the per-device breakdown on a multi-GPU replica.
             real_gpu_memory = {
@@ -605,9 +687,10 @@ class TabctxService:
                 "engine_calls": self._predictor.engine_calls,
             },
             "uploads": self._uploads.stats(),
-            "spill": self._spill_stats(),
+            "spill": self._spill_stats([r["spill"] for r in reports]),
             "real_gpu_memory": real_gpu_memory,
             "devices": self._device_breakdown(),
+            "host_memory": host_memory,
         }
 
     def _cuda_devices(self) -> list[str]:
@@ -615,12 +698,14 @@ class TabctxService:
         current device, on an auto single-GPU replica)."""
         return [d for d in self._devices if d.startswith("cuda")]
 
-    def _spill_stats(self) -> dict | None:
+    def _spill_stats(self, worker_spill: list[dict | None]) -> dict | None:
         if self._spill_store is not None:
             return self._spill_store.stats()
-        if not self._spill_stores:
+        per_device = [s.stats() for s in self._spill_stores] or [
+            s for s in worker_spill if s is not None
+        ]
+        if not per_device:
             return None
-        per_device = [s.stats() for s in self._spill_stores]
         totals: dict = {}
         for stats in per_device:
             for key, value in stats.items():

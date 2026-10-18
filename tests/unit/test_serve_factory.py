@@ -170,7 +170,9 @@ class TestDeviceCapacity:
     def test_build_engine_uses_detected_capacity_for_real_backends(self, monkeypatch):
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         monkeypatch.setattr(
             "tabctx.serve.factory.detect_gpu_capacity_bytes",
@@ -206,7 +208,7 @@ class TestDeviceCapacity:
 class TestBuildEngine:
     def test_fake_backend_end_to_end(self):
         built = build_engine(ServeSettings(backends=("fake",)))
-        assert isinstance(built.backend, FakeBackend)
+        assert built.backend_names == ["fake"] and built.default == "fake"
         assert "fake" in built.device
 
         dataset_id = built.engine.fit([[1.0, 2.0], [3.0, 4.0]], ["a", "b"])
@@ -232,7 +234,9 @@ class TestBuildEngine:
         # model, resolved through that mapping.
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         built = build_engine(
             ServeSettings(backends=("tabpfn", "fake"), devices=("cpu",))
@@ -252,6 +256,8 @@ class TestBuildEngine:
             SPILL_DIR_ENV_VAR,
             SPILL_CAPACITY_ENV_VAR,
             DEVICES_ENV_VAR,
+            "TABCTX_KV_PRECISION",
+            "TABCTX_OFFLOAD_DIR",
         ):
             monkeypatch.delenv(var, raising=False)
         assert ServeSettings.from_env() == ServeSettings()
@@ -274,7 +280,7 @@ class TestBuildEngine:
         calls = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 calls.append((kind, settings, device)) or object()
             ),
         )
@@ -318,8 +324,13 @@ class TestCalibrationPreload:
         # shortcut finds the real module other tests already imported.
         import tabctx.memory as memory_pkg
 
-        monkeypatch.delattr(memory_pkg, "calibration_tabicl_a100", raising=False)
-        monkeypatch.setitem(sys.modules, "tabctx.memory.calibration_tabicl_a100", None)
+        for name in (
+            "calibration_tabicl_a100",
+            "calibration_tabicl_a100_requirement",
+            "calibration_tabicl_compiled_a100_requirement",
+        ):
+            monkeypatch.delattr(memory_pkg, name, raising=False)
+            monkeypatch.setitem(sys.modules, f"tabctx.memory.{name}", None)
         est = build_estimator(ServeSettings(backends=("tabicl",)))
         assert "0 preloaded calibration measurement" in est.confidence()
 
@@ -380,7 +391,7 @@ class TestDevices:
         created = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 created.append(device) or FakeBackend(name=f"{kind}-model")
             ),
         )
@@ -395,6 +406,7 @@ class TestDevices:
                 devices=("cuda:0", "cuda:1", "cuda:2"),
                 spill_dir=str(tmp_path),
                 spill_capacity_bytes=30 * 1024**3,
+                worker_processes=False,  # the patches above are in-process
             )
         )
         assert isinstance(built.engine, MultiDeviceEngine)
@@ -448,6 +460,59 @@ class TestDeviceValidation:
                     backends=("fake",),
                     devices=("cuda:0", "cuda:1"),
                     spill_dir=str(tmp_path),
+                    worker_processes=False,
                 )
             )
         assert "will not be restored" in caplog.text
+
+
+class TestKvPrecision:
+    def test_default_and_parsing(self, monkeypatch):
+        monkeypatch.delenv("TABCTX_KV_PRECISION", raising=False)
+        assert ServeSettings.from_env().kv_precision == "int8"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", " INT8 ")
+        assert ServeSettings.from_env().kv_precision == "int8"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", "fp4")
+        with pytest.raises(ValueError, match="TABCTX_KV_PRECISION"):
+            ServeSettings.from_env()
+
+
+def test_compile_flag_from_env(monkeypatch):
+    from tabctx.serve.factory import COMPILE_ENV_VAR
+
+    assert ServeSettings.from_env().compile_models  # on by default
+    monkeypatch.setenv(COMPILE_ENV_VAR, "0")
+    assert not ServeSettings.from_env().compile_models
+    monkeypatch.setenv(COMPILE_ENV_VAR, "maybe")
+    with pytest.raises(ValueError, match="TABCTX_COMPILE"):
+        ServeSettings.from_env()
+
+
+def test_fast_preprocessing_flag_from_env(monkeypatch):
+    from tabctx.serve.factory import FAST_PREPROCESSING_ENV_VAR
+
+    assert ServeSettings.from_env().fast_preprocessing
+    monkeypatch.setenv(FAST_PREPROCESSING_ENV_VAR, "0")
+    assert not ServeSettings.from_env().fast_preprocessing
+
+
+def test_compiled_tabicl_uses_its_own_requirement_grid():
+    """Compiled TabICL's minimum need exceeds eager's at some shapes (80k x
+    10: 22.9 vs 20.7 GiB on an A100), so it must not inherit eager's grid."""
+    from tabctx.serve.factory import _requirement_calibration
+
+    _, eager, _ = _requirement_calibration("tabicl", "kv", compiled=False)
+    _, compiled, _ = _requirement_calibration("tabicl", "kv", compiled=True)
+
+    def need(grid, n, d):
+        return next(o.real_bytes for o in grid if (o.n_train, o.n_features) == (n, d))
+
+    assert need(compiled, 80_000, 10) > need(eager, 80_000, 10)
+    # ...and never less than eager anywhere (per shape, the larger of both).
+    for o in eager:
+        assert need(compiled, o.n_train, o.n_features) >= o.real_bytes
+    # TabPFN isn't compiled: the flag doesn't change its grid.
+    assert (
+        _requirement_calibration("tabpfn", "kv", True)[1]
+        == (_requirement_calibration("tabpfn", "kv", False)[1])
+    )
