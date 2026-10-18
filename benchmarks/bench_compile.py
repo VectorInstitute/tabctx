@@ -62,6 +62,12 @@ def enable_tabpfn_compile() -> None:
         return dataclasses.replace(defaults(self), enable_torch_compile=True)
 
     TabPFNV3p5.get_default_performance_options = with_compile
+    # Its SDPA wrapper loops over ceil(batch*heads / 65536) chunks: a Python
+    # loop count that depends on the table, so every new size recompiled
+    # (60-266 s each). Run it eagerly (a graph break around attention).
+    from tabpfn.architectures.shared import scaled_dot_product_attention as sdpa
+
+    sdpa._torch_sdpa = torch.compiler.disable(sdpa._torch_sdpa)
 
 
 def build(kind: str, device: str, compiled: bool):

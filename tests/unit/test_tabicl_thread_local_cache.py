@@ -112,6 +112,7 @@ def test_compiled_blocks_install_once():
         assert install_compiled_blocks()
         compiled = layers.MultiheadAttentionBlock.forward
         assert compiled is not original
+        assert compiled._tabctx_eager is original
         assert install_compiled_blocks()
         assert layers.MultiheadAttentionBlock.forward is compiled  # idempotent
     finally:

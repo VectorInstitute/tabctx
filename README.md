@@ -393,8 +393,9 @@ pip install "tabctx[dev]"        # + test dependencies
   TabICL's attention blocks run through `torch.compile`, which fuses the
   memory-bound layer norms and residual adds around each attention
   kernel. Fits are 1.7-2.2x faster on the GPU with ~20% lower peak
-  memory, and accuracy is unchanged. The compile happens once per worker
-  at startup (~75 s), not in tenants' requests.
+  memory, and accuracy is unchanged. The compile happens mostly once per
+  worker at startup (~130 s); a call shape the startup didn't cover (very
+  large tables, for one) compiles on first use, ~10 s once per worker.
 - **Same-context coalescing** (`CoalescingPredictor`): concurrent
   requests against one cached context are packed into a single GPU call
   within a ~5ms window and split back per caller, amortizing per-call

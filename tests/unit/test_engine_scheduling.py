@@ -351,10 +351,13 @@ def test_an_infeasible_fit_is_rejected_before_preparing():
     assert backend.prepared_during == []
 
 
-def test_only_one_fit_prepares_ahead_of_the_device():
+def test_only_one_large_fit_prepares_ahead_of_the_device(monkeypatch):
     """Prepared data lives in host memory until its fit gets the device:
-    queued fits beyond one ahead wait before preparing, so N queued large
-    tables don't hold N preprocessed copies at once."""
+    queued large fits beyond one ahead wait before preparing, so N queued
+    large tables don't hold N preprocessed copies at once."""
+    import tabctx.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "GATED_FIT_CELLS", 10)
     backend = PreparingFake()
     engine = TabctxEngine(
         backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
@@ -371,3 +374,22 @@ def test_only_one_fit_prepares_ahead_of_the_device():
         t.join(5)
     assert len(backend.prepared_during) == 4
     assert all(engine._cache.holds(f"d{i}") for i in range(4))
+
+
+def test_small_fits_skip_the_prepare_gate(monkeypatch):
+    """A large fit holding the gate (e.g. waiting for host memory) must not
+    hold up a small fit's preparation on the same device."""
+    import tabctx.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "GATED_FIT_CELLS", 50)
+    backend = PreparingFake()
+    engine = TabctxEngine(
+        backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
+    )
+    backend.engine = engine
+    engine._prepare_gate.acquire()  # a large fit holds the only permit
+    try:
+        engine.fit(*table(10), dataset_id="small")  # 10 cells: ungated
+        assert engine._cache.holds("small")
+    finally:
+        engine._prepare_gate.release()

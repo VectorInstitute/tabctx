@@ -92,7 +92,11 @@ from tabctx.memory.estimator import (
     DEFAULT_HARD_CEILING_BYTES,
     MemoryEstimator,
 )
-from tabctx.memory.host import HostMemoryGuard, detect_host_budget_bytes
+from tabctx.memory.host import (
+    QUEUE_SLOTS,
+    HostMemoryGuard,
+    detect_host_budget_bytes,
+)
 from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
@@ -669,8 +673,13 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     host_budget = None if fake_only else detect_host_budget_bytes()
     if multi and settings.worker_processes:
         return _build_process_engine(settings, devices, gpu_capacity, host_budget)
-    # One host-memory guard per process: host RAM is shared by every device.
-    host_guard = HostMemoryGuard(host_budget) if host_budget else None
+    # One host-memory guard per process (host RAM is shared by every
+    # device), with queue slots for each device's engine's waiting calls.
+    host_guard = (
+        HostMemoryGuard(host_budget, queue_slots=QUEUE_SLOTS * len(devices))
+        if host_budget
+        else None
+    )
     estimators: dict[str, MemoryEstimator] = {}
     shards = [
         build_shard(

@@ -251,6 +251,62 @@ def test_reservations_are_node_wide_and_a_dead_owner_is_released():
             child.kill()
 
 
+def _wait_in_child(guard, owner, nbytes, queued):
+    guard.bind(owner)
+    queued.set()
+    with guard.reserve(nbytes):
+        pass
+
+
+def test_a_process_killed_while_waiting_does_not_wedge_the_guard():
+    """With mp.Condition, a process killed in wait() left its sleeper count
+    behind and the next notify_all blocked forever, holding the lock."""
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    guard = HostMemoryGuard(10 * GiB, mp_context=ctx, owners=2, lock_timeout_s=5)
+    queued = ctx.Event()
+    done = threading.Event()
+    with guard.reserve(8 * GiB):  # blocks the child's 4 GiB
+        child = ctx.Process(
+            target=_wait_in_child, args=(guard, 1, 4 * GiB, queued), daemon=True
+        )
+        child.start()
+        assert queued.wait(60)
+        _wait_for(lambda: guard.stats()["calls_waiting"] == 1, timeout=30)
+        child.kill()
+        child.join(10)
+
+        def after():
+            guard.release_owner(1)
+            done.set()
+
+        threading.Thread(target=after, daemon=True).start()
+        assert done.wait(10), "release_owner hung after a waiter was killed"
+        assert guard.stats()["calls_waiting"] == 0
+    with guard.reserve(9 * GiB):  # and the guard still admits
+        assert guard.stats()["reserved_bytes"] == 9 * GiB
+
+
+def test_a_stuck_lock_at_release_does_not_fail_the_call(caplog):
+    guard = HostMemoryGuard(10 * GiB, large_fit_bytes=GiB, lock_timeout_s=0.2)
+    holding, done = threading.Event(), threading.Event()
+
+    def hold_lock():
+        with guard._cond:
+            holding.set()
+            done.wait(5)
+
+    with caplog.at_level("ERROR"), guard.reserve(2 * GiB):  # the call succeeds...
+        t = threading.Thread(target=hold_lock, daemon=True)
+        t.start()
+        assert holding.wait(5)
+        # ...and its release, unable to get the lock, logs instead of raising
+    assert "not returned" in caplog.text
+    done.set()
+    t.join(5)
+
+
 def test_bind_rejects_unknown_owners():
     with pytest.raises(ValueError):
         HostMemoryGuard(GiB, owners=2).bind(2)
@@ -434,3 +490,17 @@ def test_a_backend_estimate_wins_over_the_fallbacks():
     seen = _spy(guard)
     engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")
     assert seen == [(84, True)]
+
+
+def test_a_two_argument_host_estimate_still_works():
+    """Backends written before the engine passed `offloads=`."""
+
+    class OldStyle(FakeBackend):
+        def host_bytes_estimate(self, n_rows, n_features):
+            return 5 * n_rows * n_features
+
+    guard = HostMemoryGuard(GiB, large_fit_bytes=GiB, min_guarded_bytes=0)
+    engine = _engine(OldStyle(bytes_hint=10), guard)
+    seen = _spy(guard)
+    engine.fit([[1.0, 2.0]] * 3, ["a"] * 3, dataset_id="d")
+    assert seen == [(30, False)]  # 6 cells: under the large-fit threshold

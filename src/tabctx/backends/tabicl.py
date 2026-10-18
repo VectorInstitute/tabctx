@@ -513,20 +513,32 @@ class TabICLBackend(QuiescedMeasurement):
         report the weights as part of its context (resident bytes for a
         tiny table were the whole checkpoint), overcharging the cache and
         leaving the books wrong once it is evicted -- and would pay the
-        load latency. With compiled blocks, also compile every call family
-        here (fp32 below tabicl's autocast threshold of 1,024 rows, fp16
-        above; fit and cached predict) rather than in tenants' calls."""
+        load latency. With compiled blocks, also compile the common call
+        families here (fp32 and fp16 paths, fits and cached predicts,
+        1-feature tables and 1-row predicts) rather than in tenants'
+        calls."""
         rng = np.random.default_rng(0)
-        sizes = (32, 1100) if self._compiled else (32,)
-        for rows in sizes:
-            X = rng.normal(size=(rows, 4))
+        # (rows, features): with compiled blocks, tabicl's fp16 autocast path
+        # (1,024+ rows; the only one compiled), including a 1-feature table
+        # (dynamo specializes size-1 dimensions, so they get their own
+        # graphs).
+        shapes = ((32, 4), (1100, 4), (1100, 1)) if self._compiled else ((32, 4),)
+        for rows, features in shapes:
+            X = rng.normal(size=(rows, features))
             labels = (X[:, 0] > 0).astype(int)
             for task, y in (("classification", labels), ("regression", X[:, 0])):
                 payload = self.fit(X, y, task)
                 if self._compiled:
-                    self.predict(payload, X[:8], return_proba=task == "classification")
+                    proba = task == "classification"
+                    for n in (8, 1):  # 1-row predicts: also size-1 graphs
+                        self.predict(payload, X[:n], return_proba=proba)
+        if self._compiled:
+            from tabctx.backends.tabicl_compile import warn_if_not_compiled
+
+            warn_if_not_compiled()
         self._last_context_bytes = None
         self._last_fit_peak_bytes = None
+        self._last_fit_resident_bytes = None
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features

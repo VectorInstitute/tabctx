@@ -103,10 +103,13 @@ no FP8).
     GiB, so larger tables fit), accuracy unchanged on the evaluation sets;
     Ray Serve, 6 users on 4x A100: 5.78 -> 6.99 predicts/s. Dynamic
     shapes needed tabicl's ssmax log(n) computed symbolically (math.log on
-    the row count recompiled every new table). ~40 graphs compile in
-    warmup (~75 s per worker). CUDA graphs aren't worth it: the GPU half
-    is GPU-bound, not launch-bound. TabPFN-3.5's own compile path is
-    being measured.
+    the row count recompiled every new table). ~50 graphs (fp16 path
+    only) compile in warmup (~130 s per worker). CUDA graphs aren't worth it: the GPU half
+    is GPU-bound, not launch-bound. TabPFN-3.5's own compile path
+    (`enable_torch_compile`) measured 1.3-1.5x faster fits, ~30% faster
+    predicts and ~22% lower peak, but it still recompiles for many new
+    table sizes (9-82 s each, even with its chunked-SDPA loop kept out of
+    the graph), so it stays off until those are traced down.
 14. **Serving-framework-agnostic core** ([#39](https://github.com/VectorInstitute/tabctx/issues/39)): the router, per-GPU workers
     and scheduling are plain Python with no Ray dependency; a Dynamo
     worker hosts the same core. Next: residency events and pluggable

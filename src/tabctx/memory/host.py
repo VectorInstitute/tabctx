@@ -32,10 +32,14 @@ Admission rules:
 Robustness. Reservations are kept per owner (a worker process, or 0
 in-process), so when a worker dies holding bytes -- the host OOM kill
 this guard exists to prevent -- its parent returns them (release_owner)
-instead of leaking them until the replica restarts. The shared lock is
-taken with a timeout: a worker killed while holding it (a window of
-microseconds) makes calls fail with a retryable HostMemoryUnavailableError
-and /readyz report unhealthy, never hang.
+instead of leaking them until the replica restarts. Across processes the
+shared lock is a plain lock that waiters poll (a process killed while
+waiting on an mp.Condition would block every later notify forever), and
+every acquire has a timeout: a worker killed while holding it (a window
+of microseconds) makes calls fail with a retryable
+HostMemoryUnavailableError and /readyz report unhealthy, never hang. A
+call's release never raises: its result stands, and a reservation that
+can't be returned is logged.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -59,12 +64,14 @@ LARGE_FIT_HOST_BYTES = 48 * GiB
 # reserve (8 GiB) for the rest of serving.
 MIN_GUARDED_BYTES = 1 * GiB
 LOCK_TIMEOUT_S = 10.0
-# Waiters re-check at least this often (a dead owner's release, a timeout).
+# In-process waiters are notified, and re-check at least this often.
 _POLL_S = 1.0
+# Across processes waiters poll (see HostMemoryGuard.__init__).
+_MP_POLL_S = 0.02
 # Per owner: reserved bytes, active calls, offloading calls, then queue
-# slots for waiting calls (a worker serves at most 16 calls at once).
-_QUEUE_SLOTS = 32
-_OWNER_BLOCK = 3 + _QUEUE_SLOTS
+# slots for its waiting calls (a worker serves at most 16 calls at once;
+# an in-process guard shared by several devices' engines needs more).
+QUEUE_SLOTS = 32
 
 
 CGROUP_LIMIT_PATHS = (
@@ -137,6 +144,7 @@ class HostMemoryGuard:
         owners: int = 1,
         min_guarded_bytes: int = MIN_GUARDED_BYTES,
         lock_timeout_s: float = LOCK_TIMEOUT_S,
+        queue_slots: int = QUEUE_SLOTS,
     ) -> None:
         self.budget_bytes = budget_bytes
         self.large_fit_bytes = large_fit_bytes
@@ -154,12 +162,20 @@ class HostMemoryGuard:
         self._lock_timeout = lock_timeout_s
         self._owners = max(1, owners)
         self._owner = 0
-        size = 1 + self._owners * _OWNER_BLOCK
+        self._block_size = 3 + max(1, queue_slots)
+        size = 1 + self._owners * self._block_size
         if mp_context is None:
+            # In-process: a condition variable (no process can die holding it).
             self._cond: Any = threading.Condition()
+            self._lock: Any = self._cond
             self._state: Any = [0] * size
         else:
-            self._cond = mp_context.Condition(mp_context.Lock())
+            # Across processes: a plain lock, and waiters poll. mp.Condition
+            # is unsafe here: a process killed while waiting leaves its
+            # sleeper count behind, and the next notify_all blocks forever
+            # (with the lock held) waiting for it to wake.
+            self._cond = None
+            self._lock = mp_context.Lock()
             self._state = mp_context.Array("q", size, lock=False)
 
     def bind(self, owner: int) -> None:
@@ -184,40 +200,39 @@ class HostMemoryGuard:
             yield
             return
         state, base = self._state, self._block(self._owner)
-        with self._locked():
+        with self._locked() as held:
             ticket = state[0] = state[0] + 1
             slot = None
             try:
                 while slot is None:
                     slot = self._park(base, ticket)
                     if slot is None:
-                        self._cond.wait(_POLL_S)
+                        self._wait(held)
                 while not (self._head() == ticket and self._admits(nbytes, offloads)):
-                    self._cond.wait(_POLL_S)
+                    self._wait(held)
             finally:
                 if slot is not None:
+                    # Unpark even without the lock (a lost reacquire): an
+                    # orphaned ticket would stay the head of the queue.
                     state[slot] = 0
-                self._cond.notify_all()  # the next waiter is now the head
+                    if held[0]:
+                        self._notify()  # the next waiter is now the head
             state[base] += nbytes
             state[base + 1] += 1
             state[base + 2] += int(offloads)
         try:
             yield
         finally:
-            with self._locked():
-                state[base] = max(0, state[base] - nbytes)
-                state[base + 1] = max(0, state[base + 1] - 1)
-                state[base + 2] = max(0, state[base + 2] - int(offloads))
-                self._cond.notify_all()
+            self._release(base, nbytes, offloads)
 
     def release_owner(self, owner: int) -> None:
         """Return everything a dead owner held or queued for."""
         base = self._block(owner)
         try:
             with self._locked():
-                for i in range(base, base + _OWNER_BLOCK):
+                for i in range(base, base + self._block_size):
                     self._state[i] = 0
-                self._cond.notify_all()
+                self._notify()
         except HostMemoryUnavailableError:
             logger.error("could not release host reservations of worker %d", owner)
 
@@ -233,7 +248,7 @@ class HostMemoryGuard:
                 "calls_waiting": sum(
                     1
                     for b in blocks
-                    for i in range(b + 3, b + _OWNER_BLOCK)
+                    for i in range(b + 3, b + self._block_size)
                     if self._state[i]
                 ),
                 "large_fit_slots": self.slots,
@@ -241,24 +256,59 @@ class HostMemoryGuard:
 
     # ---- internals (callers hold the lock) ----------------------------
 
-    @contextlib.contextmanager
-    def _locked(self) -> Iterator[None]:
-        if not self._cond.acquire(True, self._lock_timeout):
-            raise HostMemoryUnavailableError(
-                f"host memory accounting lock not acquired in {self._lock_timeout}s "
-                "(a worker may have died holding it); retry"
-            )
+    def _release(self, base: int, nbytes: int, offloads: bool) -> None:
+        """Return a call's reservation. Never raises: the call itself has
+        succeeded (a fit's context may already be cached), so a stuck lock
+        is logged -- and seen by /readyz, whose stats() fails -- rather
+        than turning that result into an error."""
+        state = self._state
         try:
-            yield
-        finally:
-            self._cond.release()
+            with self._locked():
+                state[base] = max(0, state[base] - nbytes)
+                state[base + 1] = max(0, state[base + 1] - 1)
+                state[base + 2] = max(0, state[base + 2] - int(offloads))
+                self._notify()
+        except HostMemoryUnavailableError:
+            logger.error("host memory reservation of %d bytes not returned", nbytes)
 
-    @staticmethod
-    def _block(owner: int) -> int:
-        return 1 + owner * _OWNER_BLOCK
+    @contextlib.contextmanager
+    def _locked(self) -> Iterator[list[bool]]:
+        """Hold the lock; yields a flag _wait clears if it can't get the
+        lock back (then there is nothing to release)."""
+        if not self._lock.acquire(True, self._lock_timeout):
+            raise self._stuck()
+        held = [True]
+        try:
+            yield held
+        finally:
+            if held[0]:
+                self._lock.release()
+
+    def _wait(self, held: list[bool]) -> None:
+        if self._cond is not None:
+            self._cond.wait(_POLL_S)
+            return
+        self._lock.release()
+        time.sleep(_MP_POLL_S)
+        if not self._lock.acquire(True, self._lock_timeout):
+            held[0] = False
+            raise self._stuck()
+
+    def _notify(self) -> None:
+        if self._cond is not None:
+            self._cond.notify_all()
+
+    def _stuck(self) -> HostMemoryUnavailableError:
+        return HostMemoryUnavailableError(
+            f"host memory accounting lock not acquired in {self._lock_timeout}s "
+            "(a worker may have died holding it); retry"
+        )
+
+    def _block(self, owner: int) -> int:
+        return 1 + owner * self._block_size
 
     def _park(self, base: int, ticket: int) -> int | None:
-        for i in range(base + 3, base + _OWNER_BLOCK):
+        for i in range(base + 3, base + self._block_size):
             if self._state[i] == 0:
                 self._state[i] = ticket
                 return i
@@ -269,7 +319,7 @@ class HostMemoryGuard:
             (
                 self._state[i]
                 for o in range(self._owners)
-                for i in range(self._block(o) + 3, self._block(o) + _OWNER_BLOCK)
+                for i in range(self._block(o) + 3, self._block(o) + self._block_size)
                 if self._state[i]
             ),
             default=0,

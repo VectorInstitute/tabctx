@@ -36,8 +36,10 @@ LIGHT_PREDICT_ROWS = 2048
 # A predict whose context is evicted again (under memory pressure) between
 # its restore and getting the device tries this many times.
 _PREDICT_ATTEMPTS = 3
-# Fits prepared (CPU half done) ahead of the one holding the device.
+# Large fits prepared (CPU half done) and waiting for the device at once;
+# smaller fits' prepared copies are too small to limit.
 _PREPARED_AHEAD = 1
+GATED_FIT_CELLS = 1_000_000
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -186,7 +188,7 @@ class TabctxEngine:
         # _fit_lock, _predict_lock (the cache lock and _release_lock are
         # leaves).
         self._fit_lock = threading.Lock()
-        self._prepare_gate = threading.BoundedSemaphore(1 + _PREPARED_AHEAD)
+        self._prepare_gate = threading.BoundedSemaphore(_PREPARED_AHEAD)
         # Re-entrant: a fit retrying alone holds it while the backend's
         # measurement takes it again (see _cuda.QuiescedMeasurement).
         self._predict_lock = threading.RLock()
@@ -321,16 +323,23 @@ class TabctxEngine:
         # The fit's CPU half (backends that split it: TabICL's preprocessing,
         # ~1/3 of a fit) runs before taking the device, overlapping the GPU
         # half of whatever fit holds it now.
-        # At most _PREPARED_AHEAD fits hold prepared (host-resident) data
-        # while waiting for the device, so queued fits don't each keep
-        # their preprocessed copies.
+        # At most _PREPARED_AHEAD large fits hold prepared (host-resident)
+        # data while waiting for the device, so queued large tables don't
+        # each keep their preprocessed copies. The permit is returned once
+        # the fit has the device, and small fits skip the gate, so neither
+        # a running fit nor large fits waiting for host memory hold up a
+        # small fit on this device.
         # Lock order everywhere: prepare gate, host slot, _fit_lock,
         # _predict_lock. Host memory before the device, so a large fit
         # waiting for host memory doesn't hold this device meanwhile.
-        with self._prepare_gate:
+        with contextlib.ExitStack() as gate:
+            if n_train * n_features >= GATED_FIT_CELLS:
+                self._prepare_gate.acquire()
+                gate.callback(self._prepare_gate.release)
             prepare = getattr(chosen, "prepare_fit", None)
             prepared = prepare(X, y, task) if callable(prepare) else None
             with self._host_slot(chosen, n_train, n_features), self._fit_lock:
+                gate.close()  # the device is ours: let the next fit prepare
                 self._make_room(estimator, estimated)
                 with self._measuring():
                     payload = self._fit_backend(
@@ -503,7 +512,10 @@ class TabctxEngine:
         )
         estimate = getattr(backend, "host_bytes_estimate", None)
         if callable(estimate):
-            nbytes = estimate(n_rows, n_features, offloads=offloads)
+            try:
+                nbytes = estimate(n_rows, n_features, offloads=offloads)
+            except TypeError:  # an estimate from before `offloads` existed
+                nbytes = estimate(n_rows, n_features)
         else:
             nbytes = guard.large_fit_bytes if offloads else 0
         return guard.reserve(nbytes, offloads=offloads)

@@ -23,11 +23,13 @@ doesn't recompile -- once tabicl's ssmax log(n) is computed symbolically
 inside compiled code (see tabicl.install_cached_logn): math.log on a
 Python int specialized every graph to one row count, and each new table
 recompiled for ~11 s. What remains is one graph per call family (stage,
-fp16 vs fp32, cached vs uncached, ...): ~40, compiled by the backend's
-warmup at replica start (~75 s per worker on an A100, workers in
-parallel). Very large tables reach a few more (tabicl batches them
-differently): 1-3 graphs, ~10 s once per worker. Inductor's on-disk cache
-makes later processes faster.
+cached vs uncached, size-1 dimensions, ...). Only tabicl's fp16 autocast
+path (tables of 1,024+ rows) is compiled: smaller tables run in fp32 in
+~0.1 s and would double the graphs. ~50 graphs compile in the backend's
+warmup at replica start (~130 s per worker on an A100, workers in
+parallel; Inductor's cache barely shortens it, tracing dominates). Calls warmup doesn't cover still compile inside a request,
+once per worker: very large tables reach 1-3 more graphs (tabicl batches
+them differently), ~10 s each, and other unusual shapes may too.
 
 Failure. Compilation errors fall back to eager (dynamo's suppress_errors),
 so a missing compiler toolchain costs speed, not availability.
@@ -40,10 +42,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Call families per block (stage x fp16/fp32 x cached/uncached x k given
-# or not): well above dynamo's default of 8, which would silently fall
-# back to eager for the rest.
-_RECOMPILE_LIMIT = 64
+# Graphs per block, per device (stage x fp16/fp32 x cached/uncached x ...,
+# ~50 measured; guards include the device, so an in-process engine over
+# several GPUs needs that many per GPU): well above dynamo's default of 8,
+# past which it silently runs the rest eagerly.
+_RECOMPILE_LIMIT_PER_DEVICE = 256
 
 
 def install_compiled_blocks(mode: str = "default") -> bool:
@@ -60,11 +63,44 @@ def install_compiled_blocks(mode: str = "default") -> bool:
     forward = MultiheadAttentionBlock.forward
     if getattr(forward, "_tabctx_compiled", False):
         return True
+    # Process-wide settings: they apply to any other torch.compile user in
+    # this process too (suppress_errors makes every compile failure fall
+    # back to eager; warn_if_not_compiled reports it for these blocks).
     config: Any = torch._dynamo.config
-    config.recompile_limit = max(config.recompile_limit, _RECOMPILE_LIMIT)
+    devices = max(1, torch.cuda.device_count())
+    config.recompile_limit = max(
+        config.recompile_limit, _RECOMPILE_LIMIT_PER_DEVICE * devices
+    )
     config.suppress_errors = True
     compiled = torch.compile(forward, dynamic=True, mode=mode)
-    compiled._tabctx_compiled = True  # type: ignore[attr-defined]
-    MultiheadAttentionBlock.forward = compiled
+
+    # Only under autocast: tabicl turns fp16 autocast on for tables of
+    # 1,024+ rows, where the fused kernels pay off; smaller tables (fp32,
+    # ~0.1 s fits) gain little and would double the graphs to compile.
+    def dispatch(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if torch.is_autocast_enabled("cuda"):
+            return compiled(self, *args, **kwargs)
+        return forward(self, *args, **kwargs)
+
+    dispatch._tabctx_compiled = True  # type: ignore[attr-defined]
+    dispatch._tabctx_eager = forward  # type: ignore[attr-defined]
+    MultiheadAttentionBlock.forward = dispatch
     logger.info("tabicl attention blocks compiled (mode=%s)", mode)
+    return True
+
+
+def warn_if_not_compiled() -> bool:
+    """After warmup: warn if no graph was compiled (compile errors fall back
+    to eager silently, losing the speedup) or a block hit dynamo's limit.
+    Returns whether compilation looks healthy."""
+    from torch._dynamo.utils import counters
+
+    graphs = counters["stats"]["unique_graphs"]
+    if graphs == 0:
+        logger.warning(
+            "tabicl attention blocks did not compile (running eagerly): check "
+            "the worker log for dynamo errors, or set TABCTX_COMPILE=0"
+        )
+        return False
+    logger.info("tabicl attention blocks: %d graphs compiled", graphs)
     return True
