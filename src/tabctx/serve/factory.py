@@ -28,6 +28,18 @@ Environment variables:
   fastest per predict; "repr" uses far less cache memory per context;
   "off" re-encodes the training set on every predict (tabicl's own
   default, kept only as an escape hatch).
+- ``TABCTX_KV_PRECISION``: ``"int8"`` (default), ``"fp16"`` or ``"native"``
+  -- storage of TabICL's ICL key/value cache, which dominates a TabICL
+  context (see backends/tabicl_kv.py). ``"int8"`` about halves resident
+  memory per context, so it doubles the longest table and the contexts per
+  GPU. Measured on an A100 over 7 datasets
+  (benchmarks/baselines/kv-precision-tabicl-a100.jsonl): identical labels
+  and metrics, max probability drift 0.009, at up to ~1.4x warm predict
+  latency on large contexts. TabPFN already stores its cache in int8.
+- ``TABCTX_OFFLOAD_DIR``: where TabICL may spill stage outputs too large
+  for GPU and host memory (memory-mapped files), instead of exhausting the
+  pod's RAM; default ``<TABCTX_SPILL_DIR>/offload``, else a temporary
+  directory. One subdirectory per device.
 - ``TABCTX_BATCH_WINDOW_MS``: coalescing window for same-context predict
   batching (see batching.py); default 5. 0 disables coalescing.
 - ``TABCTX_MAX_UPLOAD_BYTES`` (default 4GiB) and ``TABCTX_UPLOAD_TTL_S``
@@ -47,17 +59,26 @@ Environment variables:
   device. The replica only sees the GPUs its process is given: under Ray
   Serve that is ``ray_actor_options.num_gpus`` (or, for a ``num_gpus: 0``
   actor on a GPU pod, ``RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1``).
+- ``TABCTX_WORKER_PROCESSES``: ``1`` (default) runs each device's engine
+  in its own worker process (serve/workers.py) when there are several
+  devices; ``0`` runs them as threads of the serving process. Fits are
+  host-bound, so threads contend for the GIL: measured on 4x A100, four
+  concurrent fits took 2x as long each from threads, single-GPU time
+  from processes.
 """
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from tabctx.backends.base import TabularICLBackend
+from tabctx.backends.kv_precision import KV_PRECISIONS, KVPrecision
 from tabctx.cache.manager import ContextCacheManager
 from tabctx.cache.spill import DEFAULT_SPILL_CAPACITY_BYTES, DiskSpillStore
 from tabctx.engine import TabctxEngine
@@ -71,18 +92,23 @@ from tabctx.memory.estimator import (
     DEFAULT_HARD_CEILING_BYTES,
     MemoryEstimator,
 )
+from tabctx.memory.host import HostMemoryGuard, detect_host_budget_bytes
+from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
 
 BACKEND_ENV_VAR = "TABCTX_BACKEND"
 GPU_MEMORY_FRACTION_ENV_VAR = "TABCTX_GPU_MEMORY_FRACTION"
 KV_CACHE_ENV_VAR = "TABCTX_KV_CACHE"
+KV_PRECISION_ENV_VAR = "TABCTX_KV_PRECISION"
+OFFLOAD_DIR_ENV_VAR = "TABCTX_OFFLOAD_DIR"
 BATCH_WINDOW_MS_ENV_VAR = "TABCTX_BATCH_WINDOW_MS"
 MAX_UPLOAD_BYTES_ENV_VAR = "TABCTX_MAX_UPLOAD_BYTES"
 SPILL_DIR_ENV_VAR = "TABCTX_SPILL_DIR"
 SPILL_CAPACITY_ENV_VAR = "TABCTX_SPILL_CAPACITY_BYTES"
 UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
+WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +123,7 @@ class ServeSettings:
     backends: tuple[BackendKind, ...] = ("tabicl",)
     gpu_memory_fraction: float = 1.0
     kv_cache: KvCacheMode = "kv"
+    kv_precision: KVPrecision = "int8"
     batch_window_ms: float = 5.0
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES
     upload_ttl_s: float = DEFAULT_TTL_S
@@ -104,6 +131,11 @@ class ServeSettings:
     spill_capacity_bytes: int = DEFAULT_SPILL_CAPACITY_BYTES
     # Empty = "auto" (see resolve_devices).
     devices: tuple[str, ...] = ()
+    # None = <spill_dir>/offload, else a temporary directory.
+    offload_dir: str | None = None
+    # Several devices: one worker process per GPU (default) or threads of
+    # this process (see _build_process_engine for why processes).
+    worker_processes: bool = True
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -134,6 +166,14 @@ class ServeSettings:
             raise ValueError(
                 f"{KV_CACHE_ENV_VAR}={kv_cache!r} is not a known mode "
                 "(expected 'kv', 'repr', or 'off')"
+            )
+        kv_precision = (
+            os.environ.get(KV_PRECISION_ENV_VAR, cls.kv_precision).strip().lower()
+        )
+        if kv_precision not in KV_PRECISIONS:
+            raise ValueError(
+                f"{KV_PRECISION_ENV_VAR}={kv_precision!r} must be one of "
+                f"{', '.join(KV_PRECISIONS)}"
             )
         raw_window = os.environ.get(BATCH_WINDOW_MS_ENV_VAR, str(cls.batch_window_ms))
         try:
@@ -171,16 +211,25 @@ class ServeSettings:
         if spill_capacity <= 0:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
         devices = _parse_devices(os.environ.get(DEVICES_ENV_VAR, "auto"))
+        offload_dir = os.environ.get(OFFLOAD_DIR_ENV_VAR) or None
+        raw_workers = os.environ.get(WORKER_PROCESSES_ENV_VAR, "1").strip().lower()
+        if raw_workers not in ("0", "1", "true", "false"):
+            raise ValueError(
+                f"{WORKER_PROCESSES_ENV_VAR}={raw_workers!r} must be 0 or 1"
+            )
         return cls(
             backends=backends,
             gpu_memory_fraction=fraction,
             kv_cache=kv_cache,
+            kv_precision=kv_precision,
             batch_window_ms=batch_window_ms,
             max_upload_bytes=max_upload_bytes,
             upload_ttl_s=upload_ttl_s,
             spill_dir=spill_dir,
             spill_capacity_bytes=spill_capacity,
             devices=devices,
+            offload_dir=offload_dir,
+            worker_processes=raw_workers in ("1", "true"),
         )
 
 
@@ -216,7 +265,7 @@ class BuiltEngine:
     engine: TabctxEngine | MultiDeviceEngine
     # Keyed by model/backend name; `default` names the first-listed model.
     estimators: dict[str, MemoryEstimator]
-    backends: dict[str, TabularICLBackend]
+    backend_names: list[str]
     default: str
     device: str
     spill_store: object | None = None
@@ -224,17 +273,22 @@ class BuiltEngine:
     # smallest when several); None = defaults.
     gpu_capacity_bytes: int | None = None
     devices: tuple[str, ...] = ()
-    # One per device when there are several (spill_store is then None).
+    # One per device when there are several in-process (spill_store is
+    # then None); worker processes report their own (worker_shards).
     spill_stores: tuple = ()
+    host_guard: HostMemoryGuard | None = None
+    # Per-GPU worker processes (serve/workers.py), when used.
+    worker_shards: tuple = ()
 
-    # Single-model conveniences (the common deployment):
+    # Single-model convenience (the common deployment):
     @property
     def estimator(self) -> MemoryEstimator:
         return self.estimators[self.default]
 
-    @property
-    def backend(self) -> TabularICLBackend:
-        return self.backends[self.default]
+    def close(self) -> None:
+        """Stop worker processes, if any."""
+        for shard in self.worker_shards:
+            shard.close()
 
 
 def _preloaded_observations(
@@ -264,6 +318,40 @@ def _preloaded_observations(
     return fit_grid, predict_grid
 
 
+# Generated requirement calibrations (benchmarks/gen_requirement_grid.py),
+# per (model, cache mode): module under tabctx.memory and its name prefix.
+_REQUIREMENT_CALIBRATIONS: dict[tuple[str, str], tuple[str, str]] = {
+    ("tabicl", "kv"): ("calibration_tabicl_a100_requirement", "A100_40GB_TABICL_KV"),
+    ("tabpfn", "kv"): ("calibration_tabpfn_a100_requirement", "A100_40GB_TABPFN_KV"),
+}
+# Models whose per-row resident cache grows with features (see
+# ResidentRateModel): TabPFN caches per (row, feature group); TabICL's ICL
+# cache is per row only.
+_WIDTH_DEPENDENT_RESIDENT = frozenset({"tabpfn"})
+
+
+def _requirement_calibration(
+    kind: BackendKind, kv_cache: KvCacheMode
+) -> tuple[WorkingFloorModel | None, tuple, tuple]:
+    """Measured working floors + requirements (memory/requirement.py), so
+    admission bounds resident + floor instead of an unconstrained peak.
+    Configurations without a measured calibration keep peak semantics."""
+    entry = _REQUIREMENT_CALIBRATIONS.get((kind, kv_cache))
+    if entry is None:
+        return None, (), ()
+    module_name, prefix = entry
+    try:
+        grid = importlib.import_module(f"tabctx.memory.{module_name}")
+    except ImportError:  # generated module absent: peak semantics, no preload
+        return None, (), ()
+    points = getattr(grid, f"{prefix}_FLOOR_POINTS")
+    return (
+        WorkingFloorModel(points),
+        getattr(grid, f"{prefix}_REQUIREMENT_GRID"),
+        points,
+    )
+
+
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:
     """Total memory of the given CUDA devices (the smallest, since one
     estimator budgets them all), or None when torch is absent or sees no
@@ -288,6 +376,22 @@ def _visible_cuda_count() -> int:
     except ImportError:
         return 0
     return torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+
+def measure_device_baseline(device: str) -> int:
+    """Device memory in use before any context (call after the backends'
+    warmup): total - free, so it includes the CUDA context and allocator
+    overhead as well as the model weights. 0 off CUDA."""
+    if not device.startswith("cuda"):
+        return 0
+    try:
+        import torch
+    except ImportError:
+        return 0
+    if not torch.cuda.is_available():
+        return 0
+    free, total = torch.cuda.mem_get_info(torch.device(device))
+    return int(total - free)
 
 
 def resolve_devices(settings: ServeSettings) -> tuple[str, ...]:
@@ -348,15 +452,25 @@ def build_estimator(
         gpu_capacity_bytes=int(capacity * fraction),
     )
     fit_grid, predict_grid = _preloaded_observations(kind, settings.kv_cache)
+    working_floor, requirements, floor_points = _requirement_calibration(
+        kind, settings.kv_cache
+    )
     return AdaptiveMemoryEstimator(
         fallback=fallback,
-        preloaded=fit_grid,
+        # Both are valid upper bounds; the tightest dominating one wins.
+        preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
+        working_floor=working_floor,
+        resident_rate=ResidentRateModel(
+            floor_points, width_dependent=kind in _WIDTH_DEPENDENT_RESIDENT
+        )
+        if working_floor
+        else None,
     )
 
 
 def _build_real_backend(
-    kind: BackendKind, settings: ServeSettings, device: str
+    kind: BackendKind, settings: ServeSettings, device: str, host_slots: int = 1
 ) -> TabularICLBackend:  # pragma: no cover
     # Requires torch + tabicl/tabpfn (GPU or licensed weights), which --
     # like backends/tabicl.py and backends/tabpfn.py themselves -- are not
@@ -377,15 +491,36 @@ def _build_real_backend(
         kv_cache: bool | str = (
             False if settings.kv_cache == "off" else settings.kv_cache
         )
-        backend = TabICLBackend(device=device, kv_cache=kv_cache)
+        backend = TabICLBackend(
+            device=device,
+            kv_cache=kv_cache,
+            kv_precision=settings.kv_precision,
+            offload_dir=_offload_dir(settings, device),
+            # Concurrent offloading calls each get their share of host
+            # headroom (see memory/host.py).
+            cpu_safety_factor=0.6 / host_slots,
+        )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.
     backend.warmup()
     return backend
 
 
+def _offload_dir(settings: ServeSettings, device: str) -> str:
+    """Per-device directory for TabICL's disk offload (created)."""
+    if settings.offload_dir:
+        root = settings.offload_dir
+    elif settings.spill_dir:
+        root = os.path.join(settings.spill_dir, "offload")
+    else:
+        root = os.path.join(tempfile.gettempdir(), "tabctx-offload")
+    path = os.path.join(root, device.replace(":", "_"))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 def _build_backend(
-    kind: BackendKind, settings: ServeSettings, device: str = "cpu"
+    kind: BackendKind, settings: ServeSettings, device: str = "cpu", host_slots: int = 1
 ) -> TabularICLBackend:
     """One backend bound to `device`. Imports torch/tabicl/tabpfn only on
     the paths that need them, so the fake backend runs with core deps
@@ -394,7 +529,7 @@ def _build_backend(
         from tabctx.backends.fake import FakeBackend
 
         return FakeBackend()
-    return _build_real_backend(kind, settings, device)
+    return _build_real_backend(kind, settings, device, host_slots)
 
 
 def _warn_on_spill_layout(spill_dir: str, multi: bool) -> None:
@@ -442,70 +577,165 @@ def _build_spill_store(
     return DiskSpillStore(path, capacity_bytes=capacity_bytes, serializers=serializers)
 
 
+@dataclass
+class Shard:
+    """One device's complete engine and the parts the serving layer reports
+    on (see build_shard)."""
+
+    engine: TabctxEngine
+    backends: dict[str, TabularICLBackend]
+    estimators: dict[str, MemoryEstimator]
+    spill_store: DiskSpillStore | None
+
+
+def build_shard(
+    settings: ServeSettings,
+    device: str,
+    *,
+    n_devices: int,
+    gpu_capacity: int | None,
+    host_guard: HostMemoryGuard | None,
+    estimators: dict[str, MemoryEstimator] | None = None,
+) -> Shard:
+    """Everything one device serves from: a backend per model bound to the
+    device, one cache (and spill tier) shared by those models, and the
+    engine over them. Used in-process and by per-GPU worker processes
+    (serve/workers.py) alike.
+
+    estimators: shared across shards of one process (identical cards
+    budgeted alike, so observations learned on one hold on the others);
+    filled in on first use. A worker process passes none and learns alone.
+    """
+    estimators = {} if estimators is None else estimators
+    fake_only = set(settings.backends) == {"fake"}
+    multi = n_devices > 1
+    backends: dict[str, TabularICLBackend] = {}
+    for kind in settings.backends:
+        backend = _build_backend(
+            kind, settings, device, host_guard.slots if host_guard else 1
+        )
+        backends[backend.name] = backend
+        if backend.name not in estimators:
+            estimators[backend.name] = build_estimator(settings, kind, gpu_capacity)
+    # Backends are keyed by model id (e.g. "tabicl-v2"), not by kind
+    # ("tabicl"); insertion order follows settings.backends, so the
+    # first-listed kind's model is the default.
+    default = next(iter(backends))
+    spill_store = _build_spill_store(
+        settings,
+        backends,
+        device.replace(":", "_") if multi else None,
+        settings.spill_capacity_bytes // n_devices,
+    )
+    # ONE cache and budget shared by every model on a device -- the whole
+    # point of serving them behind one endpoint (see engine.py).
+    cache = ContextCacheManager(
+        capacity_bytes=estimators[default].ceiling_bytes(), spill_store=spill_store
+    )
+    engine = TabctxEngine(
+        backends=backends,
+        estimators={name: estimators[name] for name in backends},
+        cache=cache,
+        default_backend=default,
+        host_guard=host_guard,
+        device_baseline_bytes=0 if fake_only else measure_device_baseline(device),
+    )
+    return Shard(
+        engine=engine,
+        backends=backends,
+        estimators={name: estimators[name] for name in backends},
+        spill_store=spill_store,
+    )
+
+
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     settings = settings or ServeSettings.from_env()
     devices = resolve_devices(settings)
+    fake_only = set(settings.backends) == {"fake"}
     # Budget against the real device, not the calibration card's size;
     # the fake backend never touches a GPU even when one is visible.
-    gpu_capacity = (
-        None
-        if set(settings.backends) == {"fake"}
-        else detect_gpu_capacity_bytes(devices)
-    )
+    gpu_capacity = None if fake_only else detect_gpu_capacity_bytes(devices)
     multi = len(devices) > 1
     if settings.spill_dir:
         _warn_on_spill_layout(settings.spill_dir, multi)
+    host_budget = None if fake_only else detect_host_budget_bytes()
+    if multi and settings.worker_processes:
+        return _build_process_engine(settings, devices, gpu_capacity, host_budget)
+    # One host-memory guard per process: host RAM is shared by every device.
+    host_guard = HostMemoryGuard(host_budget) if host_budget else None
     estimators: dict[str, MemoryEstimator] = {}
-    shards: list[TabctxEngine] = []
-    spill_stores: list[DiskSpillStore | None] = []
-    first_backends: dict[str, TabularICLBackend] = {}
-    for device in devices:
-        backends: dict[str, TabularICLBackend] = {}
-        for kind in settings.backends:
-            backend = _build_backend(kind, settings, device)
-            backends[backend.name] = backend
-            # One estimator per model, shared by every device: they are
-            # identical cards budgeted alike, and observations learned on
-            # one device are valid on the others.
-            if backend.name not in estimators:
-                estimators[backend.name] = build_estimator(settings, kind, gpu_capacity)
-        # Backends are keyed by model id (e.g. "tabicl-v2"), not by kind
-        # ("tabicl"); insertion order follows settings.backends, so the
-        # first-listed kind's model is the default.
-        default = next(iter(backends))
-        spill_store = _build_spill_store(
+    shards = [
+        build_shard(
             settings,
-            backends,
-            device.replace(":", "_") if multi else None,
-            settings.spill_capacity_bytes // len(devices),
+            device,
+            n_devices=len(devices),
+            gpu_capacity=gpu_capacity,
+            host_guard=host_guard,
+            estimators=estimators,
         )
-        # ONE cache and budget shared by every model on a device -- the
-        # whole point of serving them behind one endpoint (see engine.py).
-        cache = ContextCacheManager(
-            capacity_bytes=estimators[default].ceiling_bytes(), spill_store=spill_store
-        )
-        shards.append(
-            TabctxEngine(
-                backends=backends,
-                estimators={name: estimators[name] for name in backends},
-                cache=cache,
-                default_backend=default,
-            )
-        )
-        spill_stores.append(spill_store)
-        first_backends = first_backends or backends
+        for device in devices
+    ]
+    first = shards[0]
     engine: TabctxEngine | MultiDeviceEngine = (
-        MultiDeviceEngine(shards, list(devices)) if multi else shards[0]
+        MultiDeviceEngine([s.engine for s in shards], list(devices))
+        if multi
+        else first.engine
     )
-    fake_only = set(settings.backends) == {"fake"}
     return BuiltEngine(
         engine=engine,
-        estimators={name: estimators[name] for name in first_backends},
-        backends=first_backends,
-        default=next(iter(first_backends)),
+        estimators=first.estimators,
+        backend_names=list(first.backends),
+        default=next(iter(first.backends)),
         device="cpu (fake backend)" if fake_only else ",".join(devices),
-        spill_store=None if multi else spill_stores[0],
+        spill_store=None if multi else first.spill_store,
         gpu_capacity_bytes=gpu_capacity,
         devices=devices,
-        spill_stores=tuple(s for s in spill_stores if s is not None) if multi else (),
+        spill_stores=tuple(s.spill_store for s in shards if s.spill_store is not None)
+        if multi
+        else (),
+        host_guard=host_guard,
+    )
+
+
+def _build_process_engine(
+    settings: ServeSettings,
+    devices: tuple[str, ...],
+    gpu_capacity: int | None,
+    host_budget: int | None,
+) -> BuiltEngine:
+    """One worker process per GPU (serve/workers.py), routed by a
+    MultiDeviceEngine in this process. Measured on 4x A100 (benchmarks/
+    bench_scaling.py): concurrent fits on four GPUs from threads of one
+    process took 2x as long each (the GIL -- fits are host-bound), while
+    a process per GPU ran each at single-GPU speed."""
+    import multiprocessing as mp
+
+    from tabctx.serve.workers import ProcessShard
+
+    ctx = mp.get_context("spawn")
+    host_guard = HostMemoryGuard(host_budget, mp_context=ctx) if host_budget else None
+    shards = ProcessShard.start_all(
+        settings,
+        devices,
+        gpu_capacity=gpu_capacity,
+        host_guard=host_guard,
+        mp_context=ctx,
+    )
+    # This process holds no backends: /limits and /readyz use estimators
+    # built from the same settings (calibration, not this replica's
+    # learned observations).
+    estimators = {
+        name: build_estimator(settings, kind, gpu_capacity)
+        for name, kind in zip(shards[0].backend_names, settings.backends, strict=True)
+    }
+    return BuiltEngine(
+        engine=MultiDeviceEngine(list(shards), list(devices)),
+        estimators=estimators,
+        backend_names=list(shards[0].backend_names),
+        default=shards[0].default_backend,
+        device=",".join(devices),
+        gpu_capacity_bytes=gpu_capacity,
+        devices=devices,
+        host_guard=host_guard,
+        worker_shards=tuple(shards),
     )

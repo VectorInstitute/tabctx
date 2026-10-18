@@ -13,7 +13,7 @@ routes between them:
     1. Devices where the table's estimated peak fits WITHOUT evicting
        anything are preferred; among them, the least active one wins
        (fewest calls in flight, then fewest started recently), ties to
-       the most headroom. Each device serializes its own GPU work, so
+       the most headroom. Each device runs one fit at a time, so
        spreading active users across devices is what lets them run
        concurrently.
     2. If no device can take it without eviction (a large table, or a
@@ -27,9 +27,9 @@ routes between them:
   device's residency and spill index (so a context spilled before a
   restart is found on, and restored to, its own device).
 
-Concurrency. Each device's engine holds its cache lock across its whole
-GPU call, so this router never takes another device's lock to make a
-decision: placement and lookup read lock-free snapshots (used bytes,
+Concurrency. Each device's engine schedules its own GPU work (one fit at a
+time, light predicts beside it; see engine.py), and this router never
+waits on a device to make a decision: placement and lookup read lock-free snapshots (used bytes,
 residency, spill index). Work on different devices therefore runs
 concurrently, fits included. Per-dataset_id locks serialize fits and
 evicts of the SAME id, so two concurrent fits of one id end with a single
@@ -54,14 +54,60 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
+from typing import Protocol
 
-from tabctx.engine import TabctxEngine, _validate_fit_input
+from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
-from tabctx.memory.estimator import MemoryEstimator
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 # How long a started call counts toward a device's recent activity.
 ACTIVITY_WINDOW_S = 30.0
+
+
+class Shard(Protocol):
+    """One device's engine as the router sees it: a TabctxEngine in this
+    process, or a ProcessShard proxying one in a worker process
+    (serve/workers.py). The *_nowait-style reads (holds, has,
+    stats_nowait, admission_headroom_bytes) must not wait on the device's
+    GPU work."""
+
+    @property
+    def backend_names(self) -> list[str]: ...
+
+    @property
+    def default_backend(self) -> str: ...
+
+    def resolve_backend_name(self, backend: str | None) -> str: ...
+
+    def estimate_fit_bytes(
+        self, n_train: int, n_features: int, backend: str | None = None
+    ) -> int: ...
+
+    def admission_headroom_bytes(self, backend: str | None = None) -> int: ...
+
+    def holds(self, dataset_id: str) -> bool: ...
+
+    def has(self, dataset_id: str) -> bool: ...
+
+    def stats_nowait(self) -> EngineStats: ...
+
+    def fit(
+        self,
+        X: ArrayLike,
+        y: ArrayLike,
+        task: Task = "classification",
+        dataset_id: str | None = None,
+        backend: str | None = None,
+        feature_names: list[str] | None = None,
+    ) -> str: ...
+
+    def predict(
+        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+    ) -> PredictOutcome: ...
+
+    def feature_names(self, dataset_id: str) -> list[str] | None: ...
+
+    def evict(self, dataset_id: str) -> None: ...
 
 
 class _KeyedLocks:
@@ -96,7 +142,7 @@ def _not_found(dataset_id: str) -> DatasetNotFoundError:
 class MultiDeviceEngine:
     def __init__(
         self,
-        shards: list[TabctxEngine],
+        shards: list[Shard],
         devices: list[str],
         activity_window_s: float = ACTIVITY_WINDOW_S,
         clock: Callable[[], float] = time.monotonic,
@@ -127,9 +173,6 @@ class MultiDeviceEngine:
     @property
     def default_backend(self) -> str:
         return self._shards[0].default_backend
-
-    def estimator_for(self, backend: str | None = None) -> MemoryEstimator:
-        return self._shards[0].estimator_for(backend)
 
     def admission_headroom_bytes(self, backend: str | None = None) -> int:
         """The best any one device offers: a fit lands on a single device."""
@@ -167,14 +210,19 @@ class MultiDeviceEngine:
 
     # ---- placement and lookup (lock-free snapshots) ----------------
 
-    def _place(self, estimated_bytes: int, backend: str) -> int:
+    def _place(self, n_train: int, n_features: int, backend: str) -> int:
         headrooms = self.device_headroom_bytes(backend)
+        # Each shard prices the fit with its own estimator (worker
+        # processes learn separately; in-process shards share one).
+        needs = [
+            s.estimate_fit_bytes(n_train, n_features, backend) for s in self._shards
+        ]
         activity = self._activity()
         indices = range(len(self._shards))
-        fits = [i for i in indices if headrooms[i] >= estimated_bytes]
+        fits = [i for i in indices if headrooms[i] >= needs[i]]
         if fits:
             return min(fits, key=lambda i: (activity[i], -headrooms[i], i))
-        return max(indices, key=lambda i: (headrooms[i], -i))
+        return max(indices, key=lambda i: (headrooms[i] - needs[i], -i))
 
     def _locate(self, dataset_id: str) -> list[int]:
         """Devices holding the id: resident first, then spilled copies."""
@@ -199,13 +247,18 @@ class MultiDeviceEngine:
     ) -> str:
         n_features = _validate_fit_input(X, y)
         name = self._shards[0].resolve_backend_name(backend)
-        estimated = self.estimator_for(name).estimate_bytes(len(X), 0, n_features)
         if dataset_id is None:
             return self._fit_on(
-                self._place(estimated, name), X, y, task, None, name, feature_names
+                self._place(len(X), n_features, name),
+                X,
+                y,
+                task,
+                None,
+                name,
+                feature_names,
             )
         with self._id_locks.hold(dataset_id):
-            index = self._place(estimated, name)
+            index = self._place(len(X), n_features, name)
             resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
             # Only now that the new context is in place: drop copies on
             # other devices (a failed fit above leaves the old one serving).
@@ -228,15 +281,23 @@ class MultiDeviceEngine:
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome:
-        for index in self._locate(dataset_id):
-            try:
-                with self._active(index):
-                    return self._shards[index].predict(
-                        dataset_id, X_test, return_proba=return_proba
-                    )
-            except DatasetNotFoundError:
-                # Moved or evicted between the snapshot and the call.
-                continue
+        tried: set[int] = set()
+        # Two passes: a re-fit can move the id to another device between
+        # the first snapshot and the calls (it lands there, then the old
+        # copy is evicted), so a miss everywhere looks once more.
+        for _ in range(2):
+            for index in self._locate(dataset_id):
+                if index in tried:
+                    continue
+                tried.add(index)
+                try:
+                    with self._active(index):
+                        return self._shards[index].predict(
+                            dataset_id, X_test, return_proba=return_proba
+                        )
+                except DatasetNotFoundError:
+                    # Moved or evicted between the snapshot and the call.
+                    continue
         raise _not_found(dataset_id)
 
     def feature_names(self, dataset_id: str) -> list[str] | None:

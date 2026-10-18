@@ -273,3 +273,112 @@ class TestBackendIntrospection:
     def test_estimator_for_default_and_named(self):
         engine, _ = make_engine()
         assert engine.estimator_for() is engine.estimator_for("fake")
+
+
+class TestPredictOomFallback:
+    def test_an_oom_chunk_is_split_until_it_fits(self):
+        from tabctx.backends.fake import FakeBackend
+        from tabctx.cache.manager import ContextCacheManager
+        from tabctx.engine import TabctxEngine
+        from tabctx.errors import BackendComputeError
+        from tabctx.memory import (
+            A100_40GB_TABICL_CALIBRATION,
+            AdaptiveMemoryEstimator,
+            PowerLawMemoryEstimator,
+        )
+
+        class OomAbove(FakeBackend):
+            def __init__(self, max_rows):
+                super().__init__(bytes_hint=10)
+                self.max_rows = max_rows
+                self.calls = []
+
+            def predict(self, payload, X_test, return_proba=False):
+                self.calls.append(len(X_test))
+                if len(X_test) > self.max_rows:
+                    raise BackendComputeError("CUDA OOM during predict()")
+                return super().predict(payload, X_test, return_proba)
+
+        backend = OomAbove(max_rows=3)
+        est = AdaptiveMemoryEstimator(
+            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+        )
+        engine = TabctxEngine(
+            backend=backend,
+            cache=ContextCacheManager(est.ceiling_bytes()),
+            estimator=est,
+        )
+        engine.fit([[1.0], [2.0]], ["a", "a"], dataset_id="d")
+        out = engine.predict("d", [[0.0]] * 10)
+        assert out.predictions == ["a"] * 10  # all rows, in order
+        served = [n for n in backend.calls if n <= 3]  # the calls that fit
+        assert sum(served) == 10 and backend.calls[0] == 10
+
+    def test_a_single_row_that_still_ooms_raises(self):
+        import pytest
+
+        from tabctx.backends.fake import FakeBackend
+        from tabctx.cache.manager import ContextCacheManager
+        from tabctx.engine import TabctxEngine
+        from tabctx.errors import BackendComputeError
+        from tabctx.memory import (
+            A100_40GB_TABICL_CALIBRATION,
+            AdaptiveMemoryEstimator,
+            PowerLawMemoryEstimator,
+        )
+
+        class AlwaysOom(FakeBackend):
+            def predict(self, payload, X_test, return_proba=False):
+                raise BackendComputeError("CUDA OOM during predict()")
+
+        est = AdaptiveMemoryEstimator(
+            fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+        )
+        engine = TabctxEngine(
+            backend=AlwaysOom(bytes_hint=10),
+            cache=ContextCacheManager(est.ceiling_bytes()),
+            estimator=est,
+        )
+        engine.fit([[1.0]], ["a"], dataset_id="d")
+        with pytest.raises(BackendComputeError):
+            engine.predict("d", [[0.0]] * 4)
+
+
+def test_device_baseline_counts_against_headroom():
+    """Weights + CUDA context occupy the device before any context; a fit
+    that fits an empty card must be rejected when they leave too little."""
+    import pytest
+
+    from tabctx.backends.fake import FakeBackend
+    from tabctx.cache.manager import ContextCacheManager
+    from tabctx.engine import TabctxEngine
+    from tabctx.errors import AdmissionRejected
+    from tabctx.memory import (
+        A100_40GB_TABICL_CALIBRATION,
+        AdaptiveMemoryEstimator,
+        PowerLawMemoryEstimator,
+    )
+    from tabctx.memory.adaptive import Observation
+
+    GiB = 1024**3
+
+    def engine(baseline):
+        fallback = PowerLawMemoryEstimator(
+            A100_40GB_TABICL_CALIBRATION,
+            hard_ceiling_bytes=12 * GiB,
+            gpu_capacity_bytes=22 * GiB,
+        )
+        est = AdaptiveMemoryEstimator(
+            fallback=fallback, preloaded=(Observation(1_000, 2, int(15 * GiB / 1.1)),)
+        )
+        return TabctxEngine(
+            backend=FakeBackend(bytes_hint=GiB),
+            cache=ContextCacheManager(12 * GiB),
+            estimator=est,
+            device_baseline_bytes=baseline,
+        )
+
+    X, y = [[1.0, 2.0]] * 1_000, ["a"] * 1_000
+    engine(0).fit(X, y)  # 15 GB need <= 0.85 x 22 = 18.7 GB
+    with pytest.raises(AdmissionRejected):
+        engine(4 * GiB).fit(X, y)  # 18.7 - 4 = 14.7 GB < 15 GB

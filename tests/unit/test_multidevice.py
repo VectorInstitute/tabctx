@@ -487,6 +487,54 @@ class TestConcurrency:
             assert engine.predict(f"u{u}", [[0.0]]).predictions == ["a"]
 
 
+class TestMovingContexts:
+    """Regression (4xL4 rehearsal): a fit returned 200 and the next
+    predict 404'd within 30 ms -- the context was being spilled by a
+    concurrent fit's evict-ahead, so the router's lock-free lookup saw it
+    in neither tier."""
+
+    def test_predict_during_a_spill_waits_and_restores(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10, label="x"), dataset_id="d")
+        owner = where(shards, "d")[0]
+        cache = shards[owner]._cache
+        spill = cache._spill
+        gate, entered = threading.Event(), threading.Event()
+        original = spill.spill
+
+        def slow_spill(context):
+            entered.set()
+            assert gate.wait(5)
+            return original(context)
+
+        spill.spill = slow_spill
+        evicting, _ = start(cache.evict_one)
+        assert entered.wait(5)
+        predicting, box = start(engine.predict, "d", [[0.0]])
+        gate.set()
+        evicting.join(5)
+        predicting.join(5)
+        assert box.get("result") is not None, box.get("error")
+        assert box["result"].predictions == ["x"]
+
+    def test_predict_relocates_after_a_refit_moves_the_context(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10, label="x"), dataset_id="d")
+        owner = where(shards, "d")[0]
+        stale = 1 - owner
+        real_locate = engine._locate
+        calls = []
+
+        def locate(dataset_id):
+            # First snapshot predates the move: only the old device.
+            calls.append(dataset_id)
+            return [stale] if len(calls) == 1 else real_locate(dataset_id)
+
+        engine._locate = locate
+        assert engine.predict("d", [[0.0]]).predictions == ["x"]
+        assert len(calls) == 2
+
+
 class TestFailures:
     def test_failed_refit_keeps_the_previous_context(self):
         engine, shards, _ = build(2)

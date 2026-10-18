@@ -38,7 +38,12 @@ from typing import Any
 
 import numpy as np
 
-from tabctx.backends._cuda import device_scope, ensure_initialized, is_cuda
+from tabctx.backends._cuda import (
+    QuiescedMeasurement,
+    device_scope,
+    ensure_initialized,
+    is_cuda,
+)
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -84,7 +89,7 @@ class _SharedModelUnpickler(pickle.Unpickler):
         return self._resolve(pid)
 
 
-class TabPFNBackend:
+class TabPFNBackend(QuiescedMeasurement):
     def __init__(self, device: str | None = None, cache_mode: str = "kv") -> None:
         import torch
         from tabpfn.settings import settings
@@ -124,9 +129,11 @@ class TabPFNBackend:
         model = self._make_estimator(task)
         device = self._device
         measuring = is_cuda(device)
-        before_bytes = torch.cuda.memory_allocated(device) if measuring else 0
+        before_bytes = 0
         if measuring:
-            torch.cuda.reset_peak_memory_stats(device)
+            with self.quiesced():
+                before_bytes = torch.cuda.memory_allocated(device)
+                torch.cuda.reset_peak_memory_stats(device)
         try:
             with device_scope(device):
                 model.fit(np.asarray(X, dtype=float), np.asarray(y))
@@ -143,12 +150,11 @@ class TabPFNBackend:
         # Resident vs peak: two different consumers -- see
         # backends/tabicl.py fit() for the full rationale.
         if measuring:
-            self._last_context_bytes = max(
-                0, torch.cuda.memory_allocated(device) - before_bytes
-            )
-            self._last_fit_peak_bytes = max(
-                0, torch.cuda.max_memory_allocated(device) - before_bytes
-            )
+            with self.quiesced():
+                after_bytes = torch.cuda.memory_allocated(device)
+                peak_bytes = torch.cuda.max_memory_allocated(device)
+            self._last_context_bytes = max(0, after_bytes - before_bytes)
+            self._last_fit_peak_bytes = max(0, peak_bytes - before_bytes)
         else:
             self._last_context_bytes = None
             self._last_fit_peak_bytes = None

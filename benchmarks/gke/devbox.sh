@@ -9,6 +9,8 @@
 #   benchmarks/gke/devbox.sh up            # create cluster + pod (MACHINES order)
 #   benchmarks/gke/devbox.sh sync          # copy src/ benchmarks/ tests/ into the pod
 #   benchmarks/gke/devbox.sh exec -- CMD   # run CMD in the pod (cwd /work/tabctx)
+#                                         # (CMD is joined into one shell string: quote
+#                                         #  pipes/redirects as one argument, no bash -c)
 #   benchmarks/gke/devbox.sh fetch PATH    # copy /work/tabctx/PATH back to ./gke-out/
 #   benchmarks/gke/devbox.sh down          # delete the cluster
 #
@@ -29,6 +31,9 @@ POD=tabctx-devbox
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 mkdir -p "$STATE"
+# A private kubeconfig: get-credentials would otherwise switch the user's (and any
+# concurrently running script's) current kubectl context to this cluster.
+export KUBECONFIG="$STATE/kubeconfig"
 
 accelerator_for() {
   case "$1" in
@@ -88,6 +93,11 @@ up() {
   fi
   k wait --for=condition=Ready node -l cloud.google.com/gke-nodepool=gpu --timeout=20m
   local gpus; gpus=$(gpus_for "$MACHINE")
+  local phase; phase=$(k get pod $POD -o jsonpath='{.status.phase}' 2>/dev/null || true)
+  if [ -n "$phase" ] && [ "$phase" != "Running" ] && [ "$phase" != "Pending" ]; then
+    echo "==> pod is $phase (e.g. OOMKilled); recreating"
+    k delete pod $POD --wait
+  fi
   cat <<YAML | k apply -f -
 apiVersion: v1
 kind: Pod
@@ -108,7 +118,9 @@ spec:
     - name: box
       image: $IMAGE
       command: ["sleep", "infinity"]
-      resources: {limits: {nvidia.com/gpu: $gpus}}
+      # A memory limit, as KubeRay sets in prod: host-RAM exhaustion is then
+      # a cgroup OOM inside the container, and the limit is readable there.
+      resources: {limits: {nvidia.com/gpu: $gpus, memory: ${POD_MEMORY:-64Gi}}}
       env:
         - {name: TABPFN_MODEL_CACHE_DIR, value: /model-weights/tabctx/tabpfn}
         - {name: HF_HUB_CACHE, value: /model-weights/tabctx/hf/hub}

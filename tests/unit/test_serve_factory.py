@@ -170,7 +170,9 @@ class TestDeviceCapacity:
     def test_build_engine_uses_detected_capacity_for_real_backends(self, monkeypatch):
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         monkeypatch.setattr(
             "tabctx.serve.factory.detect_gpu_capacity_bytes",
@@ -206,7 +208,7 @@ class TestDeviceCapacity:
 class TestBuildEngine:
     def test_fake_backend_end_to_end(self):
         built = build_engine(ServeSettings(backends=("fake",)))
-        assert isinstance(built.backend, FakeBackend)
+        assert built.backend_names == ["fake"] and built.default == "fake"
         assert "fake" in built.device
 
         dataset_id = built.engine.fit([[1.0, 2.0], [3.0, 4.0]], ["a", "b"])
@@ -232,7 +234,9 @@ class TestBuildEngine:
         # model, resolved through that mapping.
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: FakeBackend(name=f"{kind}-model"),
+            lambda kind, settings, device, host_slots=1: FakeBackend(
+                name=f"{kind}-model"
+            ),
         )
         built = build_engine(
             ServeSettings(backends=("tabpfn", "fake"), devices=("cpu",))
@@ -252,6 +256,8 @@ class TestBuildEngine:
             SPILL_DIR_ENV_VAR,
             SPILL_CAPACITY_ENV_VAR,
             DEVICES_ENV_VAR,
+            "TABCTX_KV_PRECISION",
+            "TABCTX_OFFLOAD_DIR",
         ):
             monkeypatch.delenv(var, raising=False)
         assert ServeSettings.from_env() == ServeSettings()
@@ -274,7 +280,7 @@ class TestBuildEngine:
         calls = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 calls.append((kind, settings, device)) or object()
             ),
         )
@@ -318,8 +324,9 @@ class TestCalibrationPreload:
         # shortcut finds the real module other tests already imported.
         import tabctx.memory as memory_pkg
 
-        monkeypatch.delattr(memory_pkg, "calibration_tabicl_a100", raising=False)
-        monkeypatch.setitem(sys.modules, "tabctx.memory.calibration_tabicl_a100", None)
+        for name in ("calibration_tabicl_a100", "calibration_tabicl_a100_requirement"):
+            monkeypatch.delattr(memory_pkg, name, raising=False)
+            monkeypatch.setitem(sys.modules, f"tabctx.memory.{name}", None)
         est = build_estimator(ServeSettings(backends=("tabicl",)))
         assert "0 preloaded calibration measurement" in est.confidence()
 
@@ -380,7 +387,7 @@ class TestDevices:
         created = []
         monkeypatch.setattr(
             "tabctx.serve.factory._build_real_backend",
-            lambda kind, settings, device: (
+            lambda kind, settings, device, host_slots=1: (
                 created.append(device) or FakeBackend(name=f"{kind}-model")
             ),
         )
@@ -395,6 +402,7 @@ class TestDevices:
                 devices=("cuda:0", "cuda:1", "cuda:2"),
                 spill_dir=str(tmp_path),
                 spill_capacity_bytes=30 * 1024**3,
+                worker_processes=False,  # the patches above are in-process
             )
         )
         assert isinstance(built.engine, MultiDeviceEngine)
@@ -448,6 +456,18 @@ class TestDeviceValidation:
                     backends=("fake",),
                     devices=("cuda:0", "cuda:1"),
                     spill_dir=str(tmp_path),
+                    worker_processes=False,
                 )
             )
         assert "will not be restored" in caplog.text
+
+
+class TestKvPrecision:
+    def test_default_and_parsing(self, monkeypatch):
+        monkeypatch.delenv("TABCTX_KV_PRECISION", raising=False)
+        assert ServeSettings.from_env().kv_precision == "int8"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", " INT8 ")
+        assert ServeSettings.from_env().kv_precision == "int8"
+        monkeypatch.setenv("TABCTX_KV_PRECISION", "fp4")
+        with pytest.raises(ValueError, match="TABCTX_KV_PRECISION"):
+            ServeSettings.from_env()
