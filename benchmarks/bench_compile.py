@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
-"""Does torch.compile speed up TabICL's GPU half, and is it exact enough? (#32/#36)
+"""Does torch.compile speed up a backend's fit and predict, and is it exact
+enough? (#32/#36)
 
-The fit profile (#31) put layer norm at ~21% of the GPU half -- memory-bound
-passes over [ensembles, features, rows, 128] activations, each next to a
-residual add or a GELU MLP that also streams the tensor. Inductor can fuse
-those elementwise passes. This compares, on one device:
+Compares one backend eager vs compiled, on one device (compilation patches
+the model process-wide, so run eager and compiled as separate processes):
 
-- eager (baseline);
-- ``block``: each attention block's whole forward compiled (norms,
-  residual adds and the GELU MLP fused around the attention kernel).
+- TabICL: its attention blocks compiled (TabICLBackend(compile_blocks=True),
+  see backends/tabicl_compile.py) -- layer norms, residual adds and the
+  GELU MLP fused around the attention kernel;
+- TabPFN-3.5: the library's own compile path (enable_torch_compile).
 
-For each it reports the GPU half's time (TabICLBackend.fit_prepared, CPU
-preprocessing excluded), the first call's compile cost, predict latency, and
-the largest probability difference against eager on held-out rows.
+Reports the fit time (TabICL: its GPU half, CPU preprocessing excluded),
+the first call's compile cost, predict latency, accuracy and log loss on
+held-out rows, and the largest probability difference against a saved
+eager run.
 
-Usage (on a GPU host with tabicl and the weights):
-  bench_compile.py --device cuda:0 --shapes 10000x50 40000x100 --repeats 3 \
-      --variant block --baseline eager.npz --out compile-a100.jsonl
+Usage (on a GPU host with the models' weights):
+  bench_compile.py --backend tabicl --shapes 10000x50 40000x100 --save-proba eager.npz
+  bench_compile.py --backend tabicl --shapes 10000x50 40000x100 --compile \
+      --baseline eager.npz --out compile-a100.jsonl
 """
 
 from __future__ import annotations
@@ -45,46 +47,64 @@ def make_table(rows: int, features: int, seed: int):
     return X, y
 
 
-def symbolic_logn() -> None:
-    """tabicl's ssmax scales queries by log(n) computed with math.log on a
-    Python int, which specializes every compiled graph to one row count
-    (each new table recompiled for 11 s). Inside compiled code, compute it
-    as a tensor op on the symbolic n instead."""
-    from tabicl._model import ssmax
+def enable_tabpfn_compile() -> None:
+    """TabPFN-3.5 ships its own torch.compile path (PerformanceOptions.
+    enable_torch_compile: selected sub-graphs, dynamic row/feature dims,
+    symbolic log n), off by default and not exposed by the estimators;
+    turn it on in the model's default options."""
+    import dataclasses
 
-    eager = ssmax._logn
+    from tabpfn.architectures.tabpfn_v3_5 import TabPFNV3p5
 
-    def logn(n, device, dtype):
-        if torch.compiler.is_compiling():
-            ones = torch.ones((), device=device, dtype=torch.float32)
-            return (ones * torch.sym_max(n, 1)).log().to(dtype)
-        return eager(n, device, dtype)
+    defaults = TabPFNV3p5.get_default_performance_options
 
-    ssmax._logn = logn
+    def with_compile(self):
+        return dataclasses.replace(defaults(self), enable_torch_compile=True)
 
-
-def install(variant: str, mode: str) -> None:
-    """Patch tabicl's attention block class (all instances share one graph:
-    nn-module parameters are graph inputs, so instances don't recompile)."""
-    from tabicl._model.layers import MultiheadAttentionBlock as Block
-
-    if variant == "eager":
-        return
-    if variant == "block":
-        # Blocks see several static shapes (column vs row vs ICL stages,
-        # induced points vs features): allow a graph per shape family.
-        torch._dynamo.config.recompile_limit = 64
-        symbolic_logn()
-        Block.forward = torch.compile(Block.forward, dynamic=True, mode=mode)
-        return
-    raise SystemExit(f"unknown variant {variant}")
+    TabPFNV3p5.get_default_performance_options = with_compile
 
 
-def run(device: str, rows: int, features: int, repeats: int, amp: str) -> dict:
+def build(kind: str, device: str, compiled: bool):
+    if kind == "tabpfn":
+        from tabctx.backends.tabpfn import TabPFNBackend
+
+        if compiled:
+            enable_tabpfn_compile()
+        return TabPFNBackend(device=device)
     from tabctx.backends.tabicl import TabICLBackend
 
-    backend = TabICLBackend(device=device)
-    if amp != "auto":  # tabicl's default: fp16 autocast above 1024 rows
+    return TabICLBackend(device=device, compile_blocks=compiled)
+
+
+def fit_timed(backend, X, y, device: str):
+    """The fit's GPU half where the backend splits it (TabICL), else all."""
+    prepare = getattr(backend, "prepare_fit", None)
+    if callable(prepare):
+        prepared = prepare(X, y, "classification")
+        torch.cuda.synchronize(device)
+        t0 = time.perf_counter()
+        payload = backend.fit_prepared(prepared)
+    else:
+        torch.cuda.synchronize(device)
+        t0 = time.perf_counter()
+        payload = backend.fit(X, y, "classification")
+    torch.cuda.synchronize(device)
+    return payload, time.perf_counter() - t0
+
+
+def run(
+    kind: str,
+    device: str,
+    compiled: bool,
+    rows: int,
+    features: int,
+    repeats: int,
+    amp: str,
+) -> dict:
+    backend = build(kind, device, compiled)
+    if (
+        amp != "auto" and kind == "tabicl"
+    ):  # tabicl's default: fp16 autocast above 1024 rows
         make = backend._make_estimator
 
         def make_with_amp(task):
@@ -100,12 +120,7 @@ def run(device: str, rows: int, features: int, repeats: int, amp: str) -> dict:
     times, payload = [], None
     first = 0.0
     for i in range(repeats + 1):
-        prepared = backend.prepare_fit(X, y, "classification")
-        torch.cuda.synchronize(device)
-        t0 = time.perf_counter()
-        payload = backend.fit_prepared(prepared)
-        torch.cuda.synchronize(device)
-        elapsed = time.perf_counter() - t0
+        payload, elapsed = fit_timed(backend, X, y, device)
         if i == 0:
             first = elapsed
         else:
@@ -121,7 +136,7 @@ def run(device: str, rows: int, features: int, repeats: int, amp: str) -> dict:
         "accuracy": round(float((proba.argmax(1) == y_test).mean()), 4),
         "log_loss": round(float(-np.log(p_true).mean()), 5),
         "first_s": round(first, 3),
-        "gpu_half_s": round(float(np.median(times)), 3),
+        "fit_s": round(float(np.median(times)), 3),
         "predict_s": round(time.perf_counter() - t0, 3),
         "proba": proba,
         "peak_gib": round(torch.cuda.max_memory_allocated(device) / 1024**3, 2),
@@ -133,20 +148,27 @@ def main() -> int:
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--shapes", nargs="+", default=["10000x50", "40000x100"])
     ap.add_argument("--repeats", type=int, default=3)
-    ap.add_argument("--variant", default="eager")
-    ap.add_argument("--mode", default="default")
+    ap.add_argument("--backend", choices=("tabicl", "tabpfn"), default="tabicl")
+    ap.add_argument("--compile", action="store_true")
     ap.add_argument("--amp", choices=("auto", "on", "off"), default="auto")
     ap.add_argument("--baseline", help="npz of eager probabilities to compare against")
     ap.add_argument("--save-proba", help="write this run's probabilities (npz)")
     ap.add_argument("--out")
     args = ap.parse_args()
 
-    install(args.variant, args.mode)
     baseline = dict(np.load(args.baseline)) if args.baseline else {}
     saved = {}
     for text in args.shapes:
         rows, features = parse_shape(text)
-        result = run(args.device, rows, features, args.repeats, args.amp)
+        result = run(
+            args.backend,
+            args.device,
+            args.compile,
+            rows,
+            features,
+            args.repeats,
+            args.amp,
+        )
         proba = result.pop("proba")
         saved[text] = proba
         if text in baseline:
@@ -154,8 +176,8 @@ def main() -> int:
             result["max_abs_proba_diff"] = float(np.abs(proba - ref).max())
             result["label_agreement"] = float((proba.argmax(1) == ref.argmax(1)).mean())
         record = {
-            "variant": args.variant,
-            "mode": args.mode,
+            "backend": args.backend,
+            "compiled": args.compile,
             "amp": args.amp,
             "shape": text,
             **result,

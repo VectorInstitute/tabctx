@@ -71,10 +71,11 @@ no FP8).
    half is prepared before taking the device (overlaps another fit's GPU
    half: back-to-back fits 17-26% faster), and tabicl's per-call
    log(n) host-to-device syncs are cached (bit-identical; 10k x 50 fits
-   16% faster). Next from it: fuse the column stage's layer norms
-   (`torch.compile`, #32/#36), and a GPU Yeo-Johnson fit for isolated-fit
-   latency (~3 ms vs 2.9 s at 40k x 100; not bit-identical to sklearn's
-   lambdas, so behind an accuracy study).
+   16% faster), and the attention blocks are compiled (#36, below). Next
+   from it: a GPU Yeo-Johnson fit for isolated-fit latency (~3 ms vs
+   2.9 s at 40k x 100; not bit-identical to sklearn's lambdas, so behind
+   an accuracy study). TabPFN-3.5's fit is the same shape: RMS norm 33% of
+   its CUDA time, flash attention 26%, copies 16%.
 7. **Per-device calibration grids** ([#37](https://github.com/VectorInstitute/tabctx/issues/37), TabPFN done): TabPFN-3.5 has its
    own requirement grid (A100, 20 shapes): it, too, sizes working memory
    from what is free, so admission reaches 100k rows at 100 features on an
@@ -95,9 +96,17 @@ no FP8).
 12. **Context parallelism across GPUs** ([#35](https://github.com/VectorInstitute/tabctx/issues/35)): tables larger than one GPU
     (ring attention over the replica's devices). Disk offload already
     lets one A100 fit 130k x 500 (65M cells) in 26 min.
-13. **CUDA graphs / torch.compile** ([#36](https://github.com/VectorInstitute/tabctx/issues/36)): the GPU half is now mostly GPU-
-    bound, so the remaining gains are fusion (layer norm, elementwise)
-    rather than launch overhead.
+13. **torch.compile** ([#36](https://github.com/VectorInstitute/tabctx/issues/36), done for TabICL): each attention block's
+    forward compiled, so Inductor fuses the layer norms, residual adds and
+    GELU MLP around the attention kernel. A100: GPU half 1.7-2.2x faster
+    (40k x 100: 7.65 -> 4.30 s), peak memory ~20% lower (33.1 -> 27.0
+    GiB, so larger tables fit), accuracy unchanged on the evaluation sets;
+    Ray Serve, 6 users on 4x A100: 5.78 -> 6.99 predicts/s. Dynamic
+    shapes needed tabicl's ssmax log(n) computed symbolically (math.log on
+    the row count recompiled every new table). ~40 graphs compile in
+    warmup (~75 s per worker). CUDA graphs aren't worth it: the GPU half
+    is GPU-bound, not launch-bound. TabPFN-3.5's own compile path is
+    being measured.
 14. **Serving-framework-agnostic core** ([#39](https://github.com/VectorInstitute/tabctx/issues/39)): the router, per-GPU workers
     and scheduling are plain Python with no Ray dependency; a Dynamo
     worker hosts the same core. Next: residency events and pluggable
