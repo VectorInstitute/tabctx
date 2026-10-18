@@ -37,11 +37,13 @@ framework restarts it.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import logging
 import pickle
 import threading
 import time
+import weakref
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -69,6 +71,18 @@ _WORKER_THREADS = 16
 
 
 _NEVER_FITS = 1 << 62
+
+
+# Live shards, closed at interpreter exit -- before multiprocessing's own
+# exit handler (registered earlier, so run later) terminates the daemon
+# workers, which each reader thread would otherwise report as a death.
+_LIVE_SHARDS: weakref.WeakSet = weakref.WeakSet()
+
+
+@atexit.register
+def _close_live_shards() -> None:
+    for shard in list(_LIVE_SHARDS):
+        shard.close()
 
 
 class WorkerDiedError(BackendComputeError):
@@ -255,6 +269,7 @@ class ProcessShard:
         )
         self._proc.start()
         child.close()
+        _LIVE_SHARDS.add(self)
         self._send_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._pending: dict[int, Future] = {}
