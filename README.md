@@ -223,6 +223,16 @@ behind the same API. No client changes and no routing header needed.
   retried fit can't leave two copies. A re-fit lands first and only then
   replaces the old copy: a failed re-fit (413, OOM) leaves the previous
   context serving.
+- **A process per GPU.** Each GPU's engine runs in its own worker process
+  (`TABCTX_WORKER_PROCESSES=1`, the default with several GPUs; `0` runs
+  them as threads). Fits are host-bound, so threads would contend for
+  Python's GIL: on 4x A100, four concurrent fits ran at ~4x aggregate
+  from processes and 2-3x from threads. A worker that dies fails the
+  replica's health check, so the serving framework restarts it.
+- **Small predicts don't wait for fits.** A predict of up to 2,048 rows
+  against a resident context runs beside a fit on the same GPU (~0.1 s
+  instead of the fit's full duration); larger predicts and restores of
+  spilled contexts wait their turn.
 - **The replica must be given the GPUs.** Under Ray Serve that means
   `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
   GPU pod (as in inference-platform's prod config),
