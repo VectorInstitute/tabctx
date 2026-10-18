@@ -312,14 +312,22 @@ class TabctxEngine:
         estimator = self._estimators[backend_name]
 
         resolved_id = dataset_id or str(uuid.uuid4())
+        estimated = estimator.estimate_bytes(n_train, 0, n_features)
+        self._check_feasible(estimator, estimated, n_train, n_features)
+        # The fit's CPU half (backends that split it: TabICL's preprocessing,
+        # ~1/3 of a fit) runs before taking the device, overlapping the GPU
+        # half of whatever fit holds it now.
+        prepare = getattr(chosen, "prepare_fit", None)
+        prepared = prepare(X, y, task) if callable(prepare) else None
         # Lock order everywhere: host slot, _fit_lock, _predict_lock. Host
         # memory first, so a large fit waiting for a host slot doesn't hold
         # this device meanwhile.
         with self._host_slot(chosen, n_train, n_features), self._fit_lock:
-            estimated = estimator.estimate_bytes(n_train, 0, n_features)
-            self._admit(estimator, estimated, n_train, n_features)
+            self._make_room(estimator, estimated)
             with self._measuring():
-                payload = self._fit_backend(chosen, X, y, task, estimator, estimated)
+                payload = self._fit_backend(
+                    chosen, X, y, task, estimator, estimated, prepared
+                )
                 est_bytes = chosen.context_bytes_hint(n_train, n_features)
                 if est_bytes is None:
                     est_bytes = estimated
@@ -338,29 +346,24 @@ class TabctxEngine:
             self._cache.put(context)
         return resolved_id
 
-    def _admit(
+    def _check_feasible(
         self,
         estimator: MemoryEstimator,
         estimated: int,
         n_train: int,
         n_features: int,
     ) -> None:
-        """Make room for a fit's estimated need, or reject it. Caller holds
-        _fit_lock, so no other residency growth races this check.
+        """Reject a fit that can never be admitted, before any work.
 
         Usage-aware admission (v0.9.0): what OOMs is the fit's need on top
-        of everything resident, so it must fit the headroom given current
-        cache usage. Evict-ahead-of-fit: when the cache is warm, cold
-        contexts are evicted (spilled, when a spill tier is attached) until
-        the need fits -- without this, a filling replica would reject fits
-        that are perfectly safe once a cold context steps aside (proven on
-        real hardware: a fourth ~13GB-peak fit OOMed an A100 with three
-        ~8GB contexts resident)."""
-        # Feasibility FIRST, against an EMPTY cache's headroom: a fit that
-        # can never be admitted must be rejected before evicting anything --
-        # otherwise one oversized request drains every tenant's context on
-        # its way to a 413 (observed live: a 200k x 60 request spilled 30
-        # contexts and then failed).
+        of everything resident, so under _fit_lock the fit evicts ahead
+        (_make_room) until it fits -- without that, a filling replica would
+        reject fits that are perfectly safe once a cold context steps aside
+        (proven on real hardware: a fourth ~13GB-peak fit OOMed an A100 with
+        three ~8GB contexts resident). Feasibility comes FIRST, against an
+        EMPTY cache's headroom: otherwise one oversized request drains every
+        tenant's context on its way to a 413 (observed live: a 200k x 60
+        request spilled 30 contexts and then failed)."""
         max_headroom = self._headroom(estimator, 0)
         if estimated > max_headroom:
             raise AdmissionRejected(
@@ -370,7 +373,6 @@ class TabctxEngine:
                 f"{max_headroom} byte maximum "
                 "admission headroom (even with an empty cache)"
             )
-        self._make_room(estimator, estimated)
 
     def _make_room(self, estimator: MemoryEstimator, needed: int) -> None:
         """Evict until `needed` bytes of headroom are free, or nothing is
@@ -423,20 +425,28 @@ class TabctxEngine:
         task: Task,
         estimator: MemoryEstimator,
         estimated: int,
+        prepared: object | None = None,
     ) -> object:
-        """Fit, retrying once if it ran out of device memory while sharing
-        the device with a predict: after the failed attempt's tensors are
-        freed (outside the except block, whose traceback would keep them
-        alive), with predicts held off and room made again."""
-        try:
+        """Fit (its GPU half, when prepared), retrying once if it ran out of
+        device memory while sharing the device with a predict: after the
+        failed attempt's tensors are freed (outside the except block, whose
+        traceback would keep them alive), with predicts held off and room
+        made again."""
+
+        def attempt() -> object:
+            if prepared is not None:
+                return backend.fit_prepared(prepared)  # type: ignore[attr-defined]
             return backend.fit(X, y, task)
+
+        try:
+            return attempt()
         except BackendComputeError:
             pass
         gc.collect()
         release_cached_device_memory()
         with self._predict_lock:
             self._make_room(estimator, estimated)
-            return backend.fit(X, y, task)
+            return attempt()
 
     def _learn(
         self,

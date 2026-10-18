@@ -298,3 +298,54 @@ def test_a_restore_that_runs_out_of_memory_keeps_the_spilled_copy(tmp_path):
     spill.load = oom_once
     assert engine.predict("cold", [[0.0]]).predictions == ["x"]
     assert len(calls) == 2  # retried; the file survived the first OOM
+
+
+class PreparingFake(GatedFake):
+    """A backend that splits its fit into a CPU prepare and a GPU half."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.prepared_during: list[bool] = []
+        self.engine: TabctxEngine | None = None
+
+    def prepare_fit(self, X, y, task):
+        # Record whether some fit held the device while this prepared.
+        self.prepared_during.append(self.engine._fit_lock.locked())
+        return (X, y, task)
+
+    def fit_prepared(self, prepared):
+        return GatedFake.fit(self, *prepared)
+
+
+def test_a_fit_prepares_while_another_fit_holds_the_device():
+    backend = PreparingFake()
+    engine = TabctxEngine(
+        backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
+    )
+    backend.engine = engine
+    backend.fit_gate = threading.Event()
+    first, _ = start(engine.fit, *table(100), dataset_id="a")
+    assert backend.fit_entered.wait(5)
+    second, _ = start(engine.fit, *table(100), dataset_id="b")
+    for _ in range(200):
+        if len(backend.prepared_during) == 2:
+            break
+        threading.Event().wait(0.01)
+    assert backend.prepared_during == [False, True]  # b prepared during a's fit
+    backend.fit_gate.set()
+    first.join(5)
+    second.join(5)
+    assert engine._cache.holds("a") and engine._cache.holds("b")
+
+
+def test_an_infeasible_fit_is_rejected_before_preparing():
+    from tabctx.errors import AdmissionRejected
+
+    backend = PreparingFake()
+    engine = TabctxEngine(
+        backend=backend, estimator=CellEstimator(), cache=ContextCacheManager(CAPACITY)
+    )
+    backend.engine = engine
+    with pytest.raises(AdmissionRejected):
+        engine.fit(*table(2000), dataset_id="huge")  # 20,000 > 10,000 bytes
+    assert backend.prepared_during == []
