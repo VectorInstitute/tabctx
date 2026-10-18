@@ -56,6 +56,7 @@ from typing import Any
 
 import numpy as np
 
+from tabctx.backends import yeo_johnson
 from tabctx.backends._cuda import (
     QuiescedMeasurement,
     device_scope,
@@ -213,6 +214,7 @@ class TabICLBackend(QuiescedMeasurement):
         offload_dir: str | None = None,
         cpu_safety_factor: float = 0.6,
         compile_blocks: bool = False,
+        fast_preprocessing: bool = False,
     ) -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
         False). tabicl's own default is False, which makes every
@@ -228,7 +230,12 @@ class TabICLBackend(QuiescedMeasurement):
 
         compile_blocks: torch.compile tabicl's attention blocks (CUDA only;
         see backends/tabicl_compile.py): 1.7-2.2x faster GPU half, ~20%
-        lower peak, paid for by a one-time compile in warmup()."""
+        lower peak, paid for by a one-time compile in warmup().
+
+        fast_preprocessing: fit the ensemble's Yeo-Johnson power transforms
+        for all columns at once, on the GPU (backends/yeo_johnson.py)
+        instead of scikit-learn's per-column scipy search -- 80%+ of a
+        fit's CPU half. Lambdas agree to ~1e-6; not bit-identical."""
         import torch
 
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -268,6 +275,8 @@ class TabICLBackend(QuiescedMeasurement):
         _install_restore_hook(TabICLRegressor)
         if not install_cached_logn():
             logger.warning("tabicl.ssmax._logn not found: per-call GPU syncs remain")
+        if fast_preprocessing and not yeo_johnson.install():
+            logger.warning("tabicl preprocessing not patchable: scipy power transforms")
         self._compiled = False
         if compile_blocks and is_cuda(self._device):
             from tabctx.backends.tabicl_compile import install_compiled_blocks
@@ -332,8 +341,11 @@ class TabICLBackend(QuiescedMeasurement):
         model = self._make_estimator(task)
         kv_cache = model.kv_cache
         model.kv_cache = False
+        # Power transforms fit on this backend's GPU when it is one (see
+        # backends/yeo_johnson.py; a no-op unless fast_preprocessing).
+        transforms_on = self._device if is_cuda(self._device) else None
         try:
-            with device_scope(self._device):
+            with device_scope(self._device), yeo_johnson.on_device(transforms_on):
                 model.fit(X, y)
         finally:
             model.kv_cache = kv_cache

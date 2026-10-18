@@ -114,6 +114,7 @@ UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
 WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
+FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,9 @@ class ServeSettings:
     # torch.compile the models' hot blocks where measured to help (TabICL's
     # attention blocks: backends/tabicl_compile.py).
     compile_models: bool = True
+    # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
+    # (backends/yeo_johnson.py).
+    fast_preprocessing: bool = True
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -234,6 +238,9 @@ class ServeSettings:
             offload_dir=offload_dir,
             worker_processes=_env_flag(WORKER_PROCESSES_ENV_VAR, cls.worker_processes),
             compile_models=_env_flag(COMPILE_ENV_VAR, cls.compile_models),
+            fast_preprocessing=_env_flag(
+                FAST_PREPROCESSING_ENV_VAR, cls.fast_preprocessing
+            ),
         )
 
 
@@ -511,6 +518,7 @@ def _build_real_backend(
             # headroom (see memory/host.py).
             cpu_safety_factor=0.6 / host_slots,
             compile_blocks=settings.compile_models,
+            fast_preprocessing=settings.fast_preprocessing,
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.

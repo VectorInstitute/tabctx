@@ -12,9 +12,10 @@ synthetic tables, where KV size actually matters.
 
 Usage: eval_kv_precision.py --device cuda:0 --out kv-precision-a100.json
 
-With --compile, the same with compiled attention blocks (#32/#36): run it
-once with and once without and compare the metrics (compilation patches
-tabicl process-wide, so eager and compiled can't share a process).
+With --compile (compiled attention blocks, #32/#36) or
+--fast-preprocessing (vectorized Yeo-Johnson, #31): run once with and once
+without and compare the metrics (both patch tabicl process-wide, so they
+can't share a process with the baseline).
 """
 
 from __future__ import annotations
@@ -85,11 +86,17 @@ def main() -> int:
     p.add_argument("--out", default=None)
     p.add_argument("--precisions", nargs="+", default=list(PRECISIONS))
     p.add_argument("--compile", action="store_true", help="compiled TabICL blocks")
+    p.add_argument(
+        "--fast-preprocessing", action="store_true", help="vectorized Yeo-Johnson"
+    )
     args = p.parse_args()
 
     backends = {
         prec: TabICLBackend(
-            device=args.device, kv_precision=prec, compile_blocks=args.compile
+            device=args.device,
+            kv_precision=prec,
+            compile_blocks=args.compile,
+            fast_preprocessing=args.fast_preprocessing,
         )
         for prec in args.precisions
     }

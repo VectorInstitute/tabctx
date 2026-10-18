@@ -51,13 +51,22 @@ def make_table(rows: int, features: int, task: str, seed: int):
 
 
 def build_backend(
-    kind: str, device: str, cache_mode: str, compile_blocks: bool = False
+    kind: str,
+    device: str,
+    cache_mode: str,
+    compile_blocks: bool = False,
+    fast_preprocessing: bool = False,
 ):
     if kind == "tabicl":
         from tabctx.backends.tabicl import TabICLBackend
 
         kv: bool | str = False if cache_mode == "off" else cache_mode
-        return TabICLBackend(device=device, kv_cache=kv, compile_blocks=compile_blocks)
+        return TabICLBackend(
+            device=device,
+            kv_cache=kv,
+            compile_blocks=compile_blocks,
+            fast_preprocessing=fast_preprocessing,
+        )
     from tabctx.backends.tabpfn import TabPFNBackend
 
     return TabPFNBackend(device=device, cache_mode=cache_mode)

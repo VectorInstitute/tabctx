@@ -71,10 +71,12 @@ no FP8).
    half is prepared before taking the device (overlaps another fit's GPU
    half: back-to-back fits 17-26% faster), and tabicl's per-call
    log(n) host-to-device syncs are cached (bit-identical; 10k x 50 fits
-   16% faster), and the attention blocks are compiled (#36, below). Next
-   from it: a GPU Yeo-Johnson fit for isolated-fit latency (~3 ms vs
-   2.9 s at 40k x 100; not bit-identical to sklearn's lambdas, so behind
-   an accuracy study). TabPFN-3.5's fit is the same shape: RMS norm 33% of
+   16% faster), and the attention blocks are compiled (#36, below). The
+   CPU half's Yeo-Johnson fits are vectorized on the GPU
+   (`backends/yeo_johnson.py`: 40k x 100 3.38 -> 0.25 s, lambdas within
+   one float32 ulp of scikit-learn's, accuracy unchanged on the
+   evaluation sets). An isolated 40k x 100 fit: 11.2 -> 7.7 s (compiled)
+   -> 4.8 s (both). TabPFN-3.5's fit is the same shape: RMS norm 33% of
    its CUDA time, flash attention 26%, copies 16%.
 7. **Per-device calibration grids** ([#37](https://github.com/VectorInstitute/tabctx/issues/37), TabPFN done): TabPFN-3.5 has its
    own requirement grid (A100, 20 shapes): it, too, sizes working memory

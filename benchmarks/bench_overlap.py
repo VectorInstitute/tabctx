@@ -56,6 +56,9 @@ def main() -> int:
     p.add_argument("--test-rows", type=int, default=100)
     p.add_argument("--out", default=None)
     p.add_argument("--compile", action="store_true", help="compiled TabICL blocks")
+    p.add_argument(
+        "--fast-preprocessing", action="store_true", help="vectorized Yeo-Johnson"
+    )
     args = p.parse_args()
     device = torch.device(args.device)
 

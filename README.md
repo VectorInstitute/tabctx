@@ -402,6 +402,10 @@ pip install "tabctx[dev]"        # + test dependencies
   memory, and accuracy is unchanged. The compile happens mostly once per
   worker at startup (~130 s); a call shape the startup didn't cover (very
   large tables, for one) compiles on first use, ~10 s once per worker.
+- **GPU preprocessing** (`TABCTX_FAST_PREPROCESSING=1`, the default):
+  TabICL's per-column Yeo-Johnson fits, most of a fit's CPU time, run
+  vectorized on the GPU (14x faster on a 40k x 100 table) with lambdas
+  matching scikit-learn's to float32 precision.
 - **Same-context coalescing** (`CoalescingPredictor`): concurrent
   requests against one cached context are packed into a single GPU call
   within a ~5ms window and split back per caller, amortizing per-call

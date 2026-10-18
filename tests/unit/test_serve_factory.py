@@ -482,3 +482,11 @@ def test_compile_flag_from_env(monkeypatch):
     monkeypatch.setenv(COMPILE_ENV_VAR, "maybe")
     with pytest.raises(ValueError, match="TABCTX_COMPILE"):
         ServeSettings.from_env()
+
+
+def test_fast_preprocessing_flag_from_env(monkeypatch):
+    from tabctx.serve.factory import FAST_PREPROCESSING_ENV_VAR
+
+    assert ServeSettings.from_env().fast_preprocessing
+    monkeypatch.setenv(FAST_PREPROCESSING_ENV_VAR, "0")
+    assert not ServeSettings.from_env().fast_preprocessing
