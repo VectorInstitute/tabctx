@@ -72,6 +72,7 @@ from tabctx.types import ArrayLike, PredictOutcome, Task
 _restoring = threading.local()
 _warned = [False]  # one missing-hook warning per process
 # Offloaded stage-output bytes per cell (see TabICLBackend.may_offload).
+_HOST_BYTES_PER_OFFLOADED_CELL = 5_000
 _OUTPUT_BYTES_PER_CELL = 2560
 logger = logging.getLogger(__name__)
 _TASK_TAGS = {"classification": b"C", "regression": b"R"}
@@ -395,6 +396,14 @@ class TabICLBackend(QuiescedMeasurement):
 
         free, _ = torch.cuda.mem_get_info(torch.device(self._device))
         return _OUTPUT_BYTES_PER_CELL * n_rows * n_features > 0.4 * free
+
+    def host_bytes_estimate(self, n_rows: int, n_features: int) -> int:
+        """Host memory a call over n_rows x n_features may use: its offloaded
+        stage outputs when it may offload (measured ~46 GiB for 10M-cell
+        fits on an A100, ~4.9 KB per cell), else nothing worth reserving."""
+        if not self.may_offload(n_rows, n_features):
+            return 0
+        return _HOST_BYTES_PER_OFFLOADED_CELL * n_rows * n_features
 
     def _release_host_memory(self, model: Any) -> None:
         """Return the offload staging memory a large call leaves pinned.

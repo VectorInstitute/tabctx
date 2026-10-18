@@ -479,18 +479,23 @@ class TabctxEngine:
             )
 
     def _host_slot(self, backend: TabularICLBackend, n_rows: int, n_features: int):
-        """A process-wide large-call slot when this call may offload to host
-        memory (the backend's may_offload, else the guard's cell threshold);
-        a no-op without a guard."""
-        if self._host_guard is None:
+        """Reserve this call's estimated host memory against the process-
+        wide (or node-wide) budget: the backend's host_bytes_estimate, else
+        one large fit's worth when it may offload (may_offload, or the
+        guard's cell threshold). A no-op without a guard."""
+        guard = self._host_guard
+        if guard is None:
             return contextlib.nullcontext()
+        estimate = getattr(backend, "host_bytes_estimate", None)
+        if callable(estimate):
+            return guard.reserve(estimate(n_rows, n_features))
         may_offload = getattr(backend, "may_offload", None)
         large = (
             may_offload(n_rows, n_features)
             if callable(may_offload)
-            else self._host_guard.is_large(n_rows, n_features)
+            else guard.is_large(n_rows, n_features)
         )
-        return self._host_guard.reserve(large)
+        return guard.reserve(guard.large_fit_bytes if large else 0)
 
     def _restore(self, dataset_id: str) -> None:
         """Bring a spilled context back onto the device (DatasetNotFoundError

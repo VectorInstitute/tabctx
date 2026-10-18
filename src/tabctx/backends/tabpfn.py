@@ -162,6 +162,12 @@ class TabPFNBackend(QuiescedMeasurement):
             self._shared_models.setdefault((task, index), module)
         return model
 
+    def host_bytes_estimate(self, n_rows: int, n_features: int) -> int:
+        """Host memory a fit or predict may use (preprocessing copies):
+        measured on an A100 pod at most ~530 B per cell (100,000 x 100 grew
+        RSS 4.9 GiB; 30M-cell tables 6-6.7 GiB), budgeted at 600."""
+        return 600 * n_rows * n_features
+
     def predict(
         self, payload: Any, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome:
