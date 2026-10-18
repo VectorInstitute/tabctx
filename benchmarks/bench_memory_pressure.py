@@ -106,7 +106,13 @@ def search(args, backend, rows: int, features: int) -> dict:
 def _measure_shape(args, rows: int, features: int, queue) -> None:
     """One shape in a fresh process: no allocator or library state left
     over from earlier shapes' OOMs can skew its measurements."""
-    backend = build_backend(args.backend, args.device, args.cache_mode)
+    backend = build_backend(
+        args.backend,
+        args.device,
+        args.cache_mode,
+        compile_blocks=args.compile,
+        fast_preprocessing=args.fast_preprocessing,
+    )
     backend.warmup()
     if args.search:
         queue.put([search(args, backend, rows, features)])
@@ -132,6 +138,10 @@ def main() -> int:
         default=None,
         help="with --search: a fit slower than this x unconstrained counts as "
         "failed (for models that degrade instead of failing, e.g. 2 for tabpfn)",
+    )
+    p.add_argument("--compile", action="store_true", help="compiled TabICL blocks")
+    p.add_argument(
+        "--fast-preprocessing", action="store_true", help="vectorized Yeo-Johnson"
     )
     p.add_argument("--out", default=None)
     args = p.parse_args()
