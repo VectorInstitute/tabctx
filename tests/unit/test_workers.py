@@ -126,3 +126,15 @@ def test_startup_failure_is_raised_in_the_serving_process(tmp_path):
     blocker.write_text("")
     with pytest.raises(OSError):
         build_engine(_settings(blocker))
+
+
+def test_errors_that_cannot_round_trip_become_runtime_errors():
+    from tabctx.serve.workers import _portable
+
+    class TwoArgs(Exception):
+        def __init__(self, a, b):
+            super().__init__(f"{a}/{b}")
+
+    portable = _portable(TwoArgs(1, 2))
+    assert type(portable) is RuntimeError and "TwoArgs" in str(portable)
+    assert isinstance(_portable(DatasetNotFoundError("x")), DatasetNotFoundError)

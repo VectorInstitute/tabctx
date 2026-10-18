@@ -29,6 +29,17 @@ def ensure_initialized(device: str) -> None:
         torch.cuda.init()
 
 
+def release_cached_device_memory() -> None:
+    """Return the CUDA caching allocator's unused blocks (a retry after an
+    OOM then sees an unfragmented device). A no-op without torch or CUDA."""
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def device_scope(device: str) -> contextlib.AbstractContextManager[Any]:
     """Make ``device`` torch's current CUDA device for the block; a no-op
     on CPU."""

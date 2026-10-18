@@ -278,3 +278,22 @@ class TestWidthDependentResidentRate:
         assert self._model().estimate(150_000, 10) == pytest.approx(
             3 * GiB + rate * 50_000, rel=1e-6
         )
+
+
+def test_width_dependent_rate_ignores_a_short_runtime_fit_when_long_ones_exist():
+    """Review regression: one 500 x 100 runtime fit (fixed overhead / 500
+    rows = a huge per-row rate) displaced the calibration's long-fit rates
+    and doubled estimates for large tables."""
+    from tabctx.memory.requirement import ResidentRateModel
+
+    cal = (
+        FloorPoint(100_000, 10, GiB, resident_bytes=3 * GiB),
+        FloorPoint(100_000, 100, GiB, resident_bytes=int(3.1 * GiB)),
+    )
+    m = ResidentRateModel(cal, width_dependent=True)
+    before = (m.estimate(200_000, 10), m.estimate(200_000, 100))
+    m.record(500, 100, int(0.3 * GiB))
+    assert (m.estimate(200_000, 10), m.estimate(200_000, 100)) == before
+    # A long runtime fit does supersede the calibration's rate.
+    m.record(50_000, 100, 2 * GiB)
+    assert m.estimate(200_000, 100) != before[1]

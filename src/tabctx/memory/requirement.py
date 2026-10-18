@@ -151,15 +151,9 @@ class ResidentRateModel:
     def _slope(
         self, points: list[tuple[int, int, int]], n_features: int
     ) -> float | None:
-        rates = [(n, d, res / n) for n, d, res in points]
-        long_fits = [(d, r) for n, d, r in rates if n >= self._min_rows]
-        if self._width_dependent:
-            wide = [d for _, d, _ in rates if d >= n_features]
-            if not wide:
-                return None
-            at = min(wide)
-            long_at = [r for d, r in long_fits if d == at]
-            return max(long_at or [r for _, d, r in rates if d == at])
+        """Width-independent rate: steepest long fit at the narrowest
+        measured width >= n_features, else among all long fits."""
+        long_fits = [(d, res / n) for n, d, res in points if n >= self._min_rows]
         if not long_fits:
             return None
         widths = [d for d, _ in long_fits if d >= n_features]
@@ -167,12 +161,50 @@ class ResidentRateModel:
             return max(rate for _, rate in long_fits)
         return max(rate for d, rate in long_fits if d == min(widths))
 
+    def _width_dependent_slope(
+        self,
+        runtime: list[tuple[int, int, int]],
+        n_features: int,
+    ) -> float | None:
+        """Rate from fits at least as wide as the query only: long fits at the
+        narrowest width >= n_features that has any (this replica's own
+        superseding the calibration's), else -- only when no long fit that
+        wide exists anywhere -- short fits at the narrowest such width,
+        whose fixed overhead overstates the rate (conservative)."""
+
+        def long_rate(points: list[tuple[int, int, int]]) -> float | None:
+            wide = [
+                (d, res / n)
+                for n, d, res in points
+                if n >= self._min_rows and d >= n_features
+            ]
+            if not wide:
+                return None
+            at = min(d for d, _ in wide)
+            return max(r for d, r in wide if d == at)
+
+        rate = long_rate(runtime)
+        if rate is None:
+            rate = long_rate(self._calibration)
+        if rate is not None:
+            return rate
+        short = [
+            (d, res / n) for n, d, res in runtime + self._calibration if d >= n_features
+        ]
+        if not short:
+            return None
+        at = min(d for d, _ in short)
+        return max(r for d, r in short if d == at)
+
     def estimate(self, n_train: int, n_features: int) -> int | None:
         with self._lock:
             runtime = list(self._runtime)
-        slope = self._slope(runtime, n_features) or self._slope(
-            self._calibration, n_features
-        )
+        if self._width_dependent:
+            slope = self._width_dependent_slope(runtime, n_features)
+        else:
+            slope = self._slope(runtime, n_features) or self._slope(
+                self._calibration, n_features
+            )
         if slope is None:
             return None
         bounds = [
