@@ -208,3 +208,17 @@ def test_mp_exit_handler_is_registered_before_ours():
         check=True,
     )
     assert out.stdout.strip() == "True"
+
+
+def test_workers_share_the_pods_cpus_for_compiling(monkeypatch):
+    import tabctx.serve.workers as workers
+
+    monkeypatch.delenv("TORCHINDUCTOR_COMPILE_THREADS", raising=False)
+    monkeypatch.setattr(workers, "available_cpus", lambda: 30)
+    workers._share_cpus(4)
+    import os
+
+    assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "7"
+    monkeypatch.setenv("TORCHINDUCTOR_COMPILE_THREADS", "2")  # deployer's wins
+    workers._share_cpus(4)
+    assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "2"

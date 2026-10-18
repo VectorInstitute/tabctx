@@ -72,11 +72,24 @@ _MP_POLL_S = 0.02
 # slots for its waiting calls (a worker serves at most 16 calls at once;
 # an in-process guard shared by several devices' engines needs more).
 QUEUE_SLOTS = 32
+# Shared state header: next ticket, budget bytes, large-fit slots.
+_HEADER = 3
 
 
 CGROUP_LIMIT_PATHS = (
     "/sys/fs/cgroup/memory.max",
     "/sys/fs/cgroup/memory/memory.limit_in_bytes",
+)
+# (usage, stat) per cgroup version: the container's working set is usage
+# minus inactive page cache (what the kernel reclaims first; the kubelet's
+# eviction signal is computed the same way).
+CGROUP_USAGE_PATHS = (
+    ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.stat", "inactive_file"),
+    (
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+        "/sys/fs/cgroup/memory/memory.stat",
+        "total_inactive_file",
+    ),
 )
 
 
@@ -86,16 +99,41 @@ def detect_host_budget_bytes(
     limit_paths: tuple[str, ...] = CGROUP_LIMIT_PATHS,
     meminfo_path: str = "/proc/meminfo",
     status_path: str = "/proc/self/status",
+    usage_paths: tuple[tuple[str, str, str], ...] = CGROUP_USAGE_PATHS,
 ) -> int | None:
-    """Host memory available to large calls: this process's memory limit
-    (cgroup v2/v1, else physical RAM) x fraction, minus what the process
-    already holds (CUDA contexts, model weights) and a reserve for the
-    rest of serving (uploads, contexts' host state). None when the limit
+    """Host memory available to large calls: the memory limit (cgroup
+    v2/v1, else physical RAM) x fraction, minus what is already in use and
+    a reserve for the rest of serving (uploads, contexts' host state). In
+    use is the container's working set when the cgroup reports it -- every
+    process in the pod: per-GPU workers' models and CUDA contexts, the
+    serving framework -- else this process's RSS. None when the limit
     can't be read."""
     limit = _read_limit(limit_paths, meminfo_path)
     if limit is None:
         return None
-    return max(0, int(limit * fraction) - _rss_bytes(status_path) - reserve_bytes)
+    in_use = _working_set_bytes(usage_paths)
+    if in_use is None:
+        in_use = _rss_bytes(status_path)
+    return max(0, int(limit * fraction) - in_use - reserve_bytes)
+
+
+def _working_set_bytes(usage_paths: tuple[tuple[str, str, str], ...]) -> int | None:
+    for usage_path, stat_path, inactive_key in usage_paths:
+        try:
+            usage = int(Path(usage_path).read_text().strip())
+        except (OSError, ValueError):
+            continue
+        inactive = 0
+        try:
+            for line in Path(stat_path).read_text().splitlines():
+                key, _, value = line.partition(" ")
+                if key == inactive_key:
+                    inactive = int(value)
+                    break
+        except (OSError, ValueError):
+            pass
+        return max(0, usage - inactive)
+    return None
 
 
 def _rss_bytes(status_path: str) -> int:
@@ -129,7 +167,7 @@ class HostMemoryGuard:
     """Node- or process-wide host memory admission (see module docstring).
 
     Shared state (a plain list in-process, an mp Array across worker
-    processes): ``[next_ticket]`` then, per owner, ``[reserved bytes,
+    processes): ``[next_ticket, budget, slots]`` then, per owner, ``[reserved bytes,
     active calls, offloading calls, queue slots...]``. A waiting call
     parks its ticket in one of its owner's queue slots; the oldest parked
     ticket is the head of the queue.
@@ -146,24 +184,14 @@ class HostMemoryGuard:
         lock_timeout_s: float = LOCK_TIMEOUT_S,
         queue_slots: int = QUEUE_SLOTS,
     ) -> None:
-        self.budget_bytes = budget_bytes
         self.large_fit_bytes = large_fit_bytes
-        self.slots = max(1, budget_bytes // large_fit_bytes)
-        if budget_bytes < large_fit_bytes:
-            logger.warning(
-                "host memory budget %.1f GiB is below one large fit's measured "
-                "peak (%.0f GiB): large tables may exhaust this pod; give it more "
-                "memory or rely on disk offload (TABCTX_OFFLOAD_DIR)",
-                budget_bytes / GiB,
-                large_fit_bytes / GiB,
-            )
         self._large_fit_cells = large_fit_cells
         self._min_guarded = min_guarded_bytes
         self._lock_timeout = lock_timeout_s
         self._owners = max(1, owners)
         self._owner = 0
         self._block_size = 3 + max(1, queue_slots)
-        size = 1 + self._owners * self._block_size
+        size = _HEADER + self._owners * self._block_size
         if mp_context is None:
             # In-process: a condition variable (no process can die holding it).
             self._cond: Any = threading.Condition()
@@ -177,6 +205,43 @@ class HostMemoryGuard:
             self._cond = None
             self._lock = mp_context.Lock()
             self._state = mp_context.Array("q", size, lock=False)
+        self._apply_budget(budget_bytes)
+
+    @property
+    def budget_bytes(self) -> int:
+        return int(self._state[1])
+
+    @property
+    def slots(self) -> int:
+        """Offloading calls admitted at once: large fits the budget holds."""
+        return int(self._state[2])
+
+    def set_budget(self, budget_bytes: int) -> None:
+        """Re-budget, e.g. once per-GPU workers have started and warmed up
+        and their own memory is known; shared with every process."""
+        try:
+            with self._locked():
+                self._apply_budget(budget_bytes)
+                self._notify()
+        except HostMemoryUnavailableError:
+            logger.error("host memory budget not updated (lock unavailable)")
+
+    def _apply_budget(self, budget_bytes: int) -> None:
+        self._state[1] = budget_bytes
+        self._state[2] = max(1, budget_bytes // self.large_fit_bytes)
+        logger.info(
+            "host memory budget %.1f GiB (%d large-fit slots)",
+            budget_bytes / GiB,
+            self._state[2],
+        )
+        if budget_bytes < self.large_fit_bytes:
+            logger.warning(
+                "host memory budget %.1f GiB is below one large fit's measured "
+                "peak (%.0f GiB): large tables may exhaust this pod; give it more "
+                "memory or rely on disk offload (TABCTX_OFFLOAD_DIR)",
+                budget_bytes / GiB,
+                self.large_fit_bytes / GiB,
+            )
 
     def bind(self, owner: int) -> None:
         """Account this process's calls to `owner` (a worker's index), so
@@ -305,7 +370,7 @@ class HostMemoryGuard:
         )
 
     def _block(self, owner: int) -> int:
-        return 1 + owner * self._block_size
+        return _HEADER + owner * self._block_size
 
     def _park(self, base: int, ticket: int) -> int | None:
         for i in range(base + 3, base + self._block_size):

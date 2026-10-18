@@ -54,6 +54,7 @@ from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
     scope_dataset_id,
+    visible_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
 from tabctx.serve.workers import WorkerDiedError
@@ -278,7 +279,10 @@ class TabctxService:
         n_train, n_test = len(req.train_X), len(req.test_X)
         n_features = len(req.train_X[0]) if n_train else 0
 
-        gpus = self._cuda_devices() if cuda else []
+        # Peak GPU memory of this call, measured in-process. With worker
+        # processes the call ran elsewhere: this process holds no models,
+        # and touching each GPU would only create CUDA contexts here.
+        gpus = self._cuda_devices() if cuda and not self._workers else []
         for d in gpus:
             torch.cuda.reset_peak_memory_stats(d)
         start = time.monotonic()
@@ -532,17 +536,35 @@ class TabctxService:
         }
 
     @fastapi_app.get("/v1/tabctx/residency")
-    def residency(self):
-        """Where contexts are now, per device, and the router's latest
-        placements and removals (multi-GPU replicas): for a platform
-        scheduler or an operator. Events are advisory (contexts dropped by
-        capacity eviction without spill aren't reported); `devices` is the
-        current truth to reconcile against. A single-GPU replica reports
-        no per-device view or events."""
+    def residency(self, request: Request):
+        """Where the caller's contexts are now, per device, and the router's
+        latest placements and removals of them (multi-GPU replicas). Scoped
+        like every /v1/tabctx route: a tenant sees only its own datasets.
+        Events are advisory (contexts dropped by capacity eviction without
+        spill aren't reported); `devices` is the current truth to
+        reconcile against. A single-GPU replica reports neither."""
+        try:
+            tenant_id = resolve_tenant_id(dict(request.headers))
+        except _AUTH_ERRORS as e:
+            raise _map_error(e) from e
+
+        def mine(ids: list[str]) -> list[str]:
+            visible = (visible_dataset_id(tenant_id, i) for i in ids)
+            return [i for i in visible if i is not None]
+
         residency = getattr(self._engine, "residency", None)
+        devices = residency() if callable(residency) else {}
+        events = []
+        for event in self._residency.snapshot():
+            shown = visible_dataset_id(tenant_id, event["dataset_id"])
+            if shown is not None:
+                events.append({**event, "dataset_id": shown})
         return {
-            "devices": residency() if callable(residency) else {},
-            "events": self._residency.snapshot(),
+            "devices": {
+                device: {kind: mine(ids) for kind, ids in view.items()}
+                for device, view in devices.items()
+            },
+            "events": events,
         }
 
     @fastapi_app.get("/v1/tabctx/limits")

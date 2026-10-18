@@ -8,13 +8,10 @@ ContextCacheManager makes that a real multi-tenant resource -- the direct
 analog of what PagedAttention did for per-request LLM KV caches, scoped here
 to per-training-set tabular ICL contexts.
 
-v1 scaling limit (see tabctx repo README/roadmap): one RLock guards the
-entire cache, and the engine holds it across backend calls too, so all GPU
-work on a replica is effectively serialized. That's the right tradeoff on a
-single GPU under real memory pressure -- two concurrent fits/predicts against
-the same device would just contend for the same memory anyway -- but it caps
-throughput at one in-flight backend call per replica until a future version
-does finer-grained locking or real multi-replica routing.
+Locking. The cache's lock guards only its bookkeeping (entries, usage,
+pins, ids in transit); spill reads and writes run outside it. Scheduling
+GPU work -- one fit at a time per device, light predicts beside it -- is
+the engine's job (engine.py), so the cache never waits on a backend call.
 """
 
 from __future__ import annotations
@@ -337,11 +334,3 @@ class ContextCacheManager:
                 free_bytes=self.free_bytes,
                 capacity_bytes=self._capacity_bytes,
             )
-
-    @property
-    def lock(self) -> threading.RLock:
-        """Exposed so the engine can hold one lock across the full
-        check-evict-fit-insert sequence (see module docstring) rather than
-        risking two requests both passing admission control against the
-        same free_bytes snapshot and then both calling into the backend."""
-        return self._lock

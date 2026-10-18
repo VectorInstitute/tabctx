@@ -41,6 +41,7 @@ import atexit
 import itertools
 import logging
 import multiprocessing.util  # noqa: F401 -- registers its exit handler first
+import os
 import pickle
 import threading
 import time
@@ -48,6 +49,7 @@ import weakref
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from tabctx.errors import BackendComputeError
@@ -169,6 +171,31 @@ def _report(shard: Any, device: str) -> dict:
     }
 
 
+def available_cpus() -> int:
+    """CPUs this container may use: its cgroup CPU quota (v2 cpu.max) if
+    set, else the CPUs it is scheduled on."""
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            return max(1, int(int(quota) / int(period)))
+    except (OSError, ValueError):
+        pass
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:  # not Linux
+        return os.cpu_count() or 1
+
+
+def _share_cpus(n_workers: int) -> None:
+    """Size this worker's torch.compile pool to its share of the pod's CPUs
+    (Inductor sizes it from the host's cores, not the container's): four
+    workers compiling at once at startup would otherwise oversubscribe the
+    pod and stretch warmup. A deployment's own setting wins."""
+    if "TORCHINDUCTOR_COMPILE_THREADS" not in os.environ:
+        share = max(1, available_cpus() // max(1, n_workers))
+        os.environ["TORCHINDUCTOR_COMPILE_THREADS"] = str(share)
+
+
 def _worker_main(
     conn: Any,
     settings: Any,
@@ -185,6 +212,7 @@ def _worker_main(
 
     if host_guard is not None:
         host_guard.bind(index)  # so the parent can release it if we die
+    _share_cpus(n_devices)
     try:
         shard = build_shard(
             settings,

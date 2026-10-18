@@ -387,8 +387,47 @@ def test_budget_from_cgroup_v2_minus_baseline_rss(tmp_path):
         limit_paths=(str(tmp_path / "memory.max"),),
         meminfo_path=str(tmp_path / "none"),
         status_path=str(tmp_path / "status"),
+        usage_paths=(),  # no cgroup usage: this process's RSS
     )
     assert budget == int(64 * GiB * 0.85) - 4 * GiB - 8 * GiB
+
+
+def test_budget_subtracts_the_containers_working_set(tmp_path):
+    """Every process in the pod counts (per-GPU workers, the serving
+    framework), not just this one; inactive page cache doesn't."""
+    from tabctx.memory.host import detect_host_budget_bytes
+
+    (tmp_path / "memory.max").write_text(f"{64 * GiB}\n")
+    (tmp_path / "memory.current").write_text(f"{20 * GiB}\n")
+    (tmp_path / "memory.stat").write_text(f"anon 1\ninactive_file {4 * GiB}\n")
+    (tmp_path / "status").write_text("VmRSS:\t 1048576 kB\n")  # 1 GiB: ignored
+    budget = detect_host_budget_bytes(
+        fraction=0.85,
+        reserve_bytes=8 * GiB,
+        limit_paths=(str(tmp_path / "memory.max"),),
+        meminfo_path=str(tmp_path / "none"),
+        status_path=str(tmp_path / "status"),
+        usage_paths=(
+            (
+                str(tmp_path / "memory.current"),
+                str(tmp_path / "memory.stat"),
+                "inactive_file",
+            ),
+        ),
+    )
+    assert budget == int(64 * GiB * 0.85) - 16 * GiB - 8 * GiB
+
+
+def test_rebudgeting_is_shared_with_worker_processes():
+    import multiprocessing as mp
+
+    guard = HostMemoryGuard(
+        100 * GiB, large_fit_bytes=48 * GiB, mp_context=mp.get_context("spawn")
+    )
+    assert (guard.budget_bytes, guard.slots) == (100 * GiB, 2)
+    guard.set_budget(60 * GiB)  # workers' own memory now counted
+    assert (guard.budget_bytes, guard.slots) == (60 * GiB, 1)
+    assert guard.stats()["budget_bytes"] == 60 * GiB
 
 
 def test_unlimited_cgroup_falls_back_to_physical_memory(tmp_path):
@@ -403,6 +442,7 @@ def test_unlimited_cgroup_falls_back_to_physical_memory(tmp_path):
         limit_paths=(str(tmp_path / "v2"), str(tmp_path / "v1")),
         meminfo_path=str(tmp_path / "meminfo"),
         status_path=str(tmp_path / "none"),
+        usage_paths=(),
     )
     assert budget == 16 * GiB
 

@@ -130,8 +130,8 @@ no FP8).
     table sizes (9-82 s each, even with its chunked-SDPA loop kept out of
     the graph), so it stays off until those are traced down.
 14. **Serving-framework-agnostic core** ([#39](https://github.com/VectorInstitute/tabctx/issues/39)): the router, per-GPU workers
-    and scheduling are plain Python with no Ray dependency; a Dynamo
-    worker hosts the same core. Placement is a pluggable policy
+    and scheduling are plain Python with no Ray dependency, so a Dynamo
+    worker can host the same core. Placement is a pluggable policy
     (`placement.py`: the router hands it a lock-free view of each device)
     and the router emits residency events (`events.py`: placed/removed,
     to any sink; `/v1/tabctx/residency` serves the latest), so a platform

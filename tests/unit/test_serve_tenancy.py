@@ -89,3 +89,15 @@ class TestScoping:
         scoped = scope_dataset_id("acme", "ds-1")
         with pytest.raises(ValueError):
             unscope_dataset_id("other", scoped)
+
+
+def test_callers_see_only_their_own_dataset_ids():
+    from tabctx.serve.tenancy import scope_dataset_id, visible_dataset_id
+
+    acme = scope_dataset_id("acme", "churn")
+    other = scope_dataset_id("globex", "secret")
+    assert visible_dataset_id("acme", acme) == "churn"
+    assert visible_dataset_id("acme", other) is None
+    assert visible_dataset_id("acme", "unscoped") is None
+    assert visible_dataset_id(None, "unscoped") == "unscoped"
+    assert visible_dataset_id(None, acme) is None  # never another tenant's

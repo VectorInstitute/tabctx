@@ -766,6 +766,12 @@ def _build_process_engine(
         host_guard=host_guard,
         mp_context=ctx,
     )
+    if host_guard is not None:
+        # Measured before the workers existed; now that each holds its
+        # models, CUDA context and compiled kernels, budget what is left.
+        rebudget = detect_host_budget_bytes()
+        if rebudget is not None:
+            host_guard.set_budget(rebudget)
     # This process holds no backends: /limits and /readyz use estimators
     # built from the same settings (calibration, not this replica's
     # learned observations).

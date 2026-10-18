@@ -254,6 +254,11 @@ behind the same API. No client changes and no routing header needed.
 
 ## Large tables: upload, then fit by reference
 
+Tables too big for GPU and host memory together can still fit: TabICL
+offloads stage outputs to memory-mapped files under `TABCTX_OFFLOAD_DIR`
+(default `<TABCTX_SPILL_DIR>/offload`), slower but without exhausting the
+pod's RAM (one A100 fit 130k x 500 this way).
+
 Inline JSON tables are convenient to ~10^4 rows and painful beyond.
 For big tables, stream a CSV first and reference it (the same
 upload/orchestration split hosted tabular APIs use, minus the object
@@ -395,6 +400,10 @@ pip install "tabctx[dev]"        # + test dependencies
   (`TABCTX_KV_CACHE=kv|repr|off`), with predictions verified identical
   to the uncached path -- and loads the pretrained backbone once per
   process instead of per fit.
+- **int8 context cache** (`TABCTX_KV_PRECISION=int8`, the default):
+  TabICL's ICL key/value cache, most of a context, is stored in int8:
+  about half the memory per context, identical labels and metrics on the
+  evaluation sets, probabilities within 0.009 (`native` for exact).
 - **Compiled attention blocks** (`TABCTX_COMPILE=1`, the default):
   TabICL's attention blocks run through `torch.compile`, which fuses the
   memory-bound layer norms and residual adds around each attention
