@@ -1,11 +1,11 @@
 """Pluggable placement (placement.py) and residency events (events.py)."""
 
 import pytest
+from test_multidevice import build, table, where
 
 from tabctx.events import EventBus, RecentEvents, ResidencyEvent
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.placement import DeviceView, FitRequest, LeastActiveThatFits
-from tests.unit.test_multidevice import build, table, where
 
 REQ = FitRequest(n_train=10, n_features=1, backend="m")
 

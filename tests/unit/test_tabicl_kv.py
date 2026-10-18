@@ -7,7 +7,10 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tabctx.backends.tabicl_kv import CompressedKVEntry, compress_icl_cache  # noqa: E402
+from tabctx.backends.tabicl_kv import (  # noqa: E402
+    CompressedKVEntry,
+    compress_icl_cache,
+)
 
 
 @dataclass
