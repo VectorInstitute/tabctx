@@ -201,3 +201,100 @@ def test_stats_never_wait_for_a_fit():
     assert engine.stats().n_cached_contexts == 0  # the cache lock is free
     backend.fit_gate.set()
     fitting.join(5)
+
+
+# ---- regressions from the review of 2e801ae --------------------------------
+
+
+def test_large_fit_and_large_predict_with_one_host_slot_do_not_deadlock():
+    """fit takes host slot -> _fit_lock; a large predict used to take
+    _fit_lock -> host slot. Forced: a small (slot-free) fit holds the
+    device while a large predict queues for it and then a large fit takes
+    the only host slot."""
+    from tabctx.memory.host import HostMemoryGuard
+
+    backend = GatedFake()
+    guard = HostMemoryGuard(48 * 1024**3, large_fit_cells=50)  # 1 slot
+    engine = TabctxEngine(
+        backend=backend,
+        estimator=CellEstimator(),
+        cache=ContextCacheManager(CAPACITY),
+        host_guard=guard,
+    )
+    engine.fit(*table(100, "x"), dataset_id="d")
+    backend.fit_gate = threading.Event()
+    small, _ = start(engine.fit, *table(10), dataset_id="small")  # 10 cells
+    assert backend.fit_entered.wait(5)
+    rows = [[0.0]] * (LIGHT_PREDICT_ROWS + 1)
+    predicting, pbox = start(engine.predict, "d", rows)
+    predicting.join(0.2)
+    fitting, fbox = start(engine.fit, *table(100), dataset_id="big")
+    fitting.join(0.2)
+    backend.fit_gate.set()
+    for t in (small, predicting, fitting):
+        t.join(10)
+    assert not predicting.is_alive() and not fitting.is_alive(), "deadlocked"
+    assert "error" not in pbox and "error" not in fbox
+
+
+def test_a_busy_context_is_evicted_when_nothing_else_makes_room(tmp_path):
+    """Back-to-back predicts kept a hot context pinned forever; the fit
+    went ahead without room and the cache went over capacity."""
+    engine, backend = build(tmp_path)
+    engine.fit(*table(600, "hot"), dataset_id="hot")
+    stop = threading.Event()
+    errors: list = []
+
+    def hammer():
+        while not stop.is_set():
+            try:
+                assert engine.predict("hot", [[0.0]]).predictions == ["hot"]
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+                return
+
+    hammers = [threading.Thread(target=hammer, daemon=True) for _ in range(3)]
+    for t in hammers:
+        t.start()
+    engine.fit(*table(600), dataset_id="new")  # needs hot's room
+    stats = engine.stats()
+    assert stats.used_bytes <= stats.capacity_bytes
+    assert engine._cache.holds("new")
+    stop.set()
+    for t in hammers:
+        t.join(10)
+    assert errors == []  # predicts on "hot" restored it as needed
+
+
+def test_contexts_evicted_during_a_fit_are_freed_after_it_measures():
+    engine, backend = build()
+    engine.fit(*table(10), dataset_id="old")
+    backend.fit_gate = threading.Event()
+    fitting, _ = start(engine.fit, *table(100), dataset_id="big")
+    assert backend.fit_entered.wait(5)
+    engine.evict("old")
+    assert not engine._cache.holds("old")
+    assert [c.dataset_id for c in engine._parked] == ["old"]  # not freed yet
+    backend.fit_gate.set()
+    fitting.join(5)
+    assert engine._parked == []
+
+
+def test_a_restore_that_runs_out_of_memory_keeps_the_spilled_copy(tmp_path):
+    engine, backend = build(tmp_path)
+    engine.fit(*table(10, "x"), dataset_id="cold")
+    engine._cache.make_room(CAPACITY)
+    spill = engine._cache._spill
+    real_load, calls = spill.load, []
+
+    def oom_once(dataset_id):
+        calls.append(dataset_id)
+        if len(calls) == 1:
+            meta_path, payload_path = spill._paths(dataset_id)
+            assert meta_path.exists()
+            raise BackendComputeError("CUDA OOM while deserializing")
+        return real_load(dataset_id)
+
+    spill.load = oom_once
+    assert engine.predict("cold", [[0.0]]).predictions == ["x"]
+    assert len(calls) == 2  # retried; the file survived the first OOM

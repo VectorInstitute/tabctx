@@ -263,3 +263,22 @@ class TestInTransitVisibility:
         cache.put(_ctx("bad", payload=lambda: None))
         cache.evict_one()
         assert not cache.has("bad")
+
+
+def test_put_keeps_a_replaced_id_visible_while_making_room(tmp_path):
+    """A same-device re-fit removed the old entry, then spilled others to
+    make room, then inserted: has() said 'nowhere' in between."""
+    store = GatedSpillStore(tmp_path)
+    store.gate.set()
+    cache = ContextCacheManager(200, spill_store=store)
+    cache.put(_ctx("refit", est_bytes=100))
+    cache.put(_ctx("other", est_bytes=100))
+    store.gate.clear()
+    store.entered.clear()
+    t = threading.Thread(target=cache.put, args=(_ctx("refit", est_bytes=200),))
+    t.start()
+    assert store.entered.wait(5)  # spilling "other" to make room
+    assert cache.has("refit")
+    store.gate.set()
+    t.join(5)
+    assert cache.holds("refit")

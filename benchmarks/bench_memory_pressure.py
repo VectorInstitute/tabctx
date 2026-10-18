@@ -141,14 +141,19 @@ def main() -> int:
         queue = ctx.Queue()
         child = ctx.Process(target=_measure_shape, args=(args, rows, features, queue))
         child.start()
+        # Read before join: a child blocks exiting until its queued output
+        # is consumed.
+        records = None
+        while records is None and (child.is_alive() or not queue.empty()):
+            try:
+                records = queue.get(timeout=5)
+            except Exception:  # noqa: BLE001 -- queue.Empty; keep waiting
+                continue
         child.join()
-        records = (
-            queue.get()
-            if not queue.empty()
-            else [
+        if records is None:
+            records = [
                 {"rows": rows, "features": features, "status": f"exit {child.exitcode}"}
             ]
-        )
         for record in records:
             line = json.dumps(record)
             print(line, flush=True)

@@ -64,7 +64,7 @@ def test_engine_stack_with_tabpfn(data, monkeypatch):
 
     from tabctx.backends.tabpfn import served_model_id
 
-    assert built.backend.name == served_model_id(settings.tabpfn.model_version.value)
+    assert built.default == served_model_id(settings.tabpfn.model_version.value)
 
     dataset_id = built.engine.fit(train_X, train_y, task="classification")
     outcome = built.engine.predict(dataset_id, test_X, return_proba=True)

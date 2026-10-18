@@ -57,7 +57,7 @@ def main() -> int:
                 rec["status"] = "OOM"
                 rec["detail"] = str(e)[:160]
             rec["fit_s"] = round(time.perf_counter() - t0, 2)
-            backend = built.backend
+            backend = built.engine.backend_for(built.default)
             if rec["status"] == "ok":
                 rec["peak_gib"] = round((backend.fit_peak_bytes_hint() or 0) / 2**30, 2)
                 rec["resident_gib"] = round(

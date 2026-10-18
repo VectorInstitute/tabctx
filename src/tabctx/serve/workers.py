@@ -43,6 +43,7 @@ import pickle
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Any
 
@@ -65,6 +66,9 @@ _METHODS = frozenset(
 # Concurrent calls per worker: its engine schedules GPU work itself (see
 # engine.py); these only need to queue and answer cheap calls promptly.
 _WORKER_THREADS = 16
+
+
+_NEVER_FITS = 1 << 62
 
 
 class WorkerDiedError(BackendComputeError):
@@ -93,13 +97,20 @@ class _Failure:
 
 
 def _portable(error: BaseException) -> BaseException:
-    """The exception itself if it pickles (tabctx errors do), else a
-    RuntimeError carrying its type and message."""
+    """The exception itself if it survives a pickle round trip (tabctx
+    errors do), else a RuntimeError carrying its type and message. Checking
+    only dumps() isn't enough: an exception whose __init__ takes more than
+    its message pickles fine and then fails to unpickle in the reader."""
     try:
-        pickle.dumps(error)
+        pickle.loads(pickle.dumps(error))
         return error
     except Exception:  # noqa: BLE001
         return RuntimeError(f"{type(error).__name__}: {error}")
+
+
+# Bounded waits for calls that should answer promptly (fits and predicts
+# legitimately run for many minutes, so theirs are unbounded).
+QUICK_CALL_TIMEOUT_S = 30.0
 
 
 # ---- worker process --------------------------------------------------------
@@ -185,7 +196,12 @@ def _worker_main(
         except BaseException as e:  # noqa: BLE001 -- returned to the caller
             reply = (req_id, False, _portable(e), snapshot())
         with send_lock:
-            conn.send(reply)
+            try:
+                conn.send(reply)
+            except Exception as e:  # noqa: BLE001 -- e.g. an unpicklable result
+                conn.send(
+                    (req_id, False, RuntimeError(f"unsendable reply: {e}"), snapshot())
+                )
 
     conn.send(_Ready(list(engine.backend_names), engine.default_backend, snapshot()))
     with ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool:
@@ -343,6 +359,13 @@ class ProcessShard:
                 req_id, ok, payload, snap = self._conn.recv()
             except (EOFError, OSError):
                 break
+            except Exception:  # noqa: BLE001 -- an unreadable reply
+                # Its request can't be identified, so the stream is no longer
+                # trustworthy: retire the worker (its calls fail, health
+                # checks fail, the serving framework restarts the replica).
+                logger.exception("unreadable reply from worker for %s", self.device)
+                self._proc.kill()
+                break
             self._apply(snap)
             with self._state_lock:
                 fut = self._pending.pop(req_id, None)
@@ -375,7 +398,9 @@ class ProcessShard:
             if self._snapshot is None or snap.seq > self._snapshot.seq:
                 self._snapshot = snap
 
-    def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
+    def _call(
+        self, method: str, *args: Any, timeout_s: float | None = None, **kwargs: Any
+    ) -> Any:
         fut: Future = Future()
         with self._state_lock:
             if self._dead is not None:
@@ -385,11 +410,23 @@ class ProcessShard:
         try:
             with self._send_lock:
                 self._conn.send((req_id, method, args, kwargs))
-        except (OSError, ValueError) as e:
-            with self._state_lock:
-                self._pending.pop(req_id, None)
+        except (OSError, ValueError, EOFError) as e:
+            self._forget(req_id)
             raise WorkerDiedError(f"worker for {self.device} is gone: {e}") from e
-        return fut.result()
+        except Exception:  # unpicklable arguments: the caller's problem
+            self._forget(req_id)
+            raise
+        try:
+            return fut.result(timeout_s)
+        except FutureTimeoutError:
+            self._forget(req_id)
+            raise TimeoutError(
+                f"worker for {self.device} did not answer {method} in {timeout_s}s"
+            ) from None
+
+    def _forget(self, req_id: int) -> None:
+        with self._state_lock:
+            self._pending.pop(req_id, None)
 
     # ---- Shard: lock-free reads from the latest snapshot -------------
 
@@ -437,9 +474,20 @@ class ProcessShard:
     def estimate_fit_bytes(
         self, n_train: int, n_features: int, backend: str | None = None
     ) -> int:
+        # A dead or unresponsive worker never fits: placement skips it rather
+        # than failing a fit other devices can take.
         if not self.alive:
-            return 1 << 62  # never fits: placement skips a dead worker
-        return self._call("estimate_fit_bytes", n_train, n_features, backend)
+            return _NEVER_FITS
+        try:
+            return self._call(
+                "estimate_fit_bytes",
+                n_train,
+                n_features,
+                backend,
+                timeout_s=QUICK_CALL_TIMEOUT_S,
+            )
+        except (WorkerDiedError, TimeoutError):
+            return _NEVER_FITS
 
     def fit(
         self,
@@ -473,4 +521,4 @@ class ProcessShard:
 
     def report(self) -> dict:
         """The worker's spill stats and real GPU memory (see _report)."""
-        return self._call("report")
+        return self._call("report", timeout_s=QUICK_CALL_TIMEOUT_S)

@@ -54,6 +54,7 @@ from tabctx.serve.tenancy import (
     scope_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
+from tabctx.serve.workers import WorkerDiedError
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -575,7 +576,10 @@ class TabctxService:
             raise HTTPException(503, detail="; ".join(r for r in dead if r))
         # Worker processes measure their own device (this process holds no
         # CUDA context and must not create one on every GPU).
-        reports = [w.report() for w in self._workers]
+        try:
+            reports = [w.report() for w in self._workers]
+        except (WorkerDiedError, TimeoutError) as e:
+            raise HTTPException(503, detail=str(e)) from e
         real_gpu_memory = None
         per_device: dict[str, dict] = {}
         if reports:

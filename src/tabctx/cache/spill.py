@@ -50,6 +50,16 @@ from tabctx.cache.manager import CachedContext
 DEFAULT_SPILL_CAPACITY_BYTES = 50 * 1024**3
 
 
+def _is_out_of_memory(error: BaseException) -> bool:
+    """A device OOM (torch's, or a backend's wrapper of it), without
+    importing torch."""
+    from tabctx.errors import BackendComputeError
+
+    return (
+        isinstance(error, BackendComputeError) or "OutOfMemory" in type(error).__name__
+    )
+
+
 class DiskSpillStore:
     def __init__(
         self,
@@ -127,7 +137,9 @@ class DiskSpillStore:
     def load(self, dataset_id: str) -> CachedContext | None:
         """Reload a spilled context (removing it from the spill tier --
         it's going back into the primary cache). None if absent or
-        unreadable."""
+        unreadable. A device out-of-memory while deserializing onto the GPU
+        is not corruption: the files are kept and the error propagates, so
+        a retry (or a later request) can still restore it."""
         meta_path, payload_path = self._paths(dataset_id)
         try:
             meta = json.loads(meta_path.read_text())
@@ -135,13 +147,14 @@ class DiskSpillStore:
                 meta["backend_name"], (pickle.dumps, pickle.loads)
             )
             payload = loads(payload_path.read_bytes())
-        except Exception:  # noqa: BLE001 -- absent or corrupt == miss
-            return None
-        finally:
-            # Success: the context moves back to the primary cache.
-            # Failure: drop the unreadable files rather than retrying
-            # them forever.
+        except Exception as e:  # noqa: BLE001 -- absent or corrupt == miss
+            if _is_out_of_memory(e):
+                raise
+            # Unreadable: drop the files rather than retrying them forever.
             self.delete(dataset_id)
+            return None
+        # The context moves back to the primary cache.
+        self.delete(dataset_id)
         return CachedContext(
             dataset_id=meta["dataset_id"],
             backend_name=meta["backend_name"],
@@ -153,6 +166,16 @@ class DiskSpillStore:
             # Absent from files written before feature_names existed.
             feature_names=meta.get("feature_names"),
         )
+
+    def est_bytes(self, dataset_id: str) -> int | None:
+        """A spilled context's recorded size, from its metadata only."""
+        if dataset_id not in self._index:
+            return None
+        meta_path, _ = self._paths(dataset_id)
+        try:
+            return int(json.loads(meta_path.read_text())["est_bytes"])
+        except (OSError, ValueError, KeyError):
+            return None
 
     def contains(self, dataset_id: str) -> bool:
         """Whether a spilled copy exists. Lock-free snapshot (a dict

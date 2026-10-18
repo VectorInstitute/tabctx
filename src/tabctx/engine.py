@@ -7,9 +7,12 @@ This is the one class most callers (including serve/app.py) actually use.
 from __future__ import annotations
 
 import contextlib
+import gc
 import threading
 import uuid
+from collections.abc import Iterator
 
+from tabctx.backends._cuda import release_cached_device_memory
 from tabctx.backends.base import TabularICLBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.chunking import choose_chunk_rows, split_rows
@@ -30,9 +33,17 @@ from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 # predicts, and predicts that must first restore a spilled context, need
 # device memory a running fit may be using, so they wait their turn.
 LIGHT_PREDICT_ROWS = 2048
-# How long a fit's evict-ahead waits for pinned (in-use) contexts to be
-# released before trying its luck with the headroom it has.
-UNPIN_WAIT_S = 30.0
+# A predict whose context is evicted again (under memory pressure) between
+# its restore and getting the device tries this many times.
+_PREDICT_ATTEMPTS = 3
+
+
+def _not_found(dataset_id: str) -> DatasetNotFoundError:
+    return DatasetNotFoundError(
+        f"no cached context for dataset_id={dataset_id!r} -- it was "
+        "never fit, was evicted, or was lost to a replica restart "
+        "(the cache has no durability across process restarts)"
+    )
 
 
 def _rect_shape(X: ArrayLike) -> tuple[int, int] | None:
@@ -106,16 +117,19 @@ def _predict_splitting_on_oom(
     """Predict, halving the chunk on a CUDA OOM until it fits (or one row
     still doesn't). Chunk sizing estimates can't see everything on a nearly
     full device -- e.g. a compressed kv cache's per-layer decompression --
-    and a model may pick a single batch with no OOM retry of its own."""
+    and a model may pick a single batch with no OOM retry of its own. The
+    halves run after the except block, whose traceback would otherwise keep
+    the failed attempt's tensors alive."""
     try:
         return [backend.predict(payload, X_test, return_proba=return_proba)]
     except BackendComputeError:
         if len(X_test) <= 1:
             raise
-        half = len(X_test) // 2
-        return _predict_splitting_on_oom(
-            backend, payload, X_test[:half], return_proba
-        ) + _predict_splitting_on_oom(backend, payload, X_test[half:], return_proba)
+    gc.collect()
+    half = len(X_test) // 2
+    return _predict_splitting_on_oom(
+        backend, payload, X_test[:half], return_proba
+    ) + _predict_splitting_on_oom(backend, payload, X_test[half:], return_proba)
 
 
 class TabctxEngine:
@@ -166,11 +180,17 @@ class TabctxEngine:
         # large predicts. _predict_lock runs one GPU predict at a time, so
         # a light predict (see LIGHT_PREDICT_ROWS) overlaps a running fit
         # rather than queueing behind it. The cache's own lock only guards
-        # bookkeeping. Lock order: _fit_lock, then _predict_lock.
+        # bookkeeping. Lock order: host slot, _fit_lock, _predict_lock (the
+        # cache lock and _release_lock are leaves).
         self._fit_lock = threading.Lock()
         # Re-entrant: a fit retrying alone holds it while the backend's
         # measurement takes it again (see _cuda.QuiescedMeasurement).
         self._predict_lock = threading.RLock()
+        # Contexts removed while a fit measures itself, freed after (see
+        # _measuring); the release lock orders frees against measurement.
+        self._release_lock = threading.Lock()
+        self._fitting = False
+        self._parked: list[CachedContext] = []
         for b in backends.values():
             lend = getattr(b, "set_measurement_quiesce", None)
             if callable(lend):
@@ -193,6 +213,10 @@ class TabctxEngine:
     @property
     def default_backend(self) -> str:
         return self._default_backend
+
+    def backend_for(self, backend: str | None = None) -> TabularICLBackend:
+        """The backend instance serving a model (the default when None)."""
+        return self._resolve_backend(backend)[1]
 
     def estimator_for(self, backend: str | None = None) -> MemoryEstimator:
         return self._estimators[backend or self._default_backend]
@@ -288,17 +312,19 @@ class TabctxEngine:
         estimator = self._estimators[backend_name]
 
         resolved_id = dataset_id or str(uuid.uuid4())
-        # Host memory first: a large fit waiting for a host slot must not
-        # hold this device meanwhile.
+        # Lock order everywhere: host slot, _fit_lock, _predict_lock. Host
+        # memory first, so a large fit waiting for a host slot doesn't hold
+        # this device meanwhile.
         with self._host_slot(chosen, n_train, n_features), self._fit_lock:
             estimated = estimator.estimate_bytes(n_train, 0, n_features)
             self._admit(estimator, estimated, n_train, n_features)
-            payload = self._fit_backend(chosen, X, y, task)
-            est_bytes = chosen.context_bytes_hint(n_train, n_features)
-            if est_bytes is None:
-                est_bytes = estimated
-            else:
-                self._learn(chosen, estimator, n_train, n_features, est_bytes)
+            with self._measuring():
+                payload = self._fit_backend(chosen, X, y, task, estimator, estimated)
+                est_bytes = chosen.context_bytes_hint(n_train, n_features)
+                if est_bytes is None:
+                    est_bytes = estimated
+                else:
+                    self._learn(chosen, estimator, n_train, n_features, est_bytes)
             context = CachedContext(
                 dataset_id=resolved_id,
                 backend_name=backend_name,
@@ -329,8 +355,7 @@ class TabctxEngine:
         the need fits -- without this, a filling replica would reject fits
         that are perfectly safe once a cold context steps aside (proven on
         real hardware: a fourth ~13GB-peak fit OOMed an A100 with three
-        ~8GB contexts resident). Contexts a predict is using are pinned and
-        skipped; if only pinned ones stand in the way, wait for them."""
+        ~8GB contexts resident)."""
         # Feasibility FIRST, against an EMPTY cache's headroom: a fit that
         # can never be admitted must be rejected before evicting anything --
         # otherwise one oversized request drains every tenant's context on
@@ -345,28 +370,73 @@ class TabctxEngine:
                 f"{max_headroom} byte maximum "
                 "admission headroom (even with an empty cache)"
             )
-        with self._cache.lock:
-            while True:
-                headroom = self._headroom(estimator, self._cache.stats().used_bytes)
-                if estimated <= headroom:
-                    return
-                if self._cache.evict_one() is not None:
-                    continue
-                # Only pinned contexts left (or none at all): wait for a
-                # predict to finish, else go ahead with what there is.
-                if not self._cache.wait_for_unpin(UNPIN_WAIT_S):
-                    return
+        self._make_room(estimator, estimated)
+
+    def _make_room(self, estimator: MemoryEstimator, needed: int) -> None:
+        """Evict until `needed` bytes of headroom are free, or nothing is
+        left to evict. Caller holds _fit_lock (and no cache or predict
+        lock). Contexts a predict is using are pinned and evicted last:
+        when only they stand in the way, predicts are held off (no predict
+        is then running, and queued ones re-check residency once they get
+        the device) and those contexts go too."""
+
+        def short() -> bool:
+            return needed > self._headroom(estimator, self._cache.stats().used_bytes)
+
+        while short():
+            if self._cache.evict_one() is None:
+                break
+        if short() and self._cache.has_pins():
+            with self._predict_lock:
+                while short() and self._cache.evict_one(ignore_pins=True) is not None:
+                    pass
+
+    @contextlib.contextmanager
+    def _measuring(self) -> Iterator[None]:
+        """While a fit measures its footprint as an allocator delta, no
+        other context's memory may be freed on this device: evicted
+        payloads are parked (see _release) and dropped afterwards."""
+        with self._release_lock:
+            self._fitting = True
+        try:
+            yield
+        finally:
+            with self._release_lock:
+                self._fitting = False
+                parked, self._parked = self._parked, []
+            del parked
+
+    def _release(self, context: CachedContext | None) -> None:
+        """Drop the caller's last reference to a removed context now, or
+        park it until the running fit has measured itself. The caller must
+        not keep another reference."""
+        with self._release_lock:
+            if context is not None and self._fitting:
+                self._parked.append(context)
+            context = None
 
     def _fit_backend(
-        self, backend: TabularICLBackend, X: ArrayLike, y: ArrayLike, task: Task
+        self,
+        backend: TabularICLBackend,
+        X: ArrayLike,
+        y: ArrayLike,
+        task: Task,
+        estimator: MemoryEstimator,
+        estimated: int,
     ) -> object:
-        """Fit, retrying once with predicts held off if it ran out of
-        device memory while sharing the device with one."""
+        """Fit, retrying once if it ran out of device memory while sharing
+        the device with a predict: after the failed attempt's tensors are
+        freed (outside the except block, whose traceback would keep them
+        alive), with predicts held off and room made again."""
         try:
             return backend.fit(X, y, task)
         except BackendComputeError:
-            with self._predict_lock:
-                return backend.fit(X, y, task)
+            pass
+        gc.collect()
+        release_cached_device_memory()
+        with self._predict_lock:
+            self._make_room(estimator, estimated)
+            return backend.fit(X, y, task)
 
     def _learn(
         self,
@@ -412,14 +482,47 @@ class TabctxEngine:
         )
         return self._host_guard.reserve(large)
 
+    def _restore(self, dataset_id: str) -> None:
+        """Bring a spilled context back onto the device (DatasetNotFoundError
+        if it is neither resident nor spilled). Restores grow residency, so
+        they take _fit_lock and make room for the context first; one that
+        runs out of memory beside a predict retries with predicts held off
+        (the spilled copy survives a device OOM)."""
+        with self._fit_lock:
+            # A context mid-spill is in neither tier until the write lands.
+            self._cache.wait_settled(dataset_id)
+            if self._cache.peek(dataset_id) is not None:
+                return
+            size = self._cache.spilled_size(dataset_id)
+            if size is None:
+                raise _not_found(dataset_id)
+            estimator = self._estimators[self._default_backend]
+            self._make_room(estimator, size)
+            try:
+                restored = self._cache.get(dataset_id)
+            except BackendComputeError:
+                restored = None
+                retry = True
+            else:
+                retry = False
+            if retry:
+                gc.collect()
+                release_cached_device_memory()
+                with self._predict_lock:
+                    restored = self._cache.get(dataset_id)
+            if restored is None:
+                raise _not_found(dataset_id)
+
     def feature_names(self, dataset_id: str) -> list[str] | None:
         """Column names recorded at fit() for a cached context, or None
         when the context is unknown or was fit without names. Reloads a
         spilled context as a side effect, exactly as predict() would."""
+        if self._cache.peek(dataset_id) is None:
+            try:
+                self._restore(dataset_id)
+            except DatasetNotFoundError:
+                return None
         context = self._cache.peek(dataset_id)
-        if context is None:
-            with self._fit_lock:  # a restore takes device memory
-                context = self._cache.get(dataset_id)
         return context.feature_names if context is not None else None
 
     def predict(
@@ -432,69 +535,89 @@ class TabctxEngine:
         which the naive one-shot wrapper this library replaces did not do.
 
         A light predict (a resident context, at most LIGHT_PREDICT_ROWS test
-        rows) runs beside a fit on this device; anything else waits for the
-        device's fits.
+        rows) runs beside a fit on this device; larger ones wait for the
+        device's fits, and a spilled context is restored first.
         """
+        exclusive = len(X_test) > LIGHT_PREDICT_ROWS
         with self._cache.pinned(dataset_id):
-            context = self._cache.peek(dataset_id)
-            if context is not None and len(X_test) <= LIGHT_PREDICT_ROWS:
-                return self._predict_on(context, X_test, return_proba)
-        with self._fit_lock, self._cache.pinned(dataset_id):
-            context = self._cache.get(dataset_id)  # restores a spilled one
-            if context is None:
-                raise DatasetNotFoundError(
-                    f"no cached context for dataset_id={dataset_id!r} -- it was "
-                    "never fit, was evicted, or was lost to a replica restart "
-                    "(the cache has no durability across process restarts)"
+            for _ in range(_PREDICT_ATTEMPTS):
+                if self._cache.peek(dataset_id) is None:
+                    self._restore(dataset_id)
+                outcome = self._predict_resident(
+                    dataset_id, X_test, return_proba, exclusive
                 )
-            return self._predict_on(context, X_test, return_proba)
+                if outcome is not None:
+                    return outcome
+        raise BackendComputeError(
+            f"context {dataset_id!r} was evicted again before its predict "
+            f"could run ({_PREDICT_ATTEMPTS} attempts); the device is under "
+            "memory pressure -- retry"
+        )
 
-    def _predict_on(
-        self, context: CachedContext, X_test: ArrayLike, return_proba: bool
-    ) -> PredictOutcome:
-        """Run a predict against a context the caller has pinned."""
+    def _predict_resident(
+        self, dataset_id: str, X_test: ArrayLike, return_proba: bool, exclusive: bool
+    ) -> PredictOutcome | None:
+        """Run a predict if the context is resident once this call has the
+        device (None if it was evicted meanwhile). Holds no reference to the
+        context while waiting for locks, so an eviction can really free it."""
+        context = self._cache.peek(dataset_id)
+        if context is None:
+            return None
         _validate_predict_input(X_test, context.n_features)
         # Dispatch to whichever backend fit this context (multi-backend
         # deployments serve several models over one cache).
         backend = self._backends.get(context.backend_name)
         if backend is None:
             raise DatasetNotFoundError(
-                f"context for {context.dataset_id!r} was fit by backend "
+                f"context for {dataset_id!r} was fit by backend "
                 f"{context.backend_name!r}, which this deployment no longer "
                 "serves -- re-fit with one of "
                 f"{sorted(self._backends)}"
             )
         estimator = self._estimators[context.backend_name]
-
-        n_test = len(X_test)
+        n_features = context.n_features
         # Chunk against the usage-aware transient headroom (what the
         # device can actually take on top of resident contexts), not the
         # cache-capacity ceiling -- the same quantity fit admission uses.
         chunk_rows = choose_chunk_rows(
             estimator,
             context.n_train,
-            context.n_features,
+            n_features,
             self._headroom(estimator, self._cache.stats_nowait().used_bytes),
         )
+        context = None
+        n_test = len(X_test)
         chunks = split_rows(X_test, chunk_rows) if chunk_rows < n_test else [X_test]
+        largest_chunk = max(len(c) for c in chunks)
 
         all_predictions: list = []
         all_probabilities: list[list[float]] = []
         classes: list[str] | None = None
-        largest_chunk = max(len(c) for c in chunks)
         with (
-            self._host_slot(backend, largest_chunk, context.n_features),
+            self._host_slot(backend, largest_chunk, n_features),
+            self._fit_lock if exclusive else contextlib.nullcontext(),
             self._predict_lock,
         ):
-            self._cache.touch(context.dataset_id)
-            for chunk in chunks:
-                for outcome in _predict_splitting_on_oom(
-                    backend, context.payload, chunk, return_proba
-                ):
-                    all_predictions.extend(outcome.predictions)
-                    if return_proba:
-                        all_probabilities.extend(outcome.probabilities or [])
-                        classes = outcome.classes or classes
+            context = self._cache.peek(dataset_id)
+            if context is None:
+                return None
+            self._cache.touch(dataset_id)
+            try:
+                for chunk in chunks:
+                    for outcome in _predict_splitting_on_oom(
+                        backend, context.payload, chunk, return_proba
+                    ):
+                        all_predictions.extend(outcome.predictions)
+                        if return_proba:
+                            all_probabilities.extend(outcome.probabilities or [])
+                            classes = outcome.classes or classes
+            finally:
+                # Still under the predict lock: if the context was evicted
+                # while this ran, its memory is freed now -- atomic with
+                # respect to a fit's measurements -- or parked.
+                if self._cache.peek(dataset_id) is not context:
+                    self._release(context)
+                context = None
 
         return PredictOutcome(
             predictions=all_predictions,
@@ -521,7 +644,13 @@ class TabctxEngine:
             self.evict(dataset_id)
 
     def evict(self, dataset_id: str) -> None:
-        self._cache.evict(dataset_id)
+        # Under the release lock, so the memory is freed either before a
+        # fit starts measuring or after it is done (see _measuring).
+        with self._release_lock:
+            removed = self._cache.evict(dataset_id)
+            if removed is not None and self._fitting:
+                self._parked.append(removed)
+            removed = None
 
     def stats(self) -> EngineStats:
         return self._cache.stats()
