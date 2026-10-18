@@ -109,6 +109,7 @@ SPILL_CAPACITY_ENV_VAR = "TABCTX_SPILL_CAPACITY_BYTES"
 UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
 WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
+COMPILE_ENV_VAR = "TABCTX_COMPILE"
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,9 @@ class ServeSettings:
     # Several devices: one worker process per GPU (default) or threads of
     # this process (see _build_process_engine for why processes).
     worker_processes: bool = True
+    # torch.compile the models' hot blocks where measured to help (TabICL's
+    # attention blocks: backends/tabicl_compile.py).
+    compile_models: bool = True
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -212,11 +216,6 @@ class ServeSettings:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
         devices = _parse_devices(os.environ.get(DEVICES_ENV_VAR, "auto"))
         offload_dir = os.environ.get(OFFLOAD_DIR_ENV_VAR) or None
-        raw_workers = os.environ.get(WORKER_PROCESSES_ENV_VAR, "1").strip().lower()
-        if raw_workers not in ("0", "1", "true", "false"):
-            raise ValueError(
-                f"{WORKER_PROCESSES_ENV_VAR}={raw_workers!r} must be 0 or 1"
-            )
         return cls(
             backends=backends,
             gpu_memory_fraction=fraction,
@@ -229,8 +228,16 @@ class ServeSettings:
             spill_capacity_bytes=spill_capacity,
             devices=devices,
             offload_dir=offload_dir,
-            worker_processes=raw_workers in ("1", "true"),
+            worker_processes=_env_flag(WORKER_PROCESSES_ENV_VAR, cls.worker_processes),
+            compile_models=_env_flag(COMPILE_ENV_VAR, cls.compile_models),
         )
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "1" if default else "0").strip().lower()
+    if raw not in ("0", "1", "true", "false"):
+        raise ValueError(f"{name}={raw!r} must be 0 or 1")
+    return raw in ("1", "true")
 
 
 def _parse_devices(raw: str) -> tuple[str, ...]:
@@ -499,6 +506,7 @@ def _build_real_backend(
             # Concurrent offloading calls each get their share of host
             # headroom (see memory/host.py).
             cpu_safety_factor=0.6 / host_slots,
+            compile_blocks=settings.compile_models,
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.

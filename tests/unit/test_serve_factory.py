@@ -471,3 +471,14 @@ class TestKvPrecision:
         monkeypatch.setenv("TABCTX_KV_PRECISION", "fp4")
         with pytest.raises(ValueError, match="TABCTX_KV_PRECISION"):
             ServeSettings.from_env()
+
+
+def test_compile_flag_from_env(monkeypatch):
+    from tabctx.serve.factory import COMPILE_ENV_VAR
+
+    assert ServeSettings.from_env().compile_models  # on by default
+    monkeypatch.setenv(COMPILE_ENV_VAR, "0")
+    assert not ServeSettings.from_env().compile_models
+    monkeypatch.setenv(COMPILE_ENV_VAR, "maybe")
+    with pytest.raises(ValueError, match="TABCTX_COMPILE"):
+        ServeSettings.from_env()

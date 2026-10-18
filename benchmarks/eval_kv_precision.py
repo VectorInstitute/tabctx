@@ -11,6 +11,10 @@ Datasets: the ones bundled with scikit-learn (no download) plus larger
 synthetic tables, where KV size actually matters.
 
 Usage: eval_kv_precision.py --device cuda:0 --out kv-precision-a100.json
+
+With --compile, the same with compiled attention blocks (#32/#36): run it
+once with and once without and compare the metrics (compilation patches
+tabicl process-wide, so eager and compiled can't share a process).
 """
 
 from __future__ import annotations
@@ -79,11 +83,15 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--device", default="cuda:0")
     p.add_argument("--out", default=None)
+    p.add_argument("--precisions", nargs="+", default=list(PRECISIONS))
+    p.add_argument("--compile", action="store_true", help="compiled TabICL blocks")
     args = p.parse_args()
 
     backends = {
-        prec: TabICLBackend(device=args.device, kv_precision=prec)
-        for prec in PRECISIONS
+        prec: TabICLBackend(
+            device=args.device, kv_precision=prec, compile_blocks=args.compile
+        )
+        for prec in args.precisions
     }
     for b in backends.values():
         b.warmup()

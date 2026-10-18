@@ -45,6 +45,24 @@ def make_table(rows: int, features: int, seed: int):
     return X, y
 
 
+def symbolic_logn() -> None:
+    """tabicl's ssmax scales queries by log(n) computed with math.log on a
+    Python int, which specializes every compiled graph to one row count
+    (each new table recompiled for 11 s). Inside compiled code, compute it
+    as a tensor op on the symbolic n instead."""
+    from tabicl._model import ssmax
+
+    eager = ssmax._logn
+
+    def logn(n, device, dtype):
+        if torch.compiler.is_compiling():
+            ones = torch.ones((), device=device, dtype=torch.float32)
+            return (ones * torch.sym_max(n, 1)).log().to(dtype)
+        return eager(n, device, dtype)
+
+    ssmax._logn = logn
+
+
 def install(variant: str, mode: str) -> None:
     """Patch tabicl's attention block class (all instances share one graph:
     nn-module parameters are graph inputs, so instances don't recompile)."""
@@ -56,6 +74,7 @@ def install(variant: str, mode: str) -> None:
         # Blocks see several static shapes (column vs row vs ICL stages,
         # induced points vs features): allow a graph per shape family.
         torch._dynamo.config.recompile_limit = 64
+        symbolic_logn()
         Block.forward = torch.compile(Block.forward, dynamic=True, mode=mode)
         return
     raise SystemExit(f"unknown variant {variant}")

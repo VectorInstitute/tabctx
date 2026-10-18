@@ -55,10 +55,13 @@ def main() -> int:
     p.add_argument("--context", type=parse_shape, default=(2_000, 20))
     p.add_argument("--test-rows", type=int, default=100)
     p.add_argument("--out", default=None)
+    p.add_argument("--compile", action="store_true", help="compiled TabICL blocks")
     args = p.parse_args()
     device = torch.device(args.device)
 
-    backend = build_backend(args.backend, args.device, "kv")
+    backend = build_backend(
+        args.backend, args.device, "kv", compile_blocks=args.compile
+    )
     backend.warmup()
     cr, cf = args.context
     Xc, yc = make_table(cr, cf, "classification", seed=1)

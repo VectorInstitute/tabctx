@@ -74,3 +74,46 @@ def test_cached_logn_matches_and_is_installed_once():
             assert torch.equal(patched(n, torch.device("cpu"), torch.float16), expected)
     finally:
         ssmax._logn = original
+
+
+def test_logn_stays_symbolic_inside_compiled_code():
+    """math.log on the row count specialized every compiled graph to one
+    table size (each new table recompiled for ~11 s on an A100)."""
+    ssmax = pytest.importorskip("tabicl._model.ssmax")
+    from torch._dynamo.testing import CompileCounter
+
+    from tabctx.backends.tabicl import install_cached_logn
+
+    original = ssmax._logn
+    try:
+        install_cached_logn()
+        counter = CompileCounter()
+
+        @torch.compile(backend=counter, dynamic=True)
+        def scale(q):
+            return q * ssmax._logn(q.shape[0], q.device, q.dtype)
+
+        for n in (3000, 5000, 7000, 12000):
+            q = torch.ones(n, 4)
+            expected = original(n, torch.device("cpu"), torch.float32)
+            assert torch.allclose(scale(q)[0, 0], expected, rtol=1e-6)
+        assert counter.frame_count == 1  # one graph for every row count
+    finally:
+        ssmax._logn = original
+        torch._dynamo.reset()
+
+
+def test_compiled_blocks_install_once():
+    layers = pytest.importorskip("tabicl._model.layers")
+    from tabctx.backends.tabicl_compile import install_compiled_blocks
+
+    original = layers.MultiheadAttentionBlock.forward
+    try:
+        assert install_compiled_blocks()
+        compiled = layers.MultiheadAttentionBlock.forward
+        assert compiled is not original
+        assert install_compiled_blocks()
+        assert layers.MultiheadAttentionBlock.forward is compiled  # idempotent
+    finally:
+        layers.MultiheadAttentionBlock.forward = original
+        torch._dynamo.reset()

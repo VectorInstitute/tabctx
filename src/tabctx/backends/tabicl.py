@@ -147,8 +147,20 @@ def install_cached_logn() -> bool:
     def cached(n: int, device: Any, dtype: Any) -> Any:
         return original(n, device, dtype)
 
-    cached._tabctx_cached = True  # type: ignore[attr-defined]
-    ssmax._logn = cached
+    def logn(n: Any, device: Any, dtype: Any) -> Any:
+        import torch
+
+        if torch.compiler.is_compiling():
+            # Inside a compiled block (tabicl_compile.py) n is symbolic:
+            # math.log would specialize the graph to one row count, so
+            # compute log(n) as a tensor op (in fp32, then cast, as the
+            # eager path rounds a float64 log to dtype).
+            ones = torch.ones((), device=device, dtype=torch.float32)
+            return (ones * torch.sym_max(n, 1)).log().to(dtype)
+        return cached(n, device, dtype)
+
+    logn._tabctx_cached = True  # type: ignore[attr-defined]
+    ssmax._logn = logn
     return True
 
 
@@ -200,6 +212,7 @@ class TabICLBackend(QuiescedMeasurement):
         kv_precision: KVPrecision = "native",
         offload_dir: str | None = None,
         cpu_safety_factor: float = 0.6,
+        compile_blocks: bool = False,
     ) -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
         False). tabicl's own default is False, which makes every
@@ -211,7 +224,11 @@ class TabICLBackend(QuiescedMeasurement):
         memory-hungry -- the memory cost lands inside fit()'s measured
         delta, so cache accounting and the adaptive admission gate see it
         automatically; "repr" trades ~24x less ICL-cache memory for
-        re-running the ICL stack per predict)."""
+        re-running the ICL stack per predict).
+
+        compile_blocks: torch.compile tabicl's attention blocks (CUDA only;
+        see backends/tabicl_compile.py): 1.7-2.2x faster GPU half, ~20%
+        lower peak, paid for by a one-time compile in warmup()."""
         import torch
 
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -251,6 +268,11 @@ class TabICLBackend(QuiescedMeasurement):
         _install_restore_hook(TabICLRegressor)
         if not install_cached_logn():
             logger.warning("tabicl.ssmax._logn not found: per-call GPU syncs remain")
+        self._compiled = False
+        if compile_blocks and is_cuda(self._device):
+            from tabctx.backends.tabicl_compile import install_compiled_blocks
+
+            self._compiled = install_compiled_blocks()
 
     def _make_estimator(self, task: Task) -> Any:
         options = {
@@ -491,11 +513,18 @@ class TabICLBackend(QuiescedMeasurement):
         report the weights as part of its context (resident bytes for a
         tiny table were the whole checkpoint), overcharging the cache and
         leaving the books wrong once it is evicted -- and would pay the
-        load latency."""
+        load latency. With compiled blocks, also compile every call family
+        here (fp32 below tabicl's autocast threshold of 1,024 rows, fp16
+        above; fit and cached predict) rather than in tenants' calls."""
         rng = np.random.default_rng(0)
-        X = rng.normal(size=(32, 4))
-        self.fit(X, (X[:, 0] > 0).astype(int), "classification")
-        self.fit(X, X[:, 0], "regression")
+        sizes = (32, 1100) if self._compiled else (32,)
+        for rows in sizes:
+            X = rng.normal(size=(rows, 4))
+            labels = (X[:, 0] > 0).astype(int)
+            for task, y in (("classification", labels), ("regression", X[:, 0])):
+                payload = self.fit(X, y, task)
+                if self._compiled:
+                    self.predict(payload, X[:8], return_proba=task == "classification")
         self._last_context_bytes = None
         self._last_fit_peak_bytes = None
 
