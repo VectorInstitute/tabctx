@@ -98,8 +98,8 @@ process. A GPU's engine validates input, admits a fit on its estimated
 memory need, keeps encoded contexts in a byte-budgeted LRU cache, and
 dispatches to whichever backend fit the context. Evicted contexts
 optionally spill to local disk and reload on their next use, and one
-host-memory guard admits large fits against the node's RAM across all
-workers. A single-GPU replica calls its one engine directly (editable
+host-memory guard admits large fits against the pod's RAM across all
+its workers. A single-GPU replica calls its one engine directly (editable
 source: `docs/figures/architecture.svg`).*
 
 The unit everything revolves around is a **context**: one training
@@ -429,8 +429,8 @@ pip install "tabctx[dev]"        # + test dependencies
   each in its own worker process, behind the single-engine API; see
   [Several GPUs in one replica](#several-gpus-in-one-replica).
 - **Host-memory admission** (`HostMemoryGuard`): large TabICL fits stage
-  tens of GiB in host RAM, so calls reserve their estimated host bytes
-  against one budget shared by every worker process on the node (first
+  tens of GiB in host RAM, so calls of 1 GiB or more reserve their
+  estimated host bytes against one budget shared by the pod's workers (first
   come, first served), so two huge fits queue instead of getting the pod
   OOM-killed with every tenant's context.
 

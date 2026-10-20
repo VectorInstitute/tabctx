@@ -9,14 +9,14 @@
   <rect width="960" height="940" fill="#FFFFFF"/>
 
   <!-- ============ CLIENTS ============ -->
-  <text x="18" y="64" transform="rotate(-90 18 64)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#5B7A99">CLIENTS</text>
+  <text x="18" y="64" transform="rotate(-90 18 64)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#4A6683">CLIENTS</text>
   <rect x="44" y="28" width="280" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
   <text x="184" y="52" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">TabctxClient (pure stdlib)</text>
   <text x="184" y="69" text-anchor="middle" font-size="11.5" fill="#4A5058">fit / upload_csv / fit_uploaded / predict</text>
   <text x="184" y="85" text-anchor="middle" font-size="11.5" fill="#4A5058">sets session + tenant headers, maps errors</text>
   <rect x="350" y="28" width="280" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
   <text x="490" y="52" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">Any HTTP client</text>
-  <text x="490" y="69" text-anchor="middle" font-size="11.5" fill="#4A5058">x-session-id: dataset_id (replica affinity)</text>
+  <text x="490" y="69" text-anchor="middle" font-size="11.5" fill="#4A5058">x-session-id (renamable): dataset_id, affinity</text>
   <text x="490" y="85" text-anchor="middle" font-size="11.5" fill="#4A5058">x-tabctx-tenant-id: tenant (isolation)</text>
   <rect x="656" y="28" width="280" height="72" rx="6" ry="6" fill="#E6EDF3" stroke="#5B7A99" stroke-width="1.2"/>
   <text x="796" y="52" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">In-process use, no server</text>
@@ -29,14 +29,14 @@
   <path d="M 920 100 V 347" fill="none" stroke="#5A6270" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#arr)"/>
 
   <!-- ============ SERVING ============ -->
-  <text x="18" y="223" transform="rotate(-90 18 223)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#6E8A4E">SERVING</text>
+  <text x="18" y="223" transform="rotate(-90 18 223)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#4F6A33">SERVING</text>
   <rect x="44" y="130" width="586" height="52" rx="6" ry="6" fill="#EAF0E2" stroke="#6E8A4E" stroke-width="1.2"/>
   <text x="337" y="152" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">Ray Serve proxy: consistent-hash router on the session header</text>
   <text x="337" y="169" text-anchor="middle" font-size="11.5" fill="#4A5058">same dataset_id, same replica; strict (no fallback replica), 503 under backpressure</text>
   <path d="M 337 182 V 205" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
   <rect x="44" y="206" width="586" height="110" rx="6" ry="6" fill="#EAF0E2" stroke="#6E8A4E" stroke-width="1.2"/>
   <text x="58" y="228" text-anchor="start" font-size="12" fill="#23272E" font-weight="600">TabctxService replica (serve/app.py, FastAPI): one or more GPUs</text>
-  <text x="58" y="246" text-anchor="start" font-size="11.5" fill="#4A5058">•  POST /v1/tabctx/upload, /fit, /predict; GET /v1/models, /limits, /residency, /readyz</text>
+  <text x="58" y="246" text-anchor="start" font-size="11.5" fill="#4A5058">•  POST /v1/tabctx/{upload,fit,predict}; GET /v1/models, /v1/tabctx/{limits,residency}, /readyz</text>
   <text x="58" y="263" text-anchor="start" font-size="11.5" fill="#4A5058">•  tenancy: every dataset_id scoped per tenant before it reaches an engine</text>
   <text x="58" y="280" text-anchor="start" font-size="11.5" fill="#4A5058">•  UploadStore: CSVs streamed to replica disk, single-use, TTL; JSON or CSV parsing</text>
   <text x="58" y="297" text-anchor="start" font-size="11.5" fill="#4A5058">•  CoalescingPredictor: concurrent predicts on one context share a single GPU call</text>
@@ -53,7 +53,7 @@
   <path d="M 337 316 V 347" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
 
   <!-- ============ ROUTER ============ -->
-  <text x="18" y="396" transform="rotate(-90 18 396)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#4E8585">ROUTER</text>
+  <text x="18" y="396" transform="rotate(-90 18 396)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#3B6B6B">ROUTER</text>
   <rect x="44" y="348" width="892" height="96" rx="6" ry="6" fill="#E2EFEF" stroke="#4E8585" stroke-width="1.2"/>
   <text x="490" y="370" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">MultiDeviceEngine (multidevice.py): one replica's fits and predicts across its GPUs (2 or more)</text>
   <text x="490" y="389" text-anchor="middle" font-size="11.5" fill="#4A5058">fit -> PlacementPolicy (default LeastActiveThatFits): a GPU it fits on without eviction, least active first, else most headroom</text>
@@ -61,7 +61,7 @@
   <text x="490" y="423" text-anchor="middle" font-size="11.5" fill="#4A5058">decides from lock-free snapshots, never waits on a GPU · emits ResidencyEvents (placed / removed) -> /v1/tabctx/residency</text>
 
   <path d="M 337 445 V 489" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)" marker-start="url(#arr)"/>
-  <text x="350" y="471" text-anchor="start" font-size="11.5" fill="#4A5058" font-style="italic">one pipe per worker: calls out, a Snapshot (residency, stats, headroom) back with every reply</text>
+  <text x="350" y="471" text-anchor="start" font-size="11.5" fill="#4A5058" font-style="italic">one pipe per worker; every reply carries a Snapshot (residency, stats, headroom)</text>
 
   <!-- ============ WORKERS ============ -->
   <text x="18" y="613" transform="rotate(-90 18 613)" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="1.6" fill="#7A6699">WORKERS</text>
@@ -69,7 +69,7 @@
   <rect x="60" y="506" width="860" height="230" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
   <rect x="52" y="498" width="860" height="230" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
   <rect x="44" y="490" width="860" height="230" rx="6" ry="6" fill="#ECE7F2" stroke="#7A6699" stroke-width="1.2"/>
-  <text x="58" y="512" text-anchor="start" font-size="12" fill="#23272E" font-weight="600">Worker process per GPU (serve/workers.py): cuda:0 ... cuda:N-1, one TabctxEngine each</text>
+  <text x="58" y="512" text-anchor="start" font-size="12" fill="#23272E" font-weight="600">Worker process per GPU (serve/workers.py; threads if TABCTX_WORKER_PROCESSES=0): one TabctxEngine each</text>
   <text x="58" y="530" text-anchor="start" font-size="11.5" fill="#4A5058">a ProcessShard proxies it in the replica; if a worker dies, its calls fail, placement skips it and the health check fails</text>
 
   <rect x="58" y="542" width="832" height="166" rx="6" ry="6" fill="#F4ECE2" stroke="#A67B4B" stroke-width="1.2"/>
@@ -78,16 +78,16 @@
 
   <rect x="72" y="590" width="260" height="106" rx="5" ry="5" fill="#FFFFFF" stroke="#A67B4B" stroke-width="1.1"/>
   <text x="202" y="609" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">AdaptiveMemoryEstimator (per model)</text>
-  <text x="202" y="626" text-anchor="middle" font-size="11" fill="#4A5058">admits a fit if resident + working floor</text>
-  <text x="202" y="642" text-anchor="middle" font-size="11" fill="#4A5058">fits 85% of GPU minus resident contexts</text>
+  <text x="202" y="626" text-anchor="middle" font-size="11" fill="#4A5058">413 only if a fit can't fit an empty</text>
+  <text x="202" y="642" text-anchor="middle" font-size="11" fill="#4A5058">GPU's 85%; else evicts to make room</text>
   <text x="202" y="658" text-anchor="middle" font-size="11" fill="#4A5058">calibrated grids, learns from real fits</text>
-  <text x="202" y="674" text-anchor="middle" font-size="11" fill="#4A5058">never-feasible fits: 413 before evicting</text>
+  <text x="202" y="674" text-anchor="middle" font-size="11" fill="#4A5058">checks real free GPU memory first</text>
 
   <rect x="344" y="590" width="260" height="106" rx="5" ry="5" fill="#FFFFFF" stroke="#A67B4B" stroke-width="1.1"/>
   <text x="474" y="609" text-anchor="middle" font-size="11.5" fill="#23272E" font-weight="600">ContextCacheManager (per GPU)</text>
   <text x="474" y="626" text-anchor="middle" font-size="11" fill="#4A5058">dataset_id -> CachedContext; all models</text>
   <text x="474" y="642" text-anchor="middle" font-size="11" fill="#4A5058">share one byte budget; LRU eviction</text>
-  <text x="474" y="658" text-anchor="middle" font-size="11" fill="#4A5058">in-use contexts pinned; evicts ahead</text>
+  <text x="474" y="658" text-anchor="middle" font-size="11" fill="#4A5058">in-use contexts evicted last; evicts ahead</text>
   <text x="474" y="674" text-anchor="middle" font-size="11" fill="#4A5058">to make room for an admitted fit</text>
 
   <rect x="616" y="590" width="260" height="106" rx="5" ry="5" fill="#FFFFFF" stroke="#A67B4B" stroke-width="1.1"/>
@@ -125,6 +125,6 @@
   <!-- every worker reserves host memory here, down the right-hand lane -->
   <path d="M 920 620 H 944 V 894 H 905" fill="none" stroke="#5A6270" stroke-width="1.3" marker-end="url(#arr)"/>
   <rect x="44" y="866" width="860" height="56" rx="6" ry="6" fill="#F5E8E8" stroke="#A65B5B" stroke-width="1.2"/>
-  <text x="474" y="888" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">HostMemoryGuard (memory/host.py): one host-RAM budget shared by every worker process on the node</text>
-  <text x="474" y="906" text-anchor="middle" font-size="11.5" fill="#4A5058">calls reserve their estimated host bytes, first come first served; a few offloading fits at once; 503, not a hang, if its lock is stuck</text>
+  <text x="474" y="888" text-anchor="middle" font-size="12" fill="#23272E" font-weight="600">HostMemoryGuard (memory/host.py): one host-RAM budget per replica pod, shared by its workers</text>
+  <text x="474" y="906" text-anchor="middle" font-size="11.5" fill="#4A5058">calls needing 1 GiB+ reserve their estimate, first come first served; 503, not a hang, if its lock is stuck</text>
 </svg>
