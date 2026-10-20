@@ -123,7 +123,9 @@ no FP8).
     Ray Serve, 6 users on 4x A100: 5.78 -> 6.99 predicts/s. Dynamic
     shapes needed tabicl's ssmax log(n) computed symbolically (math.log on
     the row count recompiled every new table). ~50 graphs (fp16 path
-    only) compile in warmup (~130 s per worker). CUDA graphs aren't worth it: the GPU half
+    only) compile in warmup (~130 s per worker); dynamo's settings are
+    applied per call, since its config overrides are per thread and
+    serving calls from other threads (#47). CUDA graphs aren't worth it: the GPU half
     is GPU-bound, not launch-bound. TabPFN-3.5's own compile path
     (`enable_torch_compile`) measured 1.3-1.5x faster fits, ~30% faster
     predicts and ~22% lower peak, but it still recompiles for many new

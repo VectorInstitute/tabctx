@@ -1,0 +1,22 @@
+{"event": "built", "models": ["tabicl-v2"], "device": "cuda", "build_s": 107.3, "graphs_after_warmup": 54}
+{"model": "tabicl-v2", "task": "classification", "shape": "1100x1", "fit_s": 0.168, "fit_graphs": 0, "predicts": [{"s": 0.057, "graphs": 0}, {"s": 0.055, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "3500x1", "fit_s": 0.185, "fit_graphs": 0, "predicts": [{"s": 0.054, "graphs": 0}, {"s": 0.053, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "10000x1", "fit_s": 0.265, "fit_graphs": 0, "predicts": [{"s": 0.056, "graphs": 0}, {"s": 0.058, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "30000x1", "fit_s": 0.95, "fit_graphs": 0, "predicts": [{"s": 0.061, "graphs": 0}, {"s": 0.052, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "1100x10", "fit_s": 0.199, "fit_graphs": 0, "predicts": [{"s": 0.06, "graphs": 0}, {"s": 0.055, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "3500x10", "fit_s": 0.242, "fit_graphs": 0, "predicts": [{"s": 0.065, "graphs": 0}, {"s": 0.055, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "10000x10", "fit_s": 0.462, "fit_graphs": 0, "predicts": [{"s": 0.057, "graphs": 0}, {"s": 0.053, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "30000x10", "fit_s": 1.965, "fit_graphs": 0, "predicts": [{"s": 0.065, "graphs": 0}, {"s": 0.054, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "1100x100", "fit_s": 0.269, "fit_graphs": 0, "predicts": [{"s": 0.067, "graphs": 0}, {"s": 0.065, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "3500x100", "fit_s": 0.435, "fit_graphs": 0, "predicts": [{"s": 0.066, "graphs": 0}, {"s": 0.067, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "10000x100", "fit_s": 1.007, "fit_graphs": 0, "predicts": [{"s": 0.065, "graphs": 0}, {"s": 0.062, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "30000x100", "fit_s": 4.557, "fit_graphs": 0, "predicts": [{"s": 0.072, "graphs": 0}, {"s": 0.061, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "1100x500", "fit_s": 0.704, "fit_graphs": 0, "predicts": [{"s": 0.102, "graphs": 0}, {"s": 0.104, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "3500x500", "fit_s": 2.307, "fit_graphs": 0, "predicts": [{"s": 0.103, "graphs": 0}, {"s": 0.104, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "10000x500", "fit_s": 5.864, "fit_graphs": 0, "predicts": [{"s": 0.109, "graphs": 0}, {"s": 0.103, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "30000x500", "fit_s": 207.812, "fit_graphs": 0, "predicts": [{"s": 0.125, "graphs": 0}, {"s": 0.11, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "1100x1000", "fit_s": 1.546, "fit_graphs": 0, "predicts": [{"s": 0.169, "graphs": 0}, {"s": 0.17, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "3500x1000", "fit_s": 5.49, "fit_graphs": 0, "predicts": [{"s": 0.168, "graphs": 0}, {"s": 0.167, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "10000x1000", "fit_s": 133.124, "fit_graphs": 0, "predicts": [{"s": 0.183, "graphs": 0}, {"s": 0.174, "graphs": 0}]}
+{"model": "tabicl-v2", "task": "classification", "shape": "30000x1000", "fit_s": 569.824, "fit_graphs": 0, "predicts": [{"s": 0.174, "graphs": 0}, {"s": 0.175, "graphs": 0}]}
+{"event": "done", "graphs_total": 54}
