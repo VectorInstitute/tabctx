@@ -49,6 +49,7 @@ import weakref
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from multiprocessing.connection import wait as wait_for_handles
 from pathlib import Path
 from typing import Any
 
@@ -310,6 +311,7 @@ class ProcessShard:
         _LIVE_SHARDS.add(self)
         self._send_lock = threading.Lock()
         self._state_lock = threading.Lock()
+        self._reap_lock = threading.Lock()
         self._pending: dict[int, Future] = {}
         self._ids = itertools.count(1)
         self._dead: str | None = None
@@ -329,12 +331,13 @@ class ProcessShard:
         try:
             first = self._conn.recv()
         except (EOFError, OSError) as e:
+            self._exited(5)  # reap it, for a meaningful exit code
             raise WorkerDiedError(
                 f"worker for {self.device} exited during startup "
-                f"(exit code {self._proc.exitcode})"
+                f"(exit code {self._exit_code})"
             ) from e
         if isinstance(first, _Failure):
-            self._proc.join(5)
+            self._exited(5)
             raise first.error
         self._backend_names = first.backend_names
         self._default_backend = first.default_backend
@@ -404,27 +407,57 @@ class ProcessShard:
                 pass
 
     def _finish_close(self, grace_s: float) -> None:
-        self._proc.join(grace_s)
-        if self._proc.is_alive():
-            self._proc.kill()
-            self._proc.join(5)
+        if not self._exited(grace_s):
+            self._kill()
+            self._exited(5)
         self._conn.close()
         self._release_host_memory()
         self._fail_pending(f"worker for {self.device} was shut down")
 
+    def _exited(self, wait_s: float = 0.0) -> bool:
+        """Whether the worker process has exited (waiting up to wait_s for
+        it to), reaping it if so. Every wait, liveness check and kill goes
+        through _reap_lock, because asking the process itself races:
+        is_alive() and join() call waitpid, and when two threads do at once
+        (the reader thread and close() both wait on a dying worker) the
+        loser finds no child and reports it still running (CPython's
+        Popen.poll) -- so close() could see a killed worker as alive and
+        keep its host reservations. The wait is on the process sentinel,
+        outside the lock, so a health check never waits behind it. Once the
+        sentinel is ready, a blocking reap returns at once (a process's fds
+        close just before its exit status is available); a sentinel a forked
+        grandchild still holds never becomes ready, so the exit is then read
+        without blocking."""
+        ready = wait_for_handles([self._proc.sentinel], wait_s)
+        with self._reap_lock:
+            if ready:
+                self._proc.join(5)
+            return self._proc.exitcode is not None
+
+    def _kill(self) -> None:
+        """SIGKILL the worker unless it was reaped (its pid may be reused)."""
+        with self._reap_lock:
+            if self._proc.exitcode is None:
+                self._proc.kill()
+
+    @property
+    def _exit_code(self) -> int | None:
+        with self._reap_lock:
+            return self._proc.exitcode
+
     def _release_host_memory(self) -> None:
         """Return host memory the (now exited) worker had reserved."""
-        if self._host_guard is not None and not self._proc.is_alive():
+        if self._host_guard is not None and self._exited():
             self._host_guard.release_owner(self._index)
 
     @property
     def alive(self) -> bool:
-        return self._dead is None and self._proc.is_alive()
+        return self._dead is None and not self._exited()
 
     @property
     def death_reason(self) -> str | None:
-        if self._dead is None and not self._proc.is_alive():
-            return f"worker for {self.device} exited (code {self._proc.exitcode})"
+        if self._dead is None and self._exited():
+            return f"worker for {self.device} exited (code {self._exit_code})"
         return self._dead
 
     # ---- transport ---------------------------------------------------
@@ -440,7 +473,7 @@ class ProcessShard:
                 # trustworthy: retire the worker (its calls fail, health
                 # checks fail, the serving framework restarts the replica).
                 logger.exception("unreadable reply from worker for %s", self.device)
-                self._proc.kill()
+                self._kill()
                 break
             self._apply(snap)
             with self._state_lock:
@@ -451,13 +484,13 @@ class ProcessShard:
                 fut.set_result(payload)
             else:
                 fut.set_exception(payload)
-        self._proc.join(5)  # reap it, for a meaningful exit code
-        if self._dead is None and self._proc.is_alive():
-            self._proc.kill()  # its pipe is gone: it can't serve, and must
-            self._proc.join(5)  # exit before its reservations are returned
+        exited = self._exited(5)  # reap it, for a meaningful exit code
+        if self._dead is None and not exited:
+            self._kill()  # its pipe is gone: it can't serve, and must
+            self._exited(5)  # exit before its reservations are returned
         self._release_host_memory()
         reason = (
-            f"worker for {self.device} exited (code {self._proc.exitcode}); "
+            f"worker for {self.device} exited (code {self._exit_code}); "
             "its contexts are lost"
         )
         if self._dead is None:
