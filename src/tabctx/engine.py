@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterator
 from tabctx.backends._cuda import release_cached_device_memory
 from tabctx.backends.base import TabularICLBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
-from tabctx.chunking import choose_chunk_rows, split_rows
+from tabctx.chunking import MAX_CHUNK_ROWS, choose_chunk_rows, split_rows
 from tabctx.errors import (
     AdmissionRejected,
     BackendComputeError,
@@ -31,8 +31,9 @@ from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 # #39): measured on an A100, a 100-row predict took ~0.1 s p50 during a
 # 40k x 100 fit (vs the fit's full 11 s), slowing the fit ~15%. Larger
 # predicts, and predicts that must first restore a spilled context, need
-# device memory a running fit may be using, so they wait their turn.
-LIGHT_PREDICT_ROWS = 2048
+# device memory a running fit may be using, so they wait their turn. One
+# chunk's worth (chunking.MAX_CHUNK_ROWS), so a light predict is one call.
+LIGHT_PREDICT_ROWS = MAX_CHUNK_ROWS
 # A predict whose context is evicted again (under memory pressure) between
 # its restore and getting the device tries this many times.
 _PREDICT_ATTEMPTS = 3

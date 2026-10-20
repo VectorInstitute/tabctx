@@ -1,0 +1,5 @@
+{"meta": {"device": "NVIDIA A100-SXM4-40GB", "torch": "2.13.0+cu130", "settings": {"backends": "('tabicl', 'tabpfn')", "gpu_memory_fraction": "1.0", "kv_cache": "kv", "kv_precision": "int8", "batch_window_ms": "5.0", "max_upload_bytes": "4294967296", "upload_ttl_s": "3600.0", "spill_dir": "None", "spill_capacity_bytes": "53687091200", "devices": "()", "offload_dir": "None", "worker_processes": "True", "compile_models": "True", "fast_preprocessing": "True"}}}
+{"model": "tabicl-v2", "n_train": 1000, "n_features": 1000, "n_test": 100, "peak_predict_bytes": 824076800}
+{"model": "tabicl-v2", "n_train": 1000, "n_features": 1000, "n_test": 1000, "peak_predict_bytes": 8241390592}
+{"model": "tabicl-v2", "n_train": 5000, "n_features": 1000, "n_test": 100, "peak_predict_bytes": 825769984}
+{"model": "tabicl-v2", "n_train": 5000, "n_features": 1000, "n_test": 1000, "peak_predict_bytes": 8241390592}

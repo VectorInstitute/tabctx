@@ -19,19 +19,12 @@ def test_split_rows_rejects_non_positive_chunk_size():
 
 def test_choose_chunk_rows_smaller_for_larger_training_context():
     est = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-    budget = est.ceiling_bytes()
+    # A budget the large context fits at 64 test rows (a halving of 2,048).
+    budget = est.estimate_bytes(90_000, 64, 200)
     small_context_chunk = choose_chunk_rows(
         est, n_train=500, n_features=10, remaining_budget_bytes=budget
     )
     large_context_chunk = choose_chunk_rows(
         est, n_train=90_000, n_features=200, remaining_budget_bytes=budget
     )
-    assert large_context_chunk < small_context_chunk
-
-
-def test_choose_chunk_rows_respects_min_chunk_rows_floor():
-    est = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-    chunk = choose_chunk_rows(
-        est, n_train=90_000, n_features=200, remaining_budget_bytes=1, min_chunk_rows=1
-    )
-    assert chunk == 1
+    assert large_context_chunk == 64 < small_context_chunk

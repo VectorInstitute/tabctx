@@ -150,6 +150,15 @@ case "${1:-}" in
   sync) sync ;;
   exec) shift; [ "${1:-}" = "--" ] && shift; creds; k exec $POD -- bash -lc "cd /work/tabctx && $*" ;;
   fetch) creds; mkdir -p gke-out; k cp "$NS/$POD:/work/tabctx/$2" "gke-out/$(basename "$2")" ;;
-  down) creds; gcloud container clusters delete "$CLUSTER" --project="$PROJECT" --zone="$ZONE" --quiet --async; rm -f "$STATE/env" ;;
+  down)
+    # Only the zone, never credentials: a cluster whose creation failed (state
+    # ERROR) has none to fetch, and must still be deletable.
+    # shellcheck disable=SC1091
+    [ -f "$STATE/env" ] && source "$STATE/env"
+    ZONE="${ZONE:-$(gcloud container clusters list --project="$PROJECT" \
+      --filter="name=$CLUSTER" --format='value(location)')}"
+    [ -n "$ZONE" ] || { echo "no cluster $CLUSTER" >&2; exit 1; }
+    gcloud container clusters delete "$CLUSTER" --project="$PROJECT" --zone="$ZONE" --quiet --async
+    rm -f "$STATE/env" ;;
   *) sed -n 2,16p "$0"; exit 1 ;;
 esac

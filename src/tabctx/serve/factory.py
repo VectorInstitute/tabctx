@@ -99,6 +99,7 @@ from tabctx.memory.host import (
     HostMemoryGuard,
     detect_host_budget_bytes,
 )
+from tabctx.memory.predict import PredictCostModel
 from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
@@ -388,6 +389,41 @@ def _requirement_calibration(
     )
 
 
+# Generated predict calibration (benchmarks/gen_predict_grid.py), per
+# (model, kv precision, compiled) -- the settings that change a predict's
+# memory, which only TabICL has: each model's PredictPoint tuple in this
+# module. Measured on an A100 for the serving defaults; other configurations
+# get no model (the dominance grid, else the fallback formula) rather than a
+# borrowed one. Only kv-cached contexts: their predicts don't re-encode the
+# training table ("repr" and "off" do).
+_PREDICT_CALIBRATION_MODULE = "calibration_predict_a100"
+_PREDICT_CALIBRATIONS: dict[tuple[str, str | None, bool], str] = {
+    ("tabicl", "int8", True): "A100_40GB_TABICL_PREDICT_POINTS",
+    ("tabpfn", None, False): "A100_40GB_TABPFN_PREDICT_POINTS",
+}
+# Backends whose kv_precision setting changes their memory profile.
+_KV_PRECISION_KINDS = frozenset({"tabicl"})
+
+
+def _predict_cost_model(
+    kind: BackendKind, settings: ServeSettings
+) -> PredictCostModel | None:
+    """The model's measured predict cost (memory/predict.py), which sizes
+    predict chunks, for the deployment's configuration; None without one."""
+    if settings.kv_cache != "kv":
+        return None
+    key = (
+        kind,
+        settings.kv_precision if kind in _KV_PRECISION_KINDS else None,
+        settings.compile_models and kind in _COMPILED_KINDS,
+    )
+    name = _PREDICT_CALIBRATIONS.get(key)
+    if name is None:
+        return None
+    grid = importlib.import_module(f"tabctx.memory.{_PREDICT_CALIBRATION_MODULE}")
+    return PredictCostModel(getattr(grid, name))
+
+
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:
     """Total memory of the given CUDA devices (the smallest, since one
     estimator budgets them all), or None when torch is absent or sees no
@@ -496,6 +532,7 @@ def build_estimator(
         # Both are valid upper bounds; the tightest dominating one wins.
         preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
+        predict_cost=_predict_cost_model(kind, settings),
         working_floor=working_floor,
         resident_rate=ResidentRateModel(
             floor_points, width_dependent=kind in _WIDTH_DEPENDENT_RESIDENT
