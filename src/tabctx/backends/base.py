@@ -7,9 +7,28 @@ those import a specific backend, they only depend on this protocol.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any, Protocol
 
+import numpy as np
+
 from tabctx.types import ArrayLike, PredictOutcome, Task
+
+
+def classification_outcome(
+    proba: Any, classes: Iterable[Any], return_proba: bool
+) -> PredictOutcome:
+    """A classification predict's outcome from its probabilities (rows of
+    test samples, one column per class, in `classes` order): each label is
+    its class as a string, argmax over the row, whatever return_proba is,
+    so a client gets the same labels, drawn from `classes`, either way."""
+    names = [str(c) for c in classes]
+    predictions = [names[i] for i in np.argmax(proba, axis=1)]
+    if not return_proba:
+        return PredictOutcome(predictions=predictions)
+    return PredictOutcome(
+        predictions=predictions, probabilities=np.asarray(proba).tolist(), classes=names
+    )
 
 
 class TabularICLBackend(Protocol):
@@ -37,7 +56,8 @@ class TabularICLBackend(Protocol):
         inference pass regardless of return_proba -- derive predictions from
         probabilities (e.g. argmax) rather than calling predict() and
         predict_proba() separately, since each call is a full forward pass
-        over the cached context."""
+        over the cached context. A classification's labels are strings,
+        whatever return_proba is (classification_outcome)."""
         ...
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
