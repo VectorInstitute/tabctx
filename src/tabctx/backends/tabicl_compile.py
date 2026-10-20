@@ -27,12 +27,24 @@ cached vs uncached, size-1 dimensions, ...). Only tabicl's fp16 autocast
 path (tables of 1,024+ rows) is compiled: smaller tables run in fp32 in
 ~0.1 s and would double the graphs. ~50 graphs compile in the backend's
 warmup at replica start (~130 s per worker on an A100, workers in
-parallel; Inductor's cache barely shortens it, tracing dominates). Calls warmup doesn't cover still compile inside a request,
-once per worker: very large tables reach 1-3 more graphs (tabicl batches
-them differently), ~10 s each, and other unusual shapes may too.
+parallel; Inductor's cache barely shortens it, tracing dominates). Calls
+warmup doesn't cover still compile inside a request, once per worker:
+tables of ~30k rows hand the blocks differently strided inputs (1-7 more
+graphs, 5-25 s on an A100 for the first such fit, 10,000 x 500 one more),
+and other unusual shapes may too.
 
 Failure. Compilation errors fall back to eager (dynamo's suppress_errors),
 so a missing compiler toolchain costs speed, not availability.
+
+Settings. Both dynamo settings these blocks need (suppress_errors, and a
+recompile limit above the ~50 graphs) are applied around each compiled
+call, not set at install: dynamo's config overrides are per thread (a
+ContextVar), and calls run on other threads than the one that installs
+the blocks -- engine and worker threads, asyncio.to_thread -- which saw
+dynamo's defaults: a limit of 8, so serving workers stopped compiling and
+ran shapes warmup missed eagerly, and compile errors raised in tenants'
+fits instead of falling back. Scoped to these blocks, they also don't
+change other torch.compile users in the process.
 """
 
 from __future__ import annotations
@@ -63,16 +75,10 @@ def install_compiled_blocks(mode: str = "default") -> bool:
     forward = MultiheadAttentionBlock.forward
     if getattr(forward, "_tabctx_compiled", False):
         return True
-    # Process-wide settings: they apply to any other torch.compile user in
-    # this process too (suppress_errors makes every compile failure fall
-    # back to eager; warn_if_not_compiled reports it for these blocks).
-    config: Any = torch._dynamo.config
-    devices = max(1, torch.cuda.device_count())
-    config.recompile_limit = max(
-        config.recompile_limit, _RECOMPILE_LIMIT_PER_DEVICE * devices
+    compiled = with_compile_settings(
+        torch.compile(forward, dynamic=True, mode=mode),
+        devices=max(1, torch.cuda.device_count()),
     )
-    config.suppress_errors = True
-    compiled = torch.compile(forward, dynamic=True, mode=mode)
 
     # Only under autocast: tabicl turns fp16 autocast on for tables of
     # 1,024+ rows, where the fused kernels pay off; smaller tables (fp32,
@@ -87,6 +93,18 @@ def install_compiled_blocks(mode: str = "default") -> bool:
     MultiheadAttentionBlock.forward = dispatch
     logger.info("tabicl attention blocks compiled (mode=%s)", mode)
     return True
+
+
+def with_compile_settings(fn: Any, devices: int) -> Any:
+    """fn, run under the dynamo settings these blocks need, on whichever
+    thread or context calls it (see the module docstring): compile errors
+    fall back to eager (warn_if_not_compiled reports it), and the recompile
+    limit covers every graph on every device."""
+    import torch._dynamo
+
+    config: Any = torch._dynamo.config
+    limit = max(config.recompile_limit, _RECOMPILE_LIMIT_PER_DEVICE * devices)
+    return config.patch(recompile_limit=limit, suppress_errors=True)(fn)
 
 
 def warn_if_not_compiled() -> bool:
