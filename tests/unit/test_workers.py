@@ -194,7 +194,8 @@ def test_concurrent_waits_all_see_a_dead_worker_exit():
     """The reader thread and close() both wait on a dying worker. Two
     waitpid calls race, and the loser used to report the worker still
     running (so close() kept its host reservations); every wait and
-    liveness check now reaps under one lock."""
+    liveness check now reaps under one lock, so whoever sees the exit also
+    sees its exit code."""
     b = build_engine(ServeSettings(backends=("fake",), devices=("cuda:0", "cuda:1")))
     shards = list(b.worker_shards)
     shard = shards[0]
@@ -204,7 +205,7 @@ def test_concurrent_waits_all_see_a_dead_worker_exit():
 
         def wait() -> None:
             barrier.wait()
-            seen.append(shard._exited(5))
+            seen.append(shard._exited(5) and shard._exit_code is not None)
 
         threads = [threading.Thread(target=wait) for _ in range(7)]
         for t in threads:
@@ -215,6 +216,27 @@ def test_concurrent_waits_all_see_a_dead_worker_exit():
             t.join()
         assert seen == [True] * 7
         assert not shard.alive
+    finally:
+        ProcessShard.close_all(shards)
+
+
+def test_a_dead_worker_exits_while_a_grandchild_holds_its_sentinel(monkeypatch):
+    """A process the worker forked inherits its sentinel's write end and
+    keeps it open after the worker dies: the exit is then read without the
+    sentinel, and close() still returns its host reservations."""
+    import tabctx.serve.workers as workers
+
+    b = build_engine(ServeSettings(backends=("fake",), devices=("cuda:0", "cuda:1")))
+    shards = list(b.worker_shards)
+    try:
+        monkeypatch.setattr(workers, "wait_for_handles", lambda handles, timeout: [])
+        shard = shards[0]
+        shard._proc.kill()
+        for _ in range(500):
+            if shard._exited():
+                break
+            threading.Event().wait(0.01)
+        assert shard._exited()
         assert shard._exit_code is not None
     finally:
         ProcessShard.close_all(shards)

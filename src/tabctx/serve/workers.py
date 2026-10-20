@@ -331,6 +331,7 @@ class ProcessShard:
         try:
             first = self._conn.recv()
         except (EOFError, OSError) as e:
+            self._exited(5)  # reap it, for a meaningful exit code
             raise WorkerDiedError(
                 f"worker for {self.device} exited during startup "
                 f"(exit code {self._exit_code})"
@@ -407,7 +408,7 @@ class ProcessShard:
 
     def _finish_close(self, grace_s: float) -> None:
         if not self._exited(grace_s):
-            self._proc.kill()
+            self._kill()
             self._exited(5)
         self._conn.close()
         self._release_host_memory()
@@ -415,20 +416,29 @@ class ProcessShard:
 
     def _exited(self, wait_s: float = 0.0) -> bool:
         """Whether the worker process has exited (waiting up to wait_s for
-        it to), reaping it if so. Every wait and liveness check goes through
-        here, because asking the process itself races: is_alive() and join()
-        call waitpid, and when two threads do at once (the reader thread and
-        close() both wait on a dying worker) the loser finds no child and
-        reports it still running (CPython's Popen.poll) -- so close() could
-        see a killed worker as alive and keep its host reservations. Its
-        sentinel says whether it exited; reaping it is serialized, so its
-        exit code is recorded once this returns True. The wait is outside
-        the lock, so a health check never waits behind it."""
-        if not wait_for_handles([self._proc.sentinel], wait_s):
-            return False
+        it to), reaping it if so. Every wait, liveness check and kill goes
+        through _reap_lock, because asking the process itself races:
+        is_alive() and join() call waitpid, and when two threads do at once
+        (the reader thread and close() both wait on a dying worker) the
+        loser finds no child and reports it still running (CPython's
+        Popen.poll) -- so close() could see a killed worker as alive and
+        keep its host reservations. The wait is on the process sentinel,
+        outside the lock, so a health check never waits behind it. Once the
+        sentinel is ready, a blocking reap returns at once (a process's fds
+        close just before its exit status is available); a sentinel a forked
+        grandchild still holds never becomes ready, so the exit is then read
+        without blocking."""
+        ready = wait_for_handles([self._proc.sentinel], wait_s)
         with self._reap_lock:
-            self._proc.join()  # it has exited, so this returns at once
-        return True
+            if ready:
+                self._proc.join(5)
+            return self._proc.exitcode is not None
+
+    def _kill(self) -> None:
+        """SIGKILL the worker unless it was reaped (its pid may be reused)."""
+        with self._reap_lock:
+            if self._proc.exitcode is None:
+                self._proc.kill()
 
     @property
     def _exit_code(self) -> int | None:
@@ -463,7 +473,7 @@ class ProcessShard:
                 # trustworthy: retire the worker (its calls fail, health
                 # checks fail, the serving framework restarts the replica).
                 logger.exception("unreadable reply from worker for %s", self.device)
-                self._proc.kill()
+                self._kill()
                 break
             self._apply(snap)
             with self._state_lock:
@@ -476,7 +486,7 @@ class ProcessShard:
                 fut.set_exception(payload)
         exited = self._exited(5)  # reap it, for a meaningful exit code
         if self._dead is None and not exited:
-            self._proc.kill()  # its pipe is gone: it can't serve, and must
+            self._kill()  # its pipe is gone: it can't serve, and must
             self._exited(5)  # exit before its reservations are returned
         self._release_host_memory()
         reason = (
