@@ -90,12 +90,17 @@ deployment is exactly fast enough.
 
 *Figure: a request enters through Ray Serve's consistent-hash proxy
 (affinity on the session header) into a `TabctxService` replica, which
-resolves the tenant, parses inline JSON or an uploaded CSV, and hands the
-table to the engine. The engine validates input, gates admission on an
-estimated memory peak, keeps encoded contexts in a byte-budgeted LRU
-cache, and dispatches to whichever backend fit the context. Evicted
-contexts optionally spill to local disk and reload on their next use
-(editable source: `docs/figures/architecture.svg`).*
+resolves the tenant, parses inline JSON or an uploaded CSV, and coalesces
+same-context predicts. With several GPUs, a `MultiDeviceEngine` places
+each fit on one GPU and routes predicts to the GPU holding the context,
+from lock-free snapshots; each GPU's engine runs in its own worker
+process. A GPU's engine validates input, admits a fit on its estimated
+memory need, keeps encoded contexts in a byte-budgeted LRU cache, and
+dispatches to whichever backend fit the context. Evicted contexts
+optionally spill to local disk and reload on their next use, and one
+host-memory guard admits large fits against the node's RAM across all
+workers. A single-GPU replica calls its one engine directly (editable
+source: `docs/figures/architecture.svg`).*
 
 The unit everything revolves around is a **context**: one training
 table, encoded once by one model, addressed by `dataset_id` (scoped per
@@ -418,8 +423,16 @@ pip install "tabctx[dev]"        # + test dependencies
 - **Same-context coalescing** (`CoalescingPredictor`): concurrent
   requests against one cached context are packed into a single GPU call
   within a ~5ms window and split back per caller, amortizing per-call
-  overhead without ever running concurrent GPU work (the memory budget's
-  single-in-flight-call assumption is preserved).
+  overhead without adding concurrent GPU calls (each GPU still runs at
+  most one predict at a time, beside at most one fit).
+- **Several GPUs per replica** (`MultiDeviceEngine`): one engine per GPU,
+  each in its own worker process, behind the single-engine API; see
+  [Several GPUs in one replica](#several-gpus-in-one-replica).
+- **Host-memory admission** (`HostMemoryGuard`): large TabICL fits stage
+  tens of GiB in host RAM, so calls reserve their estimated host bytes
+  against one budget shared by every worker process on the node (first
+  come, first served), so two huge fits queue instead of getting the pod
+  OOM-killed with every tenant's context.
 
 ## Validated at scale (real A100-40GB, not simulated)
 
