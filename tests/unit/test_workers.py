@@ -190,6 +190,36 @@ def test_workers_close_together_within_one_grace_period(monkeypatch):
     assert not any(s._proc.is_alive() for s in shards)
 
 
+def test_concurrent_waits_all_see_a_dead_worker_exit():
+    """The reader thread and close() both wait on a dying worker. Two
+    waitpid calls race, and the loser used to report the worker still
+    running (so close() kept its host reservations); every wait and
+    liveness check now reaps under one lock."""
+    b = build_engine(ServeSettings(backends=("fake",), devices=("cuda:0", "cuda:1")))
+    shards = list(b.worker_shards)
+    shard = shards[0]
+    try:
+        barrier = threading.Barrier(8)
+        seen: list[bool] = []
+
+        def wait() -> None:
+            barrier.wait()
+            seen.append(shard._exited(5))
+
+        threads = [threading.Thread(target=wait) for _ in range(7)]
+        for t in threads:
+            t.start()
+        shard._proc.kill()
+        barrier.wait()
+        for t in threads:
+            t.join()
+        assert seen == [True] * 7
+        assert not shard.alive
+        assert shard._exit_code is not None
+    finally:
+        ProcessShard.close_all(shards)
+
+
 def test_mp_exit_handler_is_registered_before_ours():
     """Our atexit handler must run first (atexit is LIFO), however the
     module was imported: workers.py imports multiprocessing.util itself."""
