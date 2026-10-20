@@ -29,7 +29,7 @@ import uuid
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from ray import serve
 from ray.serve.config import RequestRouterConfig
 from starlette.concurrency import run_in_threadpool
@@ -90,9 +90,16 @@ class LegacyPredictRequest(BaseModel):
     return_proba: bool = False
 
 
+_PREDICTIONS_DOC = (
+    "One per test row. Classification: the predicted class as a string, one of "
+    "the training labels (the `classes` returned with return_proba), whatever "
+    "return_proba is. Regression: numbers."
+)
+
+
 class LegacyPredictResponse(BaseModel):
     request_id: str
-    predictions: list
+    predictions: list = Field(description=_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
     n_train: int
@@ -146,7 +153,7 @@ class TabctxPredictRequest(BaseModel):
 
 
 class TabctxPredictResponse(BaseModel):
-    predictions: list
+    predictions: list = Field(description=_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
     n_test: int

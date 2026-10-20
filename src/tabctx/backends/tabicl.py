@@ -64,6 +64,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
+from tabctx.backends._outcome import classification_outcome
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task
@@ -517,17 +518,8 @@ class TabICLBackend(QuiescedMeasurement):
         self, model: Any, X_test: ArrayLike, return_proba: bool
     ) -> PredictOutcome:
         if hasattr(model, "predict_proba"):
-            if return_proba:
-                proba = model.predict_proba(X_test)
-                class_idx = np.argmax(proba, axis=1)
-                classes = [str(c) for c in model.classes_]
-                predictions = [classes[i] for i in class_idx]
-                return PredictOutcome(
-                    predictions=predictions,
-                    probabilities=proba.tolist(),
-                    classes=classes,
-                )
-            return PredictOutcome(predictions=model.predict(X_test).tolist())
+            proba = model.predict_proba(X_test)
+            return classification_outcome(proba, model.classes_, return_proba)
         # Regressor: no predict_proba to derive from.
         return PredictOutcome(predictions=model.predict(X_test).tolist())
 

@@ -44,6 +44,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
+from tabctx.backends._outcome import classification_outcome
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
@@ -189,16 +190,7 @@ class TabPFNBackend(QuiescedMeasurement):
             # Single pass regardless of return_proba (protocol
             # requirement): derive labels from probabilities.
             proba = model.predict_proba(X_arr)
-            class_idx = np.argmax(proba, axis=1)
-            classes = [str(c) for c in model.classes_]
-            predictions = [classes[i] for i in class_idx]
-            if return_proba:
-                return PredictOutcome(
-                    predictions=predictions,
-                    probabilities=proba.tolist(),
-                    classes=classes,
-                )
-            return PredictOutcome(predictions=predictions)
+            return classification_outcome(proba, model.classes_, return_proba)
         return PredictOutcome(predictions=model.predict(X_arr).tolist())
 
     # ---- spillover serialization (see cache/spill.py) ----------------

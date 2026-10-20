@@ -37,7 +37,8 @@ class TabularICLBackend(Protocol):
         inference pass regardless of return_proba -- derive predictions from
         probabilities (e.g. argmax) rather than calling predict() and
         predict_proba() separately, since each call is a full forward pass
-        over the cached context."""
+        over the cached context. A classification's labels are strings,
+        whatever return_proba is (backends._outcome)."""
         ...
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
