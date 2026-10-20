@@ -35,6 +35,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from tabctx.memory.estimator import MemoryEstimator
+from tabctx.memory.predict import PredictCostModel
 from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 
 # The n_test basis at which calibration predict-peaks were measured
@@ -73,6 +74,7 @@ class AdaptiveMemoryEstimator:
         working_floor: WorkingFloorModel | None = None,
         resident_rate: ResidentRateModel | None = None,
         resident_margin: float = 1.2,
+        predict_cost: PredictCostModel | None = None,
     ) -> None:
         """preloaded: factory-installed observations (e.g. a measured
         calibration grid -- see memory/calibration_data.py), consulted
@@ -103,7 +105,13 @@ class AdaptiveMemoryEstimator:
         resident_rate: with working_floor, extrapolates shapes no
         measurement dominates as (extrapolated resident x resident_margin)
         + floor -- a kv context grows linearly in rows -- instead of the
-        fallback formula. Learns from every fit."""
+        fallback formula. Learns from every fit.
+
+        predict_cost: for kv-cached contexts, whose predicts don't
+        re-encode the training table, bounds a predict's peak from test
+        rows x features alone (see memory/predict.py). Takes precedence
+        over preloaded_predict, whose dominance rule can't extrapolate to
+        wider or longer tables than were measured."""
         self._fallback = fallback
         self._safety_margin = safety_margin
         self._preloaded: tuple[Observation, ...] = tuple(preloaded)
@@ -114,6 +122,7 @@ class AdaptiveMemoryEstimator:
         # degrades chunking to 1-row chunks (a 2000-row predict became
         # 2000 sequential GPU calls on a real A100 -- the bug this fixes).
         self._preloaded_predict: tuple[Observation, ...] = tuple(preloaded_predict)
+        self._predict_cost = predict_cost
         self._preloaded_margin = preloaded_margin
         self._transient_capacity_fraction = transient_capacity_fraction
         self._working_floor = working_floor
@@ -198,6 +207,10 @@ class AdaptiveMemoryEstimator:
             extrapolated = self._extrapolated_requirement(n_train, n_features)
             if extrapolated is not None:
                 return extrapolated
+        elif self._predict_cost is not None:
+            # Predict-time (chunking) query against a kv context: its cost
+            # is mostly the test rows', not a re-encode of the training table.
+            return self._predict_cost.bytes(n_train, n_test, n_features)
         else:
             # Predict-time (chunking) query: use a measured predict peak
             # when a dominating one exists, scaled linearly in n_test

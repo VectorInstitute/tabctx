@@ -30,20 +30,25 @@ def choose_chunk_rows(
 ) -> int:
     """Largest test-row chunk size such that estimate_bytes(n_train,
     chunk_rows, n_features) fits within remaining_budget_bytes, found by
-    halving from a fallback starting point. Falls back to
-    _FALLBACK_CHUNK_ROWS (clamped to at least min_chunk_rows) if even the
-    smallest chunk doesn't fit -- the caller (engine) is responsible for
-    surfacing that as an admission failure rather than looping forever.
+    halving from _FALLBACK_CHUNK_ROWS down to min_chunk_rows.
+
+    If even min_chunk_rows doesn't fit, returns _FALLBACK_CHUNK_ROWS:
+    what's left over is the call's fixed cost, which splitting can't reduce
+    -- smaller chunks only multiply the calls (a 100-row predict became 100
+    one-row calls, #47). The engine's predict halves a chunk on a real CUDA
+    OOM, so a chunk that truly doesn't fit still completes.
     """
     candidate = _FALLBACK_CHUNK_ROWS
-    while candidate > min_chunk_rows:
+    while candidate >= min_chunk_rows:
         if (
             estimator.estimate_bytes(n_train, candidate, n_features)
             <= remaining_budget_bytes
         ):
             return candidate
-        candidate //= 2
-    return min_chunk_rows
+        if candidate == min_chunk_rows:
+            break
+        candidate = max(min_chunk_rows, candidate // 2)
+    return max(min_chunk_rows, _FALLBACK_CHUNK_ROWS)
 
 
 def split_rows(X_test: list, chunk_rows: int) -> list[list]:

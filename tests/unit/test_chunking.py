@@ -19,19 +19,33 @@ def test_split_rows_rejects_non_positive_chunk_size():
 
 def test_choose_chunk_rows_smaller_for_larger_training_context():
     est = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
-    budget = est.ceiling_bytes()
+    # A budget the large context fits at 62 test rows (a halving of 2,000;
+    # with less, nothing fits and chunking doesn't split; see below).
+    budget = est.estimate_bytes(90_000, 62, 200)
     small_context_chunk = choose_chunk_rows(
         est, n_train=500, n_features=10, remaining_budget_bytes=budget
     )
     large_context_chunk = choose_chunk_rows(
         est, n_train=90_000, n_features=200, remaining_budget_bytes=budget
     )
-    assert large_context_chunk < small_context_chunk
+    assert large_context_chunk == 62 < small_context_chunk
 
 
-def test_choose_chunk_rows_respects_min_chunk_rows_floor():
+def test_choose_chunk_rows_does_not_split_when_no_chunk_fits():
+    """What doesn't fit at one row is the call's fixed cost: splitting only
+    multiplies calls (#47). The engine halves on a real OOM instead."""
     est = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
     chunk = choose_chunk_rows(
         est, n_train=90_000, n_features=200, remaining_budget_bytes=1, min_chunk_rows=1
     )
-    assert chunk == 1
+    assert chunk == 2_000
+
+
+def test_choose_chunk_rows_finds_the_largest_fitting_halving():
+    class Linear:
+        def estimate_bytes(self, n_train, n_test, n_features):
+            return n_test * 1_000
+
+    assert choose_chunk_rows(Linear(), 1, 1, remaining_budget_bytes=600_000) == 500
+    assert choose_chunk_rows(Linear(), 1, 1, remaining_budget_bytes=1_000) == 1
+    assert choose_chunk_rows(Linear(), 1, 1, remaining_budget_bytes=10**9) == 2_000

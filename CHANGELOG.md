@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **Predicts against wide or long contexts ran as one-row calls** (#47). Predict chunks were sized with the fit memory model, which grows with the training table; past ~3,500 x 500 no chunk "fit", chunking fell to one row, and a 100-row predict became 100 sequential model calls: 14.4 s (TabICLv2) and 6.3 s (TabPFN-3.5) instead of ~0.1 s on an A100, ~24 s and ~11 s on prod's A40s. Chunks are now sized by `PredictCostModel` (`memory/predict.py`), built from predict peaks measured under the serving configuration (`benchmarks/calibrate_predict.py`, A100, compiled TabICL, int8 kv; generated `memory/calibration_predict_a100.py`): a cost per test row and a fixed cost per call, both by width, plus a cost per training row. It bounds every measurement and, past the widest one, scales in proportion to width so it can't underestimate. When even one row's estimate doesn't fit, chunking no longer splits to single rows (that only multiplies a call's fixed cost); a real OOM still halves the chunk.
+### Added
+- `benchmarks/bench_stalls.py` (fixed-cost stalls across table sizes, with compiled-graph counts per call), `benchmarks/profile_predict.py` (cProfile of one predict), `benchmarks/calibrate_predict.py` and `benchmarks/gen_predict_grid.py` (predict calibration), `benchmarks/sweep_gateway.py` (the table-size sweep through the Vector gateway).
 
 ## [0.12.0] - unreleased
 ### Added

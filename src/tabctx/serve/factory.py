@@ -99,6 +99,7 @@ from tabctx.memory.host import (
     HostMemoryGuard,
     detect_host_budget_bytes,
 )
+from tabctx.memory.predict import PredictCostModel
 from tabctx.memory.requirement import ResidentRateModel, WorkingFloorModel
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.uploads import DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_TTL_S
@@ -388,6 +389,33 @@ def _requirement_calibration(
     )
 
 
+# Generated predict calibration (benchmarks/gen_predict_grid.py): module
+# under tabctx.memory and the name of each model's PredictPoint tuple. Only
+# kv-cached contexts: their predicts don't re-encode the training table (in
+# "repr" and "off" modes they do, and keep the dominance grid).
+_PREDICT_CALIBRATION_MODULE = "calibration_predict_a100"
+_PREDICT_CALIBRATIONS: dict[str, str] = {
+    "tabicl": "A100_40GB_TABICL_PREDICT_POINTS",
+    "tabpfn": "A100_40GB_TABPFN_PREDICT_POINTS",
+}
+
+
+def _predict_cost_model(
+    kind: BackendKind, kv_cache: KvCacheMode
+) -> PredictCostModel | None:
+    """The model's measured predict cost (memory/predict.py), which sizes
+    predict chunks; None (the dominance grid, else the fallback formula)
+    for other cache modes or without a calibration."""
+    name = _PREDICT_CALIBRATIONS.get(kind)
+    if kv_cache != "kv" or name is None:
+        return None
+    try:
+        grid = importlib.import_module(f"tabctx.memory.{_PREDICT_CALIBRATION_MODULE}")
+    except ImportError:  # generated module absent
+        return None
+    return PredictCostModel(getattr(grid, name))
+
+
 def detect_gpu_capacity_bytes(devices: tuple[str, ...] = ("cuda",)) -> int | None:
     """Total memory of the given CUDA devices (the smallest, since one
     estimator budgets them all), or None when torch is absent or sees no
@@ -496,6 +524,7 @@ def build_estimator(
         # Both are valid upper bounds; the tightest dominating one wins.
         preloaded=tuple(fit_grid) + tuple(requirements),
         preloaded_predict=predict_grid,
+        predict_cost=_predict_cost_model(kind, settings.kv_cache),
         working_floor=working_floor,
         resident_rate=ResidentRateModel(
             floor_points, width_dependent=kind in _WIDTH_DEPENDENT_RESIDENT

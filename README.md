@@ -393,7 +393,11 @@ pip install "tabctx[dev]"        # + test dependencies
   the memory budget so one oversized request can't crash the whole
   replica, the failure mode this library exists partly to prevent (the
   naive one-shot wrapper it replaces did crash this way; see
-  [CHANGELOG](CHANGELOG.md)).
+  [CHANGELOG](CHANGELOG.md)). Chunks are sized by a measured predict cost
+  model (`memory/predict.py`): against a kv context a predict's memory
+  follows its test rows and their width, not the training table, so a
+  100-row predict against a 10,000 x 500 context is one call. A chunk that
+  still OOMs is halved and retried.
 - **TabICL's kv-cache, actually on**: tabicl ships with its fit-time
   context cache disabled, which makes every `predict()` re-encode the
   whole training set. tabctx enables it by default

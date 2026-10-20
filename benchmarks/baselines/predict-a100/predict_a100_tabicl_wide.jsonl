@@ -1,0 +1,4 @@
+{"model": "tabicl-v2", "n_train": 1000, "n_features": 1000, "n_test": 100, "peak_predict_bytes": 824076800}
+{"model": "tabicl-v2", "n_train": 1000, "n_features": 1000, "n_test": 1000, "peak_predict_bytes": 8241390592}
+{"model": "tabicl-v2", "n_train": 5000, "n_features": 1000, "n_test": 100, "peak_predict_bytes": 825769984}
+{"model": "tabicl-v2", "n_train": 5000, "n_features": 1000, "n_test": 1000, "peak_predict_bytes": 8241390592}
