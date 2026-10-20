@@ -91,8 +91,9 @@ class LegacyPredictRequest(BaseModel):
 
 
 _PREDICTIONS_DOC = (
-    "One per test row. Classification: the predicted class as a string, whatever "
-    "return_proba is (with return_proba, one of `classes`). Regression: numbers."
+    "One per test row. Classification: the predicted class as a string, one of "
+    "the training labels (the `classes` returned with return_proba), whatever "
+    "return_proba is. Regression: numbers."
 )
 
 

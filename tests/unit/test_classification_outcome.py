@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from tabctx.backends.base import classification_outcome
+from tabctx.backends._outcome import classification_outcome
 
 PROBA = np.array([[0.1, 0.7, 0.2], [0.6, 0.3, 0.1]])
 CLASSES = np.array([0.0, 1.0, 2.0])  # a JSON train_y of [0, 1, 2] parses as floats

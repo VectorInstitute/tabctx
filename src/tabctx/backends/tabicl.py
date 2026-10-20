@@ -64,7 +64,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends.base import classification_outcome
+from tabctx.backends._outcome import classification_outcome
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome, Task

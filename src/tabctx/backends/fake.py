@@ -14,6 +14,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from tabctx.backends._outcome import classification_outcome
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
 
@@ -22,7 +23,6 @@ class _FakePayload:
     task: Task
     n_train: int
     n_features: int
-    majority_class: str | None = None
     class_fractions: dict[str, float] | None = None
     mean_y: float | None = None
 
@@ -62,7 +62,6 @@ class FakeBackend:
                 task=task,
                 n_train=n_train,
                 n_features=n_features,
-                majority_class=counts.most_common(1)[0][0] if counts else None,
                 class_fractions={k: v / total for k, v in counts.items()},
             )
         mean_y = sum(float(v) for v in y) / len(y) if len(y) else 0.0
@@ -78,17 +77,12 @@ class FakeBackend:
             time.sleep(self._predict_delay_s)
         n_test = len(X_test)
         if payload.task == "classification":
-            predictions = [payload.majority_class] * n_test
-            probabilities = None
-            classes = None
-            if return_proba:
-                fractions = payload.class_fractions or {}
-                classes = sorted(fractions)
-                row = [fractions.get(c, 0.0) for c in classes]
-                probabilities = [row for _ in range(n_test)]
-            return PredictOutcome(
-                predictions=predictions, probabilities=probabilities, classes=classes
-            )
+            fractions = payload.class_fractions or {}
+            classes = sorted(fractions)
+            if not classes:
+                return PredictOutcome(predictions=[None] * n_test)
+            row = [fractions[c] for c in classes]
+            return classification_outcome([row] * n_test, classes, return_proba)
         return PredictOutcome(predictions=[payload.mean_y] * n_test)
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:

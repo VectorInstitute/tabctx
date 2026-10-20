@@ -46,6 +46,10 @@ def test_compressed_context_predicts_like_native(data, precision):
     assert entries and all(isinstance(e, CompressedKVEntry) for e in entries)
     got = comp.predict(payload, X[1000:], True)
     assert got.predictions == want.predictions
+    # Without probabilities, the same labels, as strings from classes (#45).
+    plain = comp.predict(payload, X[1000:], False)
+    assert plain.predictions == got.predictions
+    assert set(plain.predictions) <= set(got.classes)
     assert (
         np.abs(np.array(got.probabilities) - np.array(want.probabilities)).max() < 0.02
     )

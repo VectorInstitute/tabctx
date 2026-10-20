@@ -44,7 +44,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends.base import classification_outcome
+from tabctx.backends._outcome import classification_outcome
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
