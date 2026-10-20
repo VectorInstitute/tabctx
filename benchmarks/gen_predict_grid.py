@@ -35,8 +35,12 @@ def main() -> int:
                     metas.append(record["meta"])
                 else:
                     rows.append(record)
-    source = sorted({f"{m['device']}, torch {m['torch']}" for m in metas})
-    settings = metas[0]["settings"] if metas else {}
+    if not metas:
+        sys.exit("no meta record in the inputs: run calibrate_predict.py with --out")
+    if any(m != metas[0] for m in metas[1:]):
+        sys.exit("inputs were measured on different devices or settings")
+    source = [f"{metas[0]['device']}, torch {metas[0]['torch']}"]
+    settings = metas[0]["settings"]
     config = ", ".join(
         f"{k}={settings[k]}"
         for k in ("kv_cache", "kv_precision", "compile_models")

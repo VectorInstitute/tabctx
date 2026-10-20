@@ -18,7 +18,9 @@ from __future__ import annotations
 
 from tabctx.memory.estimator import MemoryEstimator
 
-_FALLBACK_CHUNK_ROWS = 2_000
+# One call's worth of test rows at most: the engine's LIGHT_PREDICT_ROWS, so
+# a light predict (one that may run beside a fit) is a single call.
+MAX_CHUNK_ROWS = 2_048
 
 
 def choose_chunk_rows(
@@ -28,27 +30,29 @@ def choose_chunk_rows(
     remaining_budget_bytes: int,
     min_chunk_rows: int = 1,
 ) -> int:
-    """Largest test-row chunk size such that estimate_bytes(n_train,
-    chunk_rows, n_features) fits within remaining_budget_bytes, found by
-    halving from _FALLBACK_CHUNK_ROWS down to min_chunk_rows.
+    """Largest test-row chunk, halving from MAX_CHUNK_ROWS down to
+    min_chunk_rows, whose predict fits remaining_budget_bytes.
 
-    If even min_chunk_rows doesn't fit, returns _FALLBACK_CHUNK_ROWS:
-    what's left over is the call's fixed cost, which splitting can't reduce
-    -- smaller chunks only multiply the calls (a 100-row predict became 100
-    one-row calls, #47). The engine's predict halves a chunk on a real CUDA
-    OOM, so a chunk that truly doesn't fit still completes.
+    What a call of min_chunk_rows costs is, beyond those rows, the call's
+    fixed cost, which no chunk size reduces. When that alone exceeds the
+    budget, smaller chunks would only multiply the calls (a 100-row predict
+    became 100 one-row calls, #47), so the fixed cost is taken as given and
+    only the rows' cost above it is sized against the budget: a chunk never
+    adds more than the budget on top of what the smallest call needs. A
+    chunk that still OOMs is halved by the engine.
     """
-    candidate = _FALLBACK_CHUNK_ROWS
-    while candidate >= min_chunk_rows:
-        if (
-            estimator.estimate_bytes(n_train, candidate, n_features)
-            <= remaining_budget_bytes
-        ):
+    if min_chunk_rows < 1:
+        raise ValueError("min_chunk_rows must be at least 1")
+    floor_bytes = estimator.estimate_bytes(n_train, min_chunk_rows, n_features)
+    allowance = remaining_budget_bytes
+    if floor_bytes > remaining_budget_bytes:
+        allowance = floor_bytes + remaining_budget_bytes
+    candidate = MAX_CHUNK_ROWS
+    while candidate > min_chunk_rows:
+        if estimator.estimate_bytes(n_train, candidate, n_features) <= allowance:
             return candidate
-        if candidate == min_chunk_rows:
-            break
-        candidate = max(min_chunk_rows, candidate // 2)
-    return max(min_chunk_rows, _FALLBACK_CHUNK_ROWS)
+        candidate //= 2
+    return min_chunk_rows
 
 
 def split_rows(X_test: list, chunk_rows: int) -> list[list]:

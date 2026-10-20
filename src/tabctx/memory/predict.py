@@ -35,10 +35,18 @@ batching bend the curve), which a bound must not do.
 Both width-dependent costs are made non-decreasing in width; a width between
 measurements takes the next wider one's cost (as fit admission's dominance
 rule does), and past the widest the widest's cost scales in proportion to
-width: if a cost is a + b x f with a >= 0, then cost(w) x f / w >= a + b x f
-for every f >= w, so it can't underestimate.
+width.
 
 bytes = margin x (call_bytes(f) + n_test x row_bytes(f) + n_train x train_row_bytes).
+
+What is guaranteed and what is assumed: the bound is at or above every
+measurement it was built from. Elsewhere it assumes each cost grows at most
+linearly: in test rows and training rows beyond the largest measured (slopes
+are the steepest between consecutive measured sizes), and affine in width
+past the widest (a + b x f with a >= 0, for which cost(w) x f / w >= a + b x f
+when f >= w). A cost that grows faster than that past the measured range
+would be underestimated, so calibrate across the shapes a deployment
+serves; the engine halves a chunk that OOMs regardless.
 """
 
 from __future__ import annotations
@@ -121,8 +129,10 @@ class _WidthCurve:
     def __init__(self, by_width: Mapping[int, float]) -> None:
         self._widths = sorted(by_width)
         self._costs: list[float] = []
+        running = 0.0
         for w in self._widths:
-            self._costs.append(max(0.0, by_width[w], *self._costs[-1:]))
+            running = max(running, by_width[w])
+            self._costs.append(running)
 
     def __call__(self, n_features: int) -> float:
         i = bisect.bisect_left(self._widths, n_features)
@@ -134,23 +144,29 @@ class _WidthCurve:
 def _marginals(
     pts: list[PredictPoint], vary: str, fixed: tuple[str, ...]
 ) -> dict[tuple, list[float]]:
-    """Extra peak per unit of `vary`, between the smallest and largest
-    measurement of each group that holds `fixed` constant."""
+    """Extra peak per unit of `vary` between consecutive measured sizes, in
+    each group of measurements that holds `fixed` constant (a group with one
+    size has none)."""
     groups: dict[tuple, list[PredictPoint]] = defaultdict(list)
     for p in pts:
         groups[tuple(getattr(p, f) for f in fixed)].append(p)
-    out: dict[tuple, list[float]] = defaultdict(list)
+    out: dict[tuple, list[float]] = {}
     for key, group in groups.items():
-        lo = min(group, key=lambda p: getattr(p, vary))
-        hi = max(group, key=lambda p: getattr(p, vary))
-        span = getattr(hi, vary) - getattr(lo, vary)
-        if span > 0:
-            out[key].append((hi.peak_bytes - lo.peak_bytes) / span)
+        ordered = sorted(group, key=lambda p: getattr(p, vary))
+        slopes = [
+            (hi.peak_bytes - lo.peak_bytes) / (getattr(hi, vary) - getattr(lo, vary))
+            for lo, hi in zip(ordered, ordered[1:], strict=False)
+            if getattr(hi, vary) > getattr(lo, vary)
+        ]
+        if slopes:
+            out[key] = slopes
     return out
 
 
 def _largest(by_group: dict[tuple, list[float]]) -> dict[int, float]:
-    """Per width (each group key's first element), the largest rate."""
+    """Per width (each group key's first element), the largest rate, and
+    never below zero: a negative slope between two measurements is noise (a
+    predict doesn't cost less for more rows)."""
     per_width: dict[int, float] = {}
     for (n_features, *_), rates in by_group.items():
         per_width[n_features] = max(per_width.get(n_features, 0.0), *rates)
