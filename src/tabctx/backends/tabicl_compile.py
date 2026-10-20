@@ -36,15 +36,17 @@ and other unusual shapes may too.
 Failure. Compilation errors fall back to eager (dynamo's suppress_errors),
 so a missing compiler toolchain costs speed, not availability.
 
-Settings. Both dynamo settings these blocks need (suppress_errors, and a
-recompile limit above the ~50 graphs) are applied around each compiled
-call, not set at install: dynamo's config overrides are per thread (a
-ContextVar), and calls run on other threads than the one that installs
-the blocks -- engine and worker threads, asyncio.to_thread -- which saw
-dynamo's defaults: a limit of 8, so serving workers stopped compiling and
-ran shapes warmup missed eagerly, and compile errors raised in tenants'
-fits instead of falling back. Scoped to these blocks, they also don't
-change other torch.compile users in the process.
+Settings. The dynamo settings these blocks need (suppress_errors, and
+recompile limits above the ~50 graphs) are applied around each compiled
+call as well as at install: dynamo's config overrides are per thread (a
+ContextVar, as of torch 2.13), and calls run on other threads than the one
+that installs the blocks -- engine and worker threads, asyncio.to_thread
+-- which saw dynamo's defaults: a limit of 8. Past it dynamo compiles no
+new graph of the block for the life of the process (existing ones still
+run), so serving workers ran every shape warmup missed eagerly, and compile
+errors raised in tenants' fits instead of falling back. Set at install too,
+so a torch whose config is process-wide gets them everywhere, and every
+call's patch saves and restores the same values there.
 """
 
 from __future__ import annotations
@@ -57,7 +59,9 @@ logger = logging.getLogger(__name__)
 # Graphs per block, per device (stage x fp16/fp32 x cached/uncached x ...,
 # ~50 measured; guards include the device, so an in-process engine over
 # several GPUs needs that many per GPU): well above dynamo's default of 8,
-# past which it silently runs the rest eagerly.
+# past which it silently runs new shapes eagerly. Dynamo also caps every
+# code object's graphs at accumulated_recompile_limit (256 by default), so
+# that is raised to match.
 _RECOMPILE_LIMIT_PER_DEVICE = 256
 
 
@@ -96,21 +100,40 @@ def install_compiled_blocks(mode: str = "default") -> bool:
 
 
 def with_compile_settings(fn: Any, devices: int) -> Any:
-    """fn, run under the dynamo settings these blocks need, on whichever
-    thread or context calls it (see the module docstring): compile errors
-    fall back to eager (warn_if_not_compiled reports it), and the recompile
-    limit covers every graph on every device."""
+    """fn, run under compile_settings(devices) on whichever thread or
+    context calls it; also set for the installing thread (or the whole
+    process, where dynamo's config isn't per thread).
+    """
     import torch._dynamo
 
     config: Any = torch._dynamo.config
-    limit = max(config.recompile_limit, _RECOMPILE_LIMIT_PER_DEVICE * devices)
-    return config.patch(recompile_limit=limit, suppress_errors=True)(fn)
+    settings = compile_settings(devices)
+    for name, value in settings.items():
+        setattr(config, name, value)
+    return config.patch(settings)(fn)
+
+
+def compile_settings(devices: int) -> dict[str, Any]:
+    """The dynamo settings the compiled blocks run under (see the module
+    docstring): compile errors fall back to eager (warn_if_not_compiled
+    reports it), and both recompile limits cover every graph on every
+    device."""
+    import torch._dynamo
+
+    config: Any = torch._dynamo.config
+    limit = _RECOMPILE_LIMIT_PER_DEVICE * devices
+    return {
+        "recompile_limit": max(config.recompile_limit, limit),
+        "accumulated_recompile_limit": max(config.accumulated_recompile_limit, limit),
+        "suppress_errors": True,
+    }
 
 
 def warn_if_not_compiled() -> bool:
     """After warmup: warn if no graph was compiled (compile errors fall back
-    to eager silently, losing the speedup) or a block hit dynamo's limit.
-    Returns whether compilation looks healthy."""
+    to eager silently, losing the speedup). Returns whether compilation
+    looks healthy. A recompile limit hit later shows only in the log
+    (dynamo's 'hit config.recompile_limit' warning)."""
     from torch._dynamo.utils import counters
 
     graphs = counters["stats"]["unique_graphs"]
