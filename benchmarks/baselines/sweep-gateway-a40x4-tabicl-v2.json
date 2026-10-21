@@ -1,0 +1,418 @@
+{
+  "timestamp": "2026-10-20T18:41:20.873029+00:00",
+  "base_url": "https://proxy.vectorinstitute.ai/v1",
+  "model": "tabicl-v2",
+  "points": [
+    {
+      "n_features": 10,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.725,
+      "predict_s": 0.167,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.566,
+      "predict_s": 0.172,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.912,
+      "predict_s": 0.167,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 1000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.986,
+      "predict_s": 0.156,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 2000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.613,
+      "predict_s": 0.163,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 3500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.669,
+      "predict_s": 0.152,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 5000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.852,
+      "predict_s": 0.177,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 7500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.148,
+      "predict_s": 0.17,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 10000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.448,
+      "predict_s": 0.169,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 15000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 2.335,
+      "predict_s": 0.186,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 20000,
+      "upload": true,
+      "upload_bytes": 1671934,
+      "fit_s": 2.433,
+      "predict_s": 0.163,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 30000,
+      "upload": true,
+      "upload_bytes": 2508206,
+      "fit_s": 4.089,
+      "predict_s": 0.236,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 45000,
+      "upload": true,
+      "upload_bytes": 3763156,
+      "fit_s": 92.239,
+      "predict_s": 0.249,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 65000,
+      "upload": true,
+      "upload_bytes": 5434053,
+      "fit_s": 13.088,
+      "predict_s": 0.296,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 100000,
+      "upload": true,
+      "upload_bytes": 8361196,
+      "fit_s": 27.062,
+      "predict_s": 0.319,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 150000,
+      "upload": true,
+      "upload_bytes": 12540846,
+      "fit_s": 2.118,
+      "status": 413,
+      "detail": "training shape (150000 rows x 10 features) is estimated to need 66966924860 bytes at peak, exceeding this replica's 38133081702 byte maximum admission headroom (even with an empty cache)"
+    },
+    {
+      "n_features": 100,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.525,
+      "predict_s": 0.215,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.693,
+      "predict_s": 0.234,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.758,
+      "predict_s": 0.222,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 1000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.009,
+      "predict_s": 0.23,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 1636226,
+      "fit_s": 1.102,
+      "predict_s": 0.202,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 2863979,
+      "fit_s": 1.589,
+      "predict_s": 0.232,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 4091137,
+      "fit_s": 1.915,
+      "predict_s": 0.272,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 7500,
+      "upload": true,
+      "upload_bytes": 6136143,
+      "fit_s": 3.075,
+      "predict_s": 0.263,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 10000,
+      "upload": true,
+      "upload_bytes": 8181185,
+      "fit_s": 3.198,
+      "predict_s": 0.247,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 15000,
+      "upload": true,
+      "upload_bytes": 12272776,
+      "fit_s": 5.268,
+      "predict_s": 0.268,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 20000,
+      "upload": true,
+      "upload_bytes": 16360432,
+      "fit_s": 7.375,
+      "predict_s": 0.256,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 30000,
+      "upload": true,
+      "upload_bytes": 24541151,
+      "fit_s": 14.959,
+      "predict_s": 0.286,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 45000,
+      "upload": true,
+      "upload_bytes": 36808252,
+      "fit_s": 0.344,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    },
+    {
+      "n_features": 500,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.195,
+      "predict_s": 0.528,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.585,
+      "predict_s": 0.598,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 500,
+      "upload": true,
+      "upload_bytes": 2043762,
+      "fit_s": 1.6,
+      "predict_s": 0.553,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 1000,
+      "upload": true,
+      "upload_bytes": 4085149,
+      "fit_s": 2.48,
+      "predict_s": 0.526,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 8165361,
+      "fit_s": 3.929,
+      "predict_s": 23.63,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 14288149,
+      "fit_s": 49.69,
+      "predict_s": 23.707,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 20412232,
+      "fit_s": 8.187,
+      "predict_s": 24.763,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 7500,
+      "upload": true,
+      "upload_bytes": 30616941,
+      "fit_s": 56.915,
+      "predict_s": 23.862,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 10000,
+      "upload": true,
+      "upload_bytes": 40824134,
+      "fit_s": 0.304,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 2.713,
+      "predict_s": 0.816,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 250,
+      "upload": true,
+      "upload_bytes": 2044841,
+      "fit_s": 50.1,
+      "predict_s": 48.898,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 500,
+      "upload": true,
+      "upload_bytes": 4086299,
+      "fit_s": 52.421,
+      "predict_s": 0.862,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 1000,
+      "upload": true,
+      "upload_bytes": 8168305,
+      "fit_s": 87.964,
+      "predict_s": 30.361,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 16327226,
+      "fit_s": 90.939,
+      "predict_s": 30.61,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 28570774,
+      "fit_s": 59.339,
+      "predict_s": 29.968,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 40813362,
+      "fit_s": 0.314,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    }
+  ],
+  "max_admitted_rows": {
+    "10": 100000,
+    "100": 30000,
+    "500": 7500,
+    "1000": 3500
+  }
+}

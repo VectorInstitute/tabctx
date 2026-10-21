@@ -1,0 +1,281 @@
+{
+  "timestamp": "2026-10-21T01:17:11.468490+00:00",
+  "base_url": "https://proxy.vectorinstitute.ai/v1",
+  "seed": 0,
+  "max_train": 10000,
+  "max_test": 2000,
+  "results": [
+    {
+      "dataset": "titanic",
+      "source": "OpenML 40945 (Kaggle Titanic)",
+      "task": "classification",
+      "n_train": 1047,
+      "n_test": 262,
+      "n_features": 7,
+      "n_classes": 2,
+      "filled_share": 0.0288,
+      "trivial": {
+        "accuracy": 0.6183,
+        "roc_auc": 0.5,
+        "log_loss": 0.6649
+      },
+      "boosting": {
+        "accuracy": 0.8015,
+        "roc_auc": 0.8673,
+        "log_loss": 0.4574,
+        "fit_predict_s": 0.26
+      },
+      "tabicl-v2": {
+        "accuracy": 0.8359,
+        "roc_auc": 0.8908,
+        "log_loss": 0.3835,
+        "fit_s": 0.64,
+        "predict_s": 0.19
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.8435,
+        "roc_auc": 0.8847,
+        "log_loss": 0.3871,
+        "fit_s": 0.48,
+        "predict_s": 0.22
+      }
+    },
+    {
+      "dataset": "adult-income",
+      "source": "OpenML 1590 (UCI/Kaggle Adult)",
+      "task": "classification",
+      "n_train": 10000,
+      "n_test": 2000,
+      "n_features": 14,
+      "n_classes": 2,
+      "filled_share": 0.0,
+      "trivial": {
+        "accuracy": 0.765,
+        "roc_auc": 0.5,
+        "log_loss": 0.5453
+      },
+      "boosting": {
+        "accuracy": 0.862,
+        "roc_auc": 0.9164,
+        "log_loss": 0.2976,
+        "fit_predict_s": 0.29
+      },
+      "tabicl-v2": {
+        "accuracy": 0.869,
+        "roc_auc": 0.921,
+        "log_loss": 0.2897,
+        "fit_s": 1.4,
+        "predict_s": 0.44
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.8755,
+        "roc_auc": 0.9266,
+        "log_loss": 0.2769,
+        "fit_s": 3.58,
+        "predict_s": 0.9
+      }
+    },
+    {
+      "dataset": "bank-marketing",
+      "source": "OpenML 1461 (UCI/Kaggle Bank Marketing)",
+      "task": "classification",
+      "n_train": 10000,
+      "n_test": 2000,
+      "n_features": 16,
+      "n_classes": 2,
+      "filled_share": 0.0,
+      "trivial": {
+        "accuracy": 0.876,
+        "roc_auc": 0.5,
+        "log_loss": 0.375
+      },
+      "boosting": {
+        "accuracy": 0.896,
+        "roc_auc": 0.9157,
+        "log_loss": 0.2269,
+        "fit_predict_s": 0.29
+      },
+      "tabicl-v2": {
+        "accuracy": 0.9085,
+        "roc_auc": 0.9398,
+        "log_loss": 0.196,
+        "fit_s": 1.55,
+        "predict_s": 0.42
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.908,
+        "roc_auc": 0.9435,
+        "log_loss": 0.1904,
+        "fit_s": 3.67,
+        "predict_s": 0.86
+      }
+    },
+    {
+      "dataset": "credit-g",
+      "source": "OpenML 31 (German credit)",
+      "task": "classification",
+      "n_train": 800,
+      "n_test": 200,
+      "n_features": 20,
+      "n_classes": 2,
+      "filled_share": 0.0,
+      "trivial": {
+        "accuracy": 0.7,
+        "roc_auc": 0.5,
+        "log_loss": 0.6109
+      },
+      "boosting": {
+        "accuracy": 0.77,
+        "roc_auc": 0.8254,
+        "log_loss": 0.4971,
+        "fit_predict_s": 0.22
+      },
+      "tabicl-v2": {
+        "accuracy": 0.785,
+        "roc_auc": 0.8423,
+        "log_loss": 0.4398,
+        "fit_s": 0.58,
+        "predict_s": 0.17
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.79,
+        "roc_auc": 0.8526,
+        "log_loss": 0.4307,
+        "fit_s": 0.51,
+        "predict_s": 0.25
+      }
+    },
+    {
+      "dataset": "breast-cancer",
+      "source": "scikit-learn (Wisconsin)",
+      "task": "classification",
+      "n_train": 455,
+      "n_test": 114,
+      "n_features": 30,
+      "n_classes": 2,
+      "filled_share": 0.0,
+      "trivial": {
+        "accuracy": 0.6316,
+        "roc_auc": 0.5,
+        "log_loss": 0.6582
+      },
+      "boosting": {
+        "accuracy": 0.9386,
+        "roc_auc": 0.9868,
+        "log_loss": 0.1896,
+        "fit_predict_s": 0.17
+      },
+      "tabicl-v2": {
+        "accuracy": 0.9737,
+        "roc_auc": 0.994,
+        "log_loss": 0.0808,
+        "fit_s": 0.52,
+        "predict_s": 0.18
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.9737,
+        "roc_auc": 0.9964,
+        "log_loss": 0.0706,
+        "fit_s": 0.31,
+        "predict_s": 0.17
+      }
+    },
+    {
+      "dataset": "digits",
+      "source": "scikit-learn (10 classes, 64 features)",
+      "task": "classification",
+      "n_train": 1437,
+      "n_test": 360,
+      "n_features": 64,
+      "n_classes": 10,
+      "filled_share": 0.0,
+      "trivial": {
+        "accuracy": 0.1,
+        "roc_auc": 0.5,
+        "log_loss": 2.3025
+      },
+      "boosting": {
+        "accuracy": 0.9611,
+        "roc_auc": 0.9996,
+        "log_loss": 0.0804,
+        "fit_predict_s": 1.92
+      },
+      "tabicl-v2": {
+        "accuracy": 0.9944,
+        "roc_auc": 1.0,
+        "log_loss": 0.0114,
+        "fit_s": 0.78,
+        "predict_s": 0.33
+      },
+      "tabpfn-3.5": {
+        "accuracy": 0.9944,
+        "roc_auc": 1.0,
+        "log_loss": 0.014,
+        "fit_s": 1.13,
+        "predict_s": 0.47
+      }
+    },
+    {
+      "dataset": "california-housing",
+      "source": "scikit-learn (StatLib)",
+      "task": "regression",
+      "n_train": 10000,
+      "n_test": 2000,
+      "n_features": 8,
+      "n_classes": null,
+      "filled_share": 0.0,
+      "trivial": {
+        "r2": -0.0,
+        "rmse": 1.1568
+      },
+      "boosting": {
+        "r2": 0.8335,
+        "rmse": 0.472,
+        "fit_predict_s": 0.59
+      },
+      "tabicl-v2": {
+        "r2": 0.8718,
+        "rmse": 0.4142,
+        "fit_s": 1.31,
+        "predict_s": 0.35
+      },
+      "tabpfn-3.5": {
+        "r2": 0.8927,
+        "rmse": 0.3789,
+        "fit_s": 3.32,
+        "predict_s": 0.73
+      }
+    },
+    {
+      "dataset": "house-prices",
+      "source": "OpenML 42165 (Kaggle House Prices, Ames)",
+      "task": "regression",
+      "n_train": 1168,
+      "n_test": 292,
+      "n_features": 79,
+      "n_classes": null,
+      "filled_share": 0.003,
+      "trivial": {
+        "r2": -0.0,
+        "rmse": 83103.3407
+      },
+      "boosting": {
+        "r2": 0.857,
+        "rmse": 31429.266,
+        "fit_predict_s": 0.29
+      },
+      "tabicl-v2": {
+        "r2": 0.8239,
+        "rmse": 34870.3626,
+        "fit_s": 0.77,
+        "predict_s": 6.71
+      },
+      "tabpfn-3.5": {
+        "r2": 0.9174,
+        "rmse": 23879.648,
+        "fit_s": 1.15,
+        "predict_s": 0.37
+      }
+    }
+  ]
+}

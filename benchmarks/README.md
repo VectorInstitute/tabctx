@@ -22,6 +22,19 @@ python3 benchmarks/bench_concurrency.py \
     --save-baseline benchmarks/baselines/v0.5.0.json
 ```
 
+## Other benchmarks
+
+| Script | Question it answers |
+|---|---|
+| `sweep_admission.py` | How large a table does a deployment admit, and how long do fit and predict take on the way up? (direct to tabctx) |
+| `sweep_gateway.py` | The same sweep as a gateway user sees it: bearer auth and the gateway's request-size cap |
+| `eval_real_datasets.py` | Are predictions as good as the models are known for? Accuracy on public datasets (Titanic, Adult, Ames house prices, ...) next to gradient boosting |
+
+```bash
+VP_API_KEY=... python3 benchmarks/eval_real_datasets.py \
+    --models tabicl-v2 tabpfn-3.5 --save benchmarks/baselines/eval-real-gateway-a40x4.json
+```
+
 ## Why this exists
 
 tabctx serializes all GPU work per replica via one coarse lock. Unlike an
