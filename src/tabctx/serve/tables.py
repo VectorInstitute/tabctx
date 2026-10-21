@@ -21,6 +21,10 @@ Rows = Sequence[Sequence[float | str | None]]
 def rows_to_array(rows: Rows) -> np.ndarray | None:
     """An all-number table as float32 (null -> NaN), or None when it has
     text, isn't a rectangle, or is empty."""
+    # numpy would read "007" and "nan" as numbers; a text cell makes a
+    # text column whatever it says (~10 ns a cell).
+    if any(str in map(type, row) for row in rows):
+        return None
     try:
         # float32, as files are encoded: both backends compute in
         # float32/16, and it halves what crosses to the worker processes.

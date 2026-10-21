@@ -173,7 +173,8 @@ def test_schema_recorded_at_fit_and_queryable():
     assert engine.schema(dataset_id) == SCHEMA
     # Fits without a schema and unknown ids both read as None.
     assert engine.schema(engine.fit(TRAIN_X, TRAIN_Y)) is None
-    assert engine.schema("never-fit") is None
+    with pytest.raises(DatasetNotFoundError):
+        engine.schema("never-fit")
     # A re-fit of the same id without a schema must not keep a stale one.
     engine.fit(TRAIN_X, TRAIN_Y, dataset_id=dataset_id)
     assert engine.schema(dataset_id) is None

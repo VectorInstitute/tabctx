@@ -584,16 +584,16 @@ class TabctxEngine:
                 raise _not_found(dataset_id)
 
     def schema(self, dataset_id: str) -> TableSchema | None:
-        """The schema recorded at fit() for a cached context, or None
-        when the context is unknown or was fit without one. Reloads a
-        spilled context as a side effect, exactly as predict() would."""
+        """The schema recorded at fit() for a cached context (None if it
+        was fit without one). Reloads a spilled context as a side effect,
+        exactly as predict() would; raises DatasetNotFoundError, as
+        predict() would, when there is no such context."""
         if self._cache.peek(dataset_id) is None:
-            try:
-                self._restore(dataset_id)
-            except DatasetNotFoundError:
-                return None
+            self._restore(dataset_id)
         context = self._cache.peek(dataset_id)
-        return context.schema if context is not None else None
+        if context is None:  # evicted again in between
+            raise _not_found(dataset_id)
+        return context.schema
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False

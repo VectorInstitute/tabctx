@@ -117,7 +117,7 @@ def test_text_cells_in_json_rows(two_replica_service):
         (
             {"data": {"dataset_id": "bad"}, "files": {"other": ("x", b"a\n1\n")}},
             422,
-            "`file` part",
+            "'file' part",
         ),
         (
             {
@@ -141,7 +141,7 @@ def test_text_cells_in_json_rows(two_replica_service):
                 "files": {"file": ("x", TRAIN_CSV)},
             },
             422,
-            "not both",
+            "got several",
         ),
     ],
 )
@@ -156,3 +156,63 @@ def test_the_openapi_schema_documents_both_body_types(two_replica_service):
     content = spec["paths"]["/v1/tabctx/fit"]["post"]["requestBody"]["content"]
     assert set(content) == {"application/json", "multipart/form-data"}
     assert "file" in content["multipart/form-data"]["schema"]["required"]
+
+
+def test_an_unknown_context_is_404_whatever_the_rows(two_replica_service):
+    # 404 is what tells a client to fit again; text rows must not turn it
+    # into a 422 by being encoded against a schema that isn't there.
+    url = two_replica_service
+    assert predict_file(url, "never-fit", b"plan,age\ngold,1\n").status_code == 404
+    inline = post(
+        url,
+        "/v1/tabctx/predict",
+        "never-fit",
+        json={"dataset_id": "never-fit", "test_X": [[1.0, "gold"]]},
+    )
+    assert inline.status_code == 404
+
+
+def test_an_invalid_request_leaves_its_upload_unused(two_replica_service):
+    from tabctx.client import TabctxClient
+
+    url, ds = two_replica_service, "upload-kept"
+    upload_id = TabctxClient(url).upload_csv(TRAIN_CSV, ds)
+    bad = post(
+        url,
+        "/v1/tabctx/fit",
+        ds,
+        json={"dataset_id": ds, "train_upload_id": upload_id, "train_y": ["a"]},
+    )
+    assert bad.status_code == 422 and "got several" in bad.text
+    good = post(
+        url, "/v1/tabctx/fit", ds, json={"dataset_id": ds, "train_upload_id": upload_id}
+    )
+    assert good.status_code == 200, good.text
+
+
+def test_an_oversized_body_is_refused_from_its_headers(two_replica_service):
+    import http.client
+    from urllib.parse import urlparse
+
+    target = urlparse(two_replica_service)
+    conn = http.client.HTTPConnection(target.hostname, target.port, timeout=30)
+    conn.putrequest("POST", "/v1/tabctx/fit")
+    conn.putheader("Content-Type", "multipart/form-data; boundary=x")
+    conn.putheader("Content-Length", str(64 * 1024**3))
+    conn.putheader("x-session-id", "huge")
+    conn.endheaders()
+    conn.send(b"--x\r\n")  # a few bytes of 64 GiB: answered without the rest
+    resp = conn.getresponse()
+    assert resp.status == 413
+    conn.close()
+
+
+def test_validation_errors_keep_fastapis_shape(two_replica_service):
+    resp = post(
+        two_replica_service,
+        "/v1/tabctx/fit",
+        "shape",
+        json={"dataset_id": "shape", "task": "nope", "train_X": [[1]], "train_y": [1]},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "task"]

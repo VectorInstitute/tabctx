@@ -365,10 +365,11 @@ class MultiDeviceEngine:
 
     def schema(self, dataset_id: str) -> TableSchema | None:
         for index in self._locate(dataset_id):
-            schema = self._shards[index].schema(dataset_id)
-            if schema is not None:
-                return schema
-        return None
+            try:
+                return self._shards[index].schema(dataset_id)
+            except DatasetNotFoundError:
+                continue  # moved or evicted since the snapshot
+        raise _not_found(dataset_id)
 
     def fit_predict(
         self,

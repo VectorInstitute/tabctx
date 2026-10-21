@@ -124,6 +124,12 @@ class DiskSpillStore:
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
                         "schema": context.schema.to_json() if context.schema else None,
+                        # Read by 0.14 and earlier (a rollback keeps names).
+                        "feature_names": (
+                            list(context.schema.names)
+                            if context.schema and context.schema.names
+                            else None
+                        ),
                     }
                 )
             )

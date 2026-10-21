@@ -23,6 +23,7 @@ from __future__ import annotations
 import numbers
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import cached_property
 
 import numpy as np
 
@@ -80,11 +81,23 @@ class TableSchema:
             )
         n_rows = len(columns[0]) if columns else 0
         out = np.empty((n_rows, self.n_features), dtype=np.float32)
-        for j, (col, cats) in enumerate(zip(columns, self.categories, strict=True)):
+        for j, (col, codes) in enumerate(zip(columns, self._codes, strict=True)):
             out[:, j] = (
-                _numbers(col, self._label(j)) if cats is None else _codes(col, cats)
+                _numbers(col, self._label(j)) if codes is None else _encode(col, codes)
             )
         return out
+
+    @cached_property
+    def _codes(self) -> tuple[dict[str, float] | None, ...]:
+        """Per text column, value -> code (built once per schema)."""
+        return tuple(
+            None if cats is None else {c: float(i) for i, c in enumerate(cats)}
+            for cats in self.categories
+        )
+
+    def __getstate__(self) -> dict:
+        # The code maps are rebuilt on use, not shipped between processes.
+        return {k: v for k, v in self.__dict__.items() if k != "_codes"}
 
     def select(self, names: Sequence[str], columns: Columns) -> Columns:
         """A named table's columns in schema order (by name when the
@@ -153,8 +166,7 @@ def _numbers(col: np.ndarray, label: str) -> np.ndarray:
         ) from None
 
 
-def _codes(col: np.ndarray, categories: tuple[str, ...]) -> np.ndarray:
-    code = {c: float(i) for i, c in enumerate(categories)}
+def _encode(col: np.ndarray, code: dict[str, float]) -> np.ndarray:
     if col.dtype.kind == "f":  # a numeric column where training had text
         values = (None if np.isnan(v) else float(v) for v in col)
     else:

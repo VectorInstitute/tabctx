@@ -35,7 +35,6 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from ray import serve
 from ray.serve.config import RequestRouterConfig
 from starlette.concurrency import run_in_threadpool
-from starlette.datastructures import UploadFile
 
 from tabctx import (
     AdmissionRejected,
@@ -55,7 +54,9 @@ from tabctx.multidevice import MultiDeviceEngine
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import ServeSettings, build_engine
-from tabctx.serve.files import read_table, split_target
+from tabctx.serve.files import read_table, read_training_table
+from tabctx.serve.multipart import FILE_FIELD, MAX_FIELD_BYTES, MAX_FIELDS, read_form
+from tabctx.serve.schemas import SchemaCache
 from tabctx.serve.tables import encode_rows, learn_rows
 from tabctx.serve.tenancy import (
     TenantRequiredError,
@@ -269,6 +270,14 @@ def _request_body(model: type[BaseModel]) -> dict:
     }
 
 
+def _body_error(e: ValidationError) -> RequestValidationError:
+    """FastAPI's own 422 shape for a body it validated: locations under
+    "body"."""
+    return RequestValidationError(
+        [{**err, "loc": ("body", *err["loc"])} for err in e.errors()]
+    )
+
+
 def _replica_tag() -> str | None:
     try:
         return serve.get_replica_context().replica_tag
@@ -333,6 +342,9 @@ class TabctxService:
         # Large-table ingestion (fit/predict-by-reference): replica-local
         # streamed CSV uploads; see serve/uploads.py for the affinity and
         # tenancy contracts that make this correct at num_replicas >= 2.
+        # Each fitted context's schema, kept here too so a predict needn't
+        # ask the engine (a round trip to a worker process) for it.
+        self._schemas = SchemaCache()
         self._uploads = UploadStore(
             ttl_s=settings.upload_ttl_s,
             max_upload_bytes=settings.max_upload_bytes,
@@ -465,48 +477,80 @@ class TabctxService:
     ) -> tuple[R, Path | None]:
         """The request's fields, and its table file if it sent one. A JSON
         body carries the fields; a multipart/form-data body carries them as
-        form fields and the table as a `file` part, written to disk (size-
-        capped as /upload is) for the caller to read and discard."""
+        form fields and the table as a `file` part, which streams to disk
+        under the upload size cap (serve/multipart.py) for the caller to
+        read and discard."""
+        # Refused callers and oversized bodies are turned away from the
+        # headers alone, before any of the body is read.
+        try:
+            resolve_tenant_id(dict(request.headers))
+        except (*_AUTH_ERRORS, *_INVALID_INPUT_ERRORS) as e:
+            raise _map_error(e) from e
         content_type = request.headers.get("content-type", "")
-        if not content_type.startswith("multipart/form-data"):
+        if not content_type.lower().startswith("multipart/form-data"):
             try:
                 return model.model_validate_json(await request.body()), None
             except ValidationError as e:
-                raise RequestValidationError(e.errors()) from e
-        async with request.form(max_files=1, max_fields=16) as form:
-            upload = form.get("file")
-            if not isinstance(upload, UploadFile):
-                raise HTTPException(
-                    422, "a multipart request carries its table as a `file` part"
-                )
-            fields = {k: v for k, v in form.items() if isinstance(v, str)}
-            try:
-                req = model.model_validate(fields)
-            except ValidationError as e:
-                raise RequestValidationError(e.errors()) from e
-            return req, await self._receive(upload)
-
-    async def _receive(self, upload: UploadFile) -> Path:
-        writer = self._uploads.begin()
+                raise _body_error(e) from e
+        self._check_length(request)
         try:
-            while chunk := await upload.read(1 << 20):
-                writer.write(chunk)
-        except UploadTooLargeError as e:
+            fields, writer = await read_form(
+                request.stream(), content_type, self._uploads.begin
+            )
+        except (InvalidInputError, UploadTooLargeError) as e:
             raise _map_error(e) from e
-        except BaseException:
-            writer.abort()
-            raise
-        return writer.finish()
+        if writer is None:
+            raise HTTPException(
+                422, f"a multipart request carries its table as a `{FILE_FIELD}` part"
+            )
+        path = writer.finish()
+        try:
+            return model.model_validate(fields), path
+        except ValidationError as e:
+            self._uploads.discard(path)
+            raise _body_error(e) from e
+
+    def _check_length(self, request: Request) -> None:
+        declared = request.headers.get("content-length", "")
+        cap = self._uploads.max_upload_bytes + MAX_FIELDS * MAX_FIELD_BYTES
+        if declared.isdigit() and int(declared) > cap:
+            raise _map_error(
+                UploadTooLargeError(
+                    f"the request is {int(declared)} bytes; tables are capped at "
+                    f"{self._uploads.max_upload_bytes} (TABCTX_MAX_UPLOAD_BYTES)"
+                )
+            )
 
     def _table_file(
-        self, sent: Path | None, upload_id: str | None, tenant_id: str | None
+        self,
+        sent: Path | None,
+        upload_id: str | None,
+        inline: bool,
+        tenant_id: str | None,
+        rows: str,
     ) -> Path | None:
-        """The request's table file: sent with it, or an earlier upload."""
-        if sent is not None and upload_id is not None:
-            raise InvalidInputError("send a table file or an upload id, not both")
+        """The request's table file -- sent with it, or an earlier upload --
+        or None for inline rows. Exactly one of the three, checked before
+        an upload is used up (uploads are single-use)."""
+        given = (sent is not None) + (upload_id is not None) + inline
+        if given != 1:
+            raise InvalidInputError(
+                f"send the table one way: inline {rows}, a table file, or an "
+                f"upload id ({'got several' if given else 'got none'})"
+            )
         if upload_id is not None:
             return self._uploads.consume(upload_id, tenant_id)
         return sent
+
+    def _schema(self, scoped_id: str) -> TableSchema | None:
+        """The context's schema: this replica recorded it at fit (affinity
+        sends a dataset's fits and predicts here), else -- after a restart --
+        the engine's copy. Raises DatasetNotFoundError for no context.
+        (A re-fit racing a predict of the same id can encode the predict's
+        rows with the old schema; re-fitting an id while predicting
+        against it has no defined result anyway.)"""
+        schema = self._schemas.get(scoped_id)
+        return schema if schema is not None else self._engine.schema(scoped_id)
 
     @fastapi_app.post(
         "/v1/tabctx/fit",
@@ -530,27 +574,20 @@ class TabctxService:
         """Returns (X, y, schema) from whichever of inline rows or a table
         file the request used -- exactly one."""
         inline = req.train_X is not None or req.train_y is not None
-        file = self._table_file(file, req.train_upload_id, tenant_id)
+        file = self._table_file(
+            file, req.train_upload_id, inline, tenant_id, "train_X and train_y"
+        )
+        if file is None:
+            if req.train_X is None or req.train_y is None:
+                raise InvalidInputError("an inline fit needs both train_X and train_y")
+            X, schema = learn_rows(req.train_X)
+            return X, req.train_y, schema
         try:
-            if inline and file is not None:
-                raise InvalidInputError(
-                    "provide either inline train_X/train_y or a table file, not both"
-                )
-            if file is not None:
-                features, y = split_target(
-                    read_table(file), req.target_column, req.task
-                )
-                schema, X = TableSchema.learn(features.columns, features.names)
-                return X, y, schema
+            features, y = read_training_table(file, req.target_column, req.task)
         finally:
-            if file is not None:
-                self._uploads.discard(file)
-        if req.train_X is None or req.train_y is None:
-            raise InvalidInputError(
-                "fit needs either train_X and train_y (inline) or a table file"
-            )
-        X, schema = learn_rows(req.train_X)
-        return X, req.train_y, schema
+            self._uploads.discard(file)
+        schema, X = TableSchema.learn(features.columns, features.names)
+        return X, y, schema
 
     def _fit_sync(
         self,
@@ -598,6 +635,8 @@ class TabctxService:
                 backend=model_id,
                 schema=schema,
             )
+            if schema is not None:
+                self._schemas.put(scoped_id, schema)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -639,23 +678,17 @@ class TabctxService:
         tenant_id: str | None,
         scoped_id: str,
     ) -> object:
-        file = self._table_file(file, req.test_upload_id, tenant_id)
+        file = self._table_file(
+            file, req.test_upload_id, req.test_X is not None, tenant_id, "test_X"
+        )
         try:
-            if req.test_X is not None and file is not None:
-                raise InvalidInputError(
-                    "provide either inline test_X or a table file, not both"
-                )
-            if file is None and req.test_X is None:
-                raise InvalidInputError(
-                    "predict needs either test_X (inline) or a table file"
-                )
             # Encoded as the training table was (text categories, column
             # names); contexts from before schemas existed have none.
-            schema = self._engine.schema(scoped_id)
+            schema = self._schema(scoped_id)
             if file is None:
                 return encode_rows(req.test_X, schema)
             text = schema.text_names if schema is not None else ()
-            table = read_table(file, text_columns=text).features(text)
+            table = read_table(file, text_columns=text)
             if schema is None:
                 schema = TableSchema((None,) * len(table.columns))
             return schema.encode(schema.select(table.names, table.columns))

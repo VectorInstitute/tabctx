@@ -6,9 +6,9 @@ or whole numbers with more distinct values than a class list would have
 (prices, counts), are a continuous target; anything else is
 classification. Only actual
 numbers count: text labels are categories even when they look numeric
-("250.01" as a diagnosis code), as they always were. CSV labels arrive as
-text, so the CSV parser converts them first when the task is left open
-(serve/csv_io.py).
+("250.01" as a diagnosis code), as they always were. A table file's labels
+are text as written, so the file reader converts them first when they are
+all numbers (serve/files.py).
 
 When the caller does say classification but sends non-integer numbers,
 that's a mistake worth a clear 422 naming the fix, not a backend error

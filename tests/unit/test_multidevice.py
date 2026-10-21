@@ -261,7 +261,8 @@ class TestRouting:
         schema = TableSchema((None, ("a", "b")), ("p", "q"))
         engine.fit(*table(5, features=2), dataset_id="d", schema=schema)
         assert engine.schema("d") == schema
-        assert engine.schema("missing") is None
+        with pytest.raises(DatasetNotFoundError):
+            engine.schema("missing")
 
     def test_fit_predict_leaves_nothing_cached(self):
         engine, shards, _ = build(2)

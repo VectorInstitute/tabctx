@@ -102,7 +102,7 @@ def test_both_paths_in_one_request_rejected(two_replica_service):
     client = TabctxClient(two_replica_service)
     dataset_id = "upload-both"
     upload_id = client.upload_csv(_train_csv(30, 3), dataset_id)
-    with pytest.raises(InvalidInputError, match="not both"):
+    with pytest.raises(InvalidInputError, match="got several"):
         client._post(
             "/v1/tabctx/fit",
             {
@@ -117,7 +117,7 @@ def test_both_paths_in_one_request_rejected(two_replica_service):
 
 def test_neither_path_rejected(two_replica_service):
     client = TabctxClient(two_replica_service)
-    with pytest.raises(InvalidInputError, match="either"):
+    with pytest.raises(InvalidInputError, match="got none"):
         client._post(
             "/v1/tabctx/fit",
             {"dataset_id": "upload-neither"},
