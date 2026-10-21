@@ -12,6 +12,7 @@ import threading
 import uuid
 from collections.abc import Callable, Iterator
 
+from tabctx import timing
 from tabctx.backends._cuda import release_cached_device_memory
 from tabctx.backends.base import TabularICLBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
@@ -342,16 +343,23 @@ class TabctxEngine:
         # Lock order everywhere: prepare gate, host slot, _fit_lock,
         # _predict_lock. Host memory before the device, so a large fit
         # waiting for host memory doesn't hold this device meanwhile.
-        with contextlib.ExitStack() as gate:
+        with timing.counting_compiles(), contextlib.ExitStack() as gate:
             if n_train * n_features >= GATED_FIT_CELLS:
-                self._prepare_gate.acquire()
+                with timing.phase("wait_prepare_gate"):
+                    self._prepare_gate.acquire()
                 gate.callback(self._prepare_gate.release)
             prepare = getattr(chosen, "prepare_fit", None)
-            prepared = prepare(X, y, task) if callable(prepare) else None
-            with self._host_slot(chosen, n_train, n_features), self._fit_lock:
+            with timing.phase("prepare"):
+                prepared = prepare(X, y, task) if callable(prepare) else None
+            with contextlib.ExitStack() as device:
+                with timing.phase("wait_host_memory"):
+                    device.enter_context(self._host_slot(chosen, n_train, n_features))
+                with timing.phase("wait_device"):
+                    device.enter_context(self._fit_lock)
                 gate.close()  # the device is ours: let the next fit prepare
-                self._make_room(estimator, estimated)
-                with self._measuring():
+                with timing.phase("make_room"):
+                    self._make_room(estimator, estimated)
+                with self._measuring(), timing.phase("fit_device"):
                     payload = self._fit_backend(
                         chosen, X, y, task, estimator, estimated, prepared
                     )
@@ -600,10 +608,12 @@ class TabctxEngine:
         device's fits, and a spilled context is restored first.
         """
         exclusive = len(X_test) > LIGHT_PREDICT_ROWS
-        with self._cache.pinned(dataset_id):
+        with self._cache.pinned(dataset_id), timing.counting_compiles():
             for _ in range(_PREDICT_ATTEMPTS):
                 if self._cache.peek(dataset_id) is None:
-                    self._restore(dataset_id)
+                    with timing.phase("restore"):
+                        self._restore(dataset_id)
+                    timing.count("restores")
                 outcome = self._predict_resident(
                     dataset_id, X_test, return_proba, exclusive
                 )
@@ -654,24 +664,34 @@ class TabctxEngine:
         all_predictions: list = []
         all_probabilities: list[list[float]] = []
         classes: list[str] | None = None
-        with (
-            self._host_slot(backend, largest_chunk, n_features),
-            self._fit_lock if exclusive else contextlib.nullcontext(),
-            self._predict_lock,
-        ):
+        with contextlib.ExitStack() as device:
+            with timing.phase("wait_host_memory"):
+                device.enter_context(
+                    self._host_slot(backend, largest_chunk, n_features)
+                )
+            with timing.phase("wait_device"):
+                if exclusive:
+                    device.enter_context(self._fit_lock)
+                device.enter_context(self._predict_lock)
             context = self._cache.peek(dataset_id)
             if context is None:
                 return None
             self._cache.touch(dataset_id)
+            timing.count("predict_chunks", len(chunks))
             try:
-                for chunk in chunks:
-                    for outcome in _predict_splitting_on_oom(
-                        backend, context.payload, chunk, return_proba
-                    ):
-                        all_predictions.extend(outcome.predictions)
-                        if return_proba:
-                            all_probabilities.extend(outcome.probabilities or [])
-                            classes = outcome.classes or classes
+                with timing.phase("predict_device"):
+                    outcomes = [
+                        outcome
+                        for chunk in chunks
+                        for outcome in _predict_splitting_on_oom(
+                            backend, context.payload, chunk, return_proba
+                        )
+                    ]
+                for outcome in outcomes:
+                    all_predictions.extend(outcome.predictions)
+                    if return_proba:
+                        all_probabilities.extend(outcome.probabilities or [])
+                        classes = outcome.classes or classes
             finally:
                 # Still under the predict lock: if the context was evicted
                 # while this ran, its memory is freed now -- atomic with

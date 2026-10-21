@@ -53,6 +53,7 @@ from multiprocessing.connection import wait as wait_for_handles
 from pathlib import Path
 from typing import Any
 
+from tabctx import timing
 from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
@@ -237,20 +238,30 @@ def _worker_main(
             return _snapshot(engine, next(seq))
 
     def handle(req_id: int, method: str, args: tuple, kwargs: dict) -> None:
-        try:
-            if method == "report":
-                result: Any = _report(shard, device)
-            else:
-                result = getattr(engine, method)(*args, **kwargs)
-            reply = (req_id, True, result, snapshot())
-        except BaseException as e:  # noqa: BLE001 -- returned to the caller
-            reply = (req_id, False, _portable(e), snapshot())
+        # The call's timing breakdown travels back with its reply, so the
+        # serving process can report where a request's time went.
+        with timing.collect() as timings:
+            try:
+                if method == "report":
+                    result: Any = _report(shard, device)
+                else:
+                    result = getattr(engine, method)(*args, **kwargs)
+                ok, payload = True, result
+            except BaseException as e:  # noqa: BLE001 -- returned to the caller
+                ok, payload = False, _portable(e)
+        reply = (req_id, ok, payload, snapshot(), timings.as_dict())
         with send_lock:
             try:
                 conn.send(reply)
             except Exception as e:  # noqa: BLE001 -- e.g. an unpicklable result
                 conn.send(
-                    (req_id, False, RuntimeError(f"unsendable reply: {e}"), snapshot())
+                    (
+                        req_id,
+                        False,
+                        RuntimeError(f"unsendable reply: {e}"),
+                        snapshot(),
+                        {},
+                    )
                 )
 
     conn.send(_Ready(list(engine.backend_names), engine.default_backend, snapshot()))
@@ -271,6 +282,7 @@ def _worker_main(
                             False,
                             ValueError(f"unknown call {method!r}"),
                             snapshot(),
+                            {},
                         )
                     )
                 continue
@@ -465,7 +477,7 @@ class ProcessShard:
     def _read_loop(self) -> None:
         while True:
             try:
-                req_id, ok, payload, snap = self._conn.recv()
+                req_id, ok, payload, snap, timings = self._conn.recv()
             except (EOFError, OSError):
                 break
             except Exception:  # noqa: BLE001 -- an unreadable reply
@@ -481,7 +493,7 @@ class ProcessShard:
             if fut is None:
                 continue
             if ok:
-                fut.set_result(payload)
+                fut.set_result((payload, timings))
             else:
                 fut.set_exception(payload)
         exited = self._exited(5)  # reap it, for a meaningful exit code
@@ -530,12 +542,19 @@ class ProcessShard:
             self._forget(req_id)
             raise
         try:
-            return fut.result(timeout_s)
+            # Everything between the router and the worker's own phases:
+            # pickling, the pipe, the worker's thread pool queue.
+            with timing.phase("worker_call"):
+                result, timings = fut.result(timeout_s)
         except FutureTimeoutError:
             self._forget(req_id)
             raise TimeoutError(
                 f"worker for {self.device} did not answer {method} in {timeout_s}s"
             ) from None
+        collector = timing.current()
+        if collector is not None and timings:
+            collector.merge(timings)
+        return result
 
     def _forget(self, req_id: int) -> None:
         with self._state_lock:

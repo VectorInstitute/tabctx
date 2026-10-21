@@ -66,6 +66,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from tabctx import timing
 from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
@@ -99,6 +100,9 @@ class _Batch:
     members: list[_Member] = field(default_factory=list)
     done: threading.Event = field(default_factory=threading.Event)
     closed: bool = False  # leader has taken the batch; no more joiners
+    # The batch's engine-side timing breakdown, which every member reports
+    # as its own (they all waited on the same call).
+    timings: dict = field(default_factory=dict)
 
 
 class CoalescingPredictor:
@@ -145,14 +149,17 @@ class CoalescingPredictor:
                 is_leader = True
 
         if is_leader:
-            time.sleep(self._window_s)
+            with timing.phase("coalesce_wait"):
+                time.sleep(self._window_s)
             with self._lock:
                 batch.closed = True
                 if self._batches.get(key) is batch:
                     del self._batches[key]
                 self.batched_requests += len(batch.members)
             try:
-                self._execute(key, batch)
+                with timing.collect() as batch_timings:
+                    self._execute(key, batch)
+                batch.timings = batch_timings.as_dict()
             finally:
                 # Followers must never hang, even on a bug in the
                 # execute/split path itself.
@@ -163,7 +170,12 @@ class CoalescingPredictor:
                         )
                 batch.done.set()
         else:
-            batch.done.wait()
+            with timing.phase("coalesce_wait"):
+                batch.done.wait()
+        collector = timing.current()
+        if collector is not None:
+            collector.merge(batch.timings)
+            collector.count("batched_with", len(batch.members))
 
         if member.error is not None:
             raise member.error

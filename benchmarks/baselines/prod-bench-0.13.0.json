@@ -1,0 +1,141 @@
+{
+  "label": "0.13.0",
+  "tag": "c7227e",
+  "timestamp": "2026-10-21T02:43:06.623591+00:00",
+  "base_url": "https://proxy.vectorinstitute.ai/v1",
+  "stall_s": 5.0,
+  "latency": {
+    "tabicl-v2 1000x10": {
+      "first_fit_s": 0.518,
+      "repeat_fit_s": 0.516,
+      "predict_p50_s": 0.131
+    },
+    "tabicl-v2 10000x10": {
+      "first_fit_s": 1.327,
+      "repeat_fit_s": 1.259,
+      "predict_p50_s": 0.132
+    },
+    "tabicl-v2 1000x100": {
+      "first_fit_s": 0.741,
+      "repeat_fit_s": 0.865,
+      "predict_p50_s": 0.169
+    },
+    "tabicl-v2 10000x100": {
+      "first_fit_s": 4.623,
+      "repeat_fit_s": 4.789,
+      "predict_p50_s": 0.157
+    },
+    "tabicl-v2 1000x500": {
+      "first_fit_s": 2.724,
+      "repeat_fit_s": 3.081,
+      "predict_p50_s": 0.35
+    },
+    "tabicl-v2 5000x500": {
+      "first_fit_s": 10.562,
+      "repeat_fit_s": 10.535,
+      "predict_p50_s": 0.366
+    },
+    "tabpfn-3.5 1000x10": {
+      "first_fit_s": 0.374,
+      "repeat_fit_s": 0.4,
+      "predict_p50_s": 0.145
+    },
+    "tabpfn-3.5 10000x10": {
+      "first_fit_s": 3.226,
+      "repeat_fit_s": 3.214,
+      "predict_p50_s": 0.191
+    },
+    "tabpfn-3.5 1000x100": {
+      "first_fit_s": 0.876,
+      "repeat_fit_s": 0.873,
+      "predict_p50_s": 0.172
+    },
+    "tabpfn-3.5 10000x100": {
+      "first_fit_s": 9.013,
+      "repeat_fit_s": 8.911,
+      "predict_p50_s": 0.167
+    },
+    "tabpfn-3.5 1000x500": {
+      "first_fit_s": 52.186,
+      "repeat_fit_s": 4.543,
+      "predict_p50_s": 0.407
+    },
+    "tabpfn-3.5 5000x500": {
+      "first_fit_s": 17.597,
+      "repeat_fit_s": 66.87,
+      "predict_p50_s": 0.416
+    }
+  },
+  "mixed": {
+    "tabicl-v2": {
+      "fit": {
+        "n": 23,
+        "p50_s": 5.258,
+        "p95_s": 74.43,
+        "max_s": 98.943,
+        "over_stall": 17
+      },
+      "predict": {
+        "n": 115,
+        "p50_s": 0.559,
+        "p95_s": 1.217,
+        "max_s": 2.641,
+        "over_stall": 0
+      }
+    },
+    "tabpfn-3.5": {
+      "fit": {
+        "n": 22,
+        "p50_s": 9.069,
+        "p95_s": 59.338,
+        "max_s": 63.021,
+        "over_stall": 22
+      },
+      "predict": {
+        "n": 110,
+        "p50_s": 0.857,
+        "p95_s": 2.356,
+        "max_s": 4.603,
+        "over_stall": 0
+      }
+    },
+    "errors": [],
+    "n_errors": 0
+  },
+  "throughput": {
+    "tabicl-v2": {
+      "n": 457,
+      "p50_s": 1.006,
+      "p95_s": 6.991,
+      "max_s": 8.116,
+      "over_stall": 186,
+      "per_min": 152.3
+    },
+    "tabpfn-3.5": {
+      "n": 420,
+      "p50_s": 2.765,
+      "p95_s": 6.979,
+      "max_s": 8.047,
+      "over_stall": 195,
+      "per_min": 140.0
+    },
+    "n_errors": 0,
+    "gpu": {
+      "samples": 165,
+      "mean_util_pct": [
+        17.9,
+        28.2,
+        13.9,
+        70.9
+      ],
+      "busy_share": [
+        0.37,
+        0.418,
+        0.194,
+        1.0
+      ],
+      "all_gpus_mean_util_pct": 32.7
+    }
+  },
+  "rate_limited": 0
+}

@@ -39,8 +39,10 @@ accelerator_for() {
   case "$1" in
     a2-highgpu-1g) echo "type=nvidia-tesla-a100,count=1" ;;
     a2-highgpu-4g) echo "type=nvidia-tesla-a100,count=4" ;;
+    a2-highgpu-2g) echo "type=nvidia-tesla-a100,count=2" ;;
     g2-standard-12) echo "type=nvidia-l4,count=1" ;;
     g2-standard-48) echo "type=nvidia-l4,count=4" ;;
+    g2-standard-24) echo "type=nvidia-l4,count=2" ;;
     *) echo "unknown machine $1" >&2; exit 1 ;;
   esac
 }

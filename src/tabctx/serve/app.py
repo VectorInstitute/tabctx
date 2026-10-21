@@ -43,6 +43,7 @@ from tabctx import (
     InvalidInputError,
     UploadNotFoundError,
     UploadTooLargeError,
+    timing,
 )
 from tabctx.batching import CoalescingPredictor
 from tabctx.events import RecentEvents
@@ -85,6 +86,16 @@ class GpuMemory(BaseModel):
 
 
 _TABLE_DOC = "Rows of numbers; null marks a missing value."
+
+_TIMINGS_DOC = (
+    "Where this request's time went on the server, in ms per phase (waits "
+    "for placement, host memory or the device; preprocessing; making room; "
+    "restoring a spilled context; device work), plus counts as n_<name> "
+    "(e.g. n_graphs_compiled, which counts the whole worker process, so "
+    "concurrent requests can share it). Phases nest and overlap (worker_call "
+    "contains the worker's phases); coalesced predicts report their batch's "
+    "breakdown. Diagnostic: keys may change."
+)
 
 _TASK_DOC = (
     "classification or regression. Omit it to infer from train_y: non-integer "
@@ -164,6 +175,9 @@ class FitResponse(BaseModel):
     # session affinity actually pinned fit() and later predict() calls to
     # the same replica (the multi-replica correctness contract).
     served_by: str | None = None
+    timings_ms: dict[str, float | int] | None = Field(
+        default=None, description=_TIMINGS_DOC
+    )
 
 
 class TabctxPredictRequest(BaseModel):
@@ -185,6 +199,9 @@ class TabctxPredictResponse(BaseModel):
     n_test: int
     latency_ms: float
     served_by: str | None = None
+    timings_ms: dict[str, float | int] | None = Field(
+        default=None, description=_TIMINGS_DOC
+    )
 
 
 _AUTH_ERRORS = (TenantRequiredError,)
@@ -433,9 +450,18 @@ class TabctxService:
     def _fit_sync(
         self, req: FitRequest, headers: dict[str, str], session_id: str | None
     ) -> FitResponse:
+        with timing.collect() as timings:
+            response = self._fit_timed(req, headers, session_id)
+        response.timings_ms = timings.as_dict()
+        return response
+
+    def _fit_timed(
+        self, req: FitRequest, headers: dict[str, str], session_id: str | None
+    ) -> FitResponse:
         try:
             tenant_id = resolve_tenant_id(headers)
-            X, y, feature_names = self._resolve_train_table(req, tenant_id)
+            with timing.phase("read_table"):
+                X, y, feature_names = self._resolve_train_table(req, tenant_id)
             task = resolve_task(y, req.task)
             n_train = len(X)
             n_features = len(X[0]) if n_train else 0
@@ -516,12 +542,24 @@ class TabctxService:
         headers: dict[str, str],
         session_id: str | None,
     ) -> TabctxPredictResponse:
+        with timing.collect() as timings:
+            response = self._predict_timed(req, headers, session_id)
+        response.timings_ms = timings.as_dict()
+        return response
+
+    def _predict_timed(
+        self,
+        req: TabctxPredictRequest,
+        headers: dict[str, str],
+        session_id: str | None,
+    ) -> TabctxPredictResponse:
         start = time.monotonic()
         try:
             tenant_id = resolve_tenant_id(headers)
             resolve_dataset_id(session_id, req.dataset_id)
             scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
-            X_test = self._resolve_test_table(req, tenant_id, scoped_id)
+            with timing.phase("read_table"):
+                X_test = self._resolve_test_table(req, tenant_id, scoped_id)
             outcome = self._predictor.predict(
                 scoped_id, X_test, return_proba=req.return_proba
             )
