@@ -176,6 +176,12 @@ def test_long_boundaries_and_plain_file_fields_are_422(store):
         read(body([("file", "a,b\n1,2\n")]), store)
 
 
-def test_repeated_fields_count_against_the_limit(store):
-    with pytest.raises(InvalidInputError, match="more than 16"):
-        read(body([("dataset_id", "x")] * 17), store)
+def test_repeated_fields_and_other_charsets_are_refused(store):
+    with pytest.raises(InvalidInputError, match="repeated"):
+        read(body([("model", "a"), ("model", "b")]), store)
+    with pytest.raises(InvalidInputError, match="UTF-8"):
+        read(body(), store, content_type=CONTENT_TYPE + "; charset=utf-16-le")
+    fields, _ = read(
+        body([("m", "é")]), store, content_type=CONTENT_TYPE + "; charset=UTF-8"
+    )
+    assert fields == {"m": "é"}

@@ -6,7 +6,10 @@ the upload size cap as bytes arrive. Nothing is spooled or copied first,
 so a body over the cap stops at the cap, and a good one is written to
 disk once. Disk writes run off the event loop.
 
-Malformed bodies raise InvalidInputError (a 422).
+Fields are strict UTF-8 (a charset parameter naming anything else is
+refused) and each appears once, so a gateway that routes on them reads
+exactly the values this server uses. Malformed bodies raise
+InvalidInputError (a 422).
 """
 
 from __future__ import annotations
@@ -40,6 +43,13 @@ async def read_form(
     """(text fields, the file part's writer or None). The caller finishes
     the writer; on any error it has been aborted."""
     _, params = parse_options_header(content_type)
+    charset = params.get(b"charset", b"utf-8").lower()
+    if charset not in (b"utf-8", b"utf8"):
+        # Fields are UTF-8, always: a proxy in front that read them in
+        # another charset would route by values this server never sees.
+        raise InvalidInputError(
+            "multipart form fields must be UTF-8 (no other charset)"
+        )
     boundary = params.get(b"boundary")
     if not boundary:
         raise InvalidInputError("multipart body without a boundary")
@@ -149,6 +159,9 @@ class _Form:
 
     def _part_end(self) -> None:
         if not self._in_file:
+            if self.open_part in self.fields:
+                # One value per field, so no reader can pick a different one.
+                raise InvalidInputError(f"form field {self.open_part!r} is repeated")
             try:
                 self.fields[self.open_part] = self._data.decode("utf-8")
             except UnicodeDecodeError as e:
