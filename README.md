@@ -137,7 +137,9 @@ estimator = AdaptiveMemoryEstimator(fallback=PowerLawMemoryEstimator(A100_40GB_T
 cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
 engine = TabctxEngine(backend=TabICLBackend(), cache=cache, estimator=estimator)
 
-dataset_id = engine.fit(X_train, y_train, task="classification")
+# task is inferred from y_train when omitted (non-integer numbers mean
+# regression); pass task="classification" or "regression" to be explicit.
+dataset_id = engine.fit(X_train, y_train)
 result = engine.predict(dataset_id, X_test, return_proba=True)
 
 # The whole point: reuse the same cached context for a new test batch,

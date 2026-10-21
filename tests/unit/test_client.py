@@ -141,13 +141,24 @@ class TestFit:
         assert captured["url"] == "http://localhost:8000/v1/tabctx/fit"
         assert captured["method"] == "POST"
         assert captured["headers"]["X-session-id"] == "ds-1"
+        # No task: the server infers it from train_y.
         assert captured["body"] == {
             "train_X": [[1.0, 2.0]],
             "train_y": ["a"],
-            "task": "classification",
             "dataset_id": "ds-1",
             "model": "tabicl-v2",
         }
+
+    def test_sends_task_when_given(self, monkeypatch):
+        captured = {}
+
+        def handler(req):
+            captured["body"] = json.loads(req.data.decode())
+            return _json_response({"dataset_id": "ds-1"})
+
+        _install(monkeypatch, handler)
+        TabctxClient("http://localhost:8000").fit([[1.0]], [2.5], task="regression")
+        assert captured["body"]["task"] == "regression"
 
     def test_omits_dataset_id_and_model_when_not_given(self, monkeypatch):
         captured = {}

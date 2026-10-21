@@ -22,6 +22,7 @@ from tabctx.errors import (
     DatasetNotFoundError,
     InvalidInputError,
 )
+from tabctx.labels import resolve_task
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
@@ -287,7 +288,7 @@ class TabctxEngine:
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
         feature_names: list[str] | None = None,
@@ -322,6 +323,7 @@ class TabctxEngine:
         """
         n_train = len(X)
         n_features = _validate_fit_input(X, y)
+        task = resolve_task(y, task)
         backend_name, chosen = self._resolve_backend(backend)
         estimator = self._estimators[backend_name]
 
@@ -689,7 +691,7 @@ class TabctxEngine:
         X: ArrayLike,
         y: ArrayLike,
         X_test: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         return_proba: bool = False,
     ) -> PredictOutcome:
         """Convenience matching the one-shot semantics of the wrapper this

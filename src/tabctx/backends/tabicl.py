@@ -66,7 +66,8 @@ from tabctx.backends._cuda import (
 )
 from tabctx.backends._outcome import classification_outcome
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
-from tabctx.errors import BackendComputeError
+from tabctx.errors import BackendComputeError, InvalidInputError
+from tabctx.labels import regression_hint
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
 # Set (per thread) while loads_payload unpickles: tabicl's __setstate__
@@ -360,6 +361,12 @@ class TabICLBackend(QuiescedMeasurement):
         try:
             with device_scope(self._device), fast:
                 model.fit(X, y)
+        except ValueError as e:
+            # tabicl's input checks (e.g. continuous labels for a
+            # classifier) raise before device work: bad input, not a fault.
+            raise InvalidInputError(
+                f"tabicl rejected the training table: {e}{regression_hint(y, task)}"
+            ) from e
         finally:
             model.kv_cache = kv_cache
         return _PreparedFit(task, model)

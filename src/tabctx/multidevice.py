@@ -54,6 +54,7 @@ from typing import Protocol
 from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
+from tabctx.labels import resolve_task
 from tabctx.placement import (
     DeviceView,
     FitRequest,
@@ -101,7 +102,7 @@ class Shard(Protocol):
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
         feature_names: list[str] | None = None,
@@ -261,7 +262,7 @@ class MultiDeviceEngine:
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
         feature_names: list[str] | None = None,
@@ -272,7 +273,7 @@ class MultiDeviceEngine:
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task,
+        task: Task | None,
         dataset_id: str | None,
         backend: str | None,
         feature_names: list[str] | None,
@@ -281,6 +282,7 @@ class MultiDeviceEngine:
         """fit(); `announce` emits residency events (not for fit_predict's
         throwaway contexts, which would flood subscribers)."""
         n_features = _validate_fit_input(X, y)
+        task = resolve_task(y, task)
         name = self._shards[0].resolve_backend_name(backend)
         request = FitRequest(len(X), n_features, name, dataset_id)
         if dataset_id is None:
@@ -367,7 +369,7 @@ class MultiDeviceEngine:
         X: ArrayLike,
         y: ArrayLike,
         X_test: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         return_proba: bool = False,
     ) -> PredictOutcome:
         dataset_id = self._fit(X, y, task, None, None, None, announce=False)

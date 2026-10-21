@@ -612,7 +612,7 @@ class ProcessShard:
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
         feature_names: list[str] | None = None,

@@ -46,6 +46,7 @@ from tabctx import (
 )
 from tabctx.batching import CoalescingPredictor
 from tabctx.events import RecentEvents
+from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
@@ -82,11 +83,20 @@ class GpuMemory(BaseModel):
     reserved_mb: float
 
 
+_TASK_DOC = (
+    "classification or regression. Omit it to infer from train_y: non-integer "
+    "numbers mean regression, anything else (text, integer class codes) "
+    "classification."
+)
+
+
 class LegacyPredictRequest(BaseModel):
     train_X: list[list[float]]
     train_y: list[float | str]
     test_X: list[list[float]]
-    task: Literal["classification", "regression"] = "classification"
+    task: Literal["classification", "regression"] | None = Field(
+        default=None, description=_TASK_DOC
+    )
     return_proba: bool = False
 
 
@@ -117,7 +127,9 @@ class FitRequest(BaseModel):
     # of a CSV whose columns are features plus one target column.
     train_upload_id: str | None = None
     target_column: str | None = None  # default: the CSV's last column
-    task: Literal["classification", "regression"] = "classification"
+    task: Literal["classification", "regression"] | None = Field(
+        default=None, description=_TASK_DOC
+    )
     dataset_id: str | None = None
     # Which model serves this dataset (chat-completions style): an exact
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
@@ -134,6 +146,9 @@ class UploadResponse(BaseModel):
 class FitResponse(BaseModel):
     dataset_id: str
     model: str
+    task: Literal["classification", "regression"] = Field(
+        description="The task the context was fit for: the request's, or inferred."
+    )
     n_train: int
     n_features: int
     # Which replica served this -- lets clients and probes verify that
@@ -408,6 +423,7 @@ class TabctxService:
         try:
             tenant_id = resolve_tenant_id(headers)
             X, y, feature_names = self._resolve_train_table(req, tenant_id)
+            task = resolve_task(y, req.task)
             n_train = len(X)
             n_features = len(X[0]) if n_train else 0
             # The caller-visible dataset_id: header/body reconciliation
@@ -426,7 +442,7 @@ class TabctxService:
             self._engine.fit(
                 X,
                 y,
-                task=req.task,
+                task=task,
                 dataset_id=scoped_id,
                 backend=model_id,
                 feature_names=feature_names,
@@ -443,6 +459,7 @@ class TabctxService:
         return FitResponse(
             dataset_id=dataset_id,
             model=model_id,
+            task=task,
             n_train=n_train,
             n_features=n_features,
             served_by=_replica_tag(),

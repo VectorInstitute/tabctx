@@ -13,7 +13,8 @@ transport, not a general CSV ingester):
   in float32/16 internally anyway).
 - For training CSVs, one column is the target (``target_column``, or the
   LAST column when unspecified). Target values parse as strings for
-  classification and floats for regression.
+  classification and floats for regression; with no task given, the
+  values decide (labels.infer_task).
 - No quoted fields containing commas (numpy's C parser; numeric tables
   don't need them).
 
@@ -28,6 +29,7 @@ from pathlib import Path
 import numpy as np
 
 from tabctx.errors import InvalidInputError
+from tabctx.labels import infer_task
 from tabctx.types import Task
 
 
@@ -56,8 +58,18 @@ def _load_float_columns(path: Path, usecols: list[int], what: str) -> np.ndarray
     return arr
 
 
+def _read_text_column(path: Path, index: int) -> list[str]:
+    try:
+        arr = np.loadtxt(
+            path, delimiter=",", skiprows=1, usecols=[index], dtype=str, ndmin=2
+        )
+    except ValueError as e:
+        raise InvalidInputError(f"train target: unreadable CSV column ({e})") from e
+    return [str(v).strip() for v in arr[:, 0]]
+
+
 def parse_train_csv(
-    path: Path, task: Task, target_column: str | None = None
+    path: Path, task: Task | None, target_column: str | None = None
 ) -> tuple[np.ndarray, list, list[str]]:
     """Returns (X float32 2D, y list, feature_names)."""
     header = _read_header(path)
@@ -77,22 +89,16 @@ def parse_train_csv(
 
     X = _load_float_columns(path, feature_idx, "train features")
 
-    if task == "regression":
+    y: list
+    if task is None:
+        y = _read_text_column(path, target_idx)
+        if infer_task(y) == "regression":
+            y = [float(v) for v in y]
+    elif task == "regression":
         y_arr = _load_float_columns(path, [target_idx], "train target")
-        y: list = [float(v) for v in y_arr[:, 0]]
+        y = [float(v) for v in y_arr[:, 0]]
     else:
-        try:
-            y_arr = np.loadtxt(
-                path,
-                delimiter=",",
-                skiprows=1,
-                usecols=[target_idx],
-                dtype=str,
-                ndmin=2,
-            )
-        except ValueError as e:
-            raise InvalidInputError(f"train target: unreadable CSV column ({e})") from e
-        y = [str(v).strip() for v in y_arr[:, 0]]
+        y = _read_text_column(path, target_idx)
 
     if len(y) != X.shape[0]:  # pragma: no cover
         # Defensive: X and y are parsed independently (same file, same
