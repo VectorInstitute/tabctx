@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tabctx"
-version = "0.14.0"
+version = "0.14.1"
 description = "Serving engine for tabular foundation models (TabICL, TabPFN): fit a table once, keep its encoded context on the GPU, and serve fast repeat predictions to many tenants, with memory-aware admission and multi-GPU placement."
 readme = "README.md"
 license = "Apache-2.0"
