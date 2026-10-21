@@ -19,6 +19,7 @@ which merges them into the caller's.
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -39,7 +40,7 @@ class Timings:
         if n:
             self.counts[name] = self.counts.get(name, 0) + n
 
-    def merge(self, other: Mapping[str, float]) -> None:
+    def merge(self, other: Mapping[str, float | int]) -> None:
         """Fold in a breakdown as as_dict() produced it (from a worker)."""
         for key, value in other.items():
             if key.startswith("n_"):
@@ -47,9 +48,9 @@ class Timings:
             else:
                 self.ms[key] = self.ms.get(key, 0.0) + float(value)
 
-    def as_dict(self) -> dict[str, float]:
+    def as_dict(self) -> dict[str, float | int]:
         """Phases in ms (rounded) and counters as ``n_<name>``."""
-        out: dict[str, float] = {k: round(v, 1) for k, v in self.ms.items()}
+        out: dict[str, float | int] = {k: round(v, 1) for k, v in self.ms.items()}
         out.update({f"n_{k}": v for k, v in self.counts.items()})
         return out
 
@@ -93,13 +94,14 @@ def count(name: str, n: int = 1) -> None:
 
 
 def compiled_graphs() -> int:
-    """Graphs torch.compile has built in this process so far (0 without
-    torch). Process-wide, so concurrent calls in one process share it."""
-    try:
-        from torch._dynamo.utils import counters
-    except ImportError:
+    """Graphs torch.compile has built in this process so far. Process-wide,
+    so concurrent calls in one process share it. Read only if dynamo is
+    already loaded -- nothing has compiled otherwise -- so timing never
+    pays dynamo's import inside a request."""
+    utils = sys.modules.get("torch._dynamo.utils")
+    if utils is None:
         return 0
-    return int(counters["stats"]["unique_graphs"])
+    return int(utils.counters["stats"]["unique_graphs"])
 
 
 @contextmanager

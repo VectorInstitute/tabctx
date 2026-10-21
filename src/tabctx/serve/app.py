@@ -91,8 +91,10 @@ _TIMINGS_DOC = (
     "Where this request's time went on the server, in ms per phase (waits "
     "for placement, host memory or the device; preprocessing; making room; "
     "restoring a spilled context; device work), plus counts as n_<name> "
-    "(e.g. n_graphs_compiled). Phases can overlap; diagnostic, and its keys "
-    "may change."
+    "(e.g. n_graphs_compiled, which counts the whole worker process, so "
+    "concurrent requests can share it). Phases nest and overlap (worker_call "
+    "contains the worker's phases); coalesced predicts report their batch's "
+    "breakdown. Diagnostic: keys may change."
 )
 
 _TASK_DOC = (
@@ -167,13 +169,15 @@ class FitResponse(BaseModel):
     task: Literal["classification", "regression"] = Field(
         description="The task the context was fit for: the request's, or inferred."
     )
-    timings_ms: dict[str, float] | None = Field(default=None, description=_TIMINGS_DOC)
     n_train: int
     n_features: int
     # Which replica served this -- lets clients and probes verify that
     # session affinity actually pinned fit() and later predict() calls to
     # the same replica (the multi-replica correctness contract).
     served_by: str | None = None
+    timings_ms: dict[str, float | int] | None = Field(
+        default=None, description=_TIMINGS_DOC
+    )
 
 
 class TabctxPredictRequest(BaseModel):
@@ -189,13 +193,15 @@ class TabctxPredictRequest(BaseModel):
 
 
 class TabctxPredictResponse(BaseModel):
-    timings_ms: dict[str, float] | None = Field(default=None, description=_TIMINGS_DOC)
     predictions: list = Field(description=_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
     n_test: int
     latency_ms: float
     served_by: str | None = None
+    timings_ms: dict[str, float | int] | None = Field(
+        default=None, description=_TIMINGS_DOC
+    )
 
 
 _AUTH_ERRORS = (TenantRequiredError,)

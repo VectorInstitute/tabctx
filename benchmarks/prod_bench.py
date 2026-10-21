@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import statistics
@@ -50,6 +51,7 @@ LATENCY_SHAPES = (
     (5_000, 500),
 )
 STALL_S = 5.0
+MAX_RATE_LIMIT_RETRIES = 20
 
 
 class Client:
@@ -61,19 +63,28 @@ class Client:
             headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout_s
         )
         self.rate_limited = 0
+        self._lock = threading.Lock()
 
     def _post(self, path: str, body: dict) -> tuple[int, dict, float]:
-        while True:
+        """(status, body, seconds). A network error is status 0, so it is
+        counted rather than ending the calling thread; a 429 waits out the
+        gateway's Retry-After and tries again, up to MAX_RATE_LIMIT_RETRIES."""
+        for _ in range(MAX_RATE_LIMIT_RETRIES):
             t0 = time.monotonic()
-            r = self._http.post(self._base + path, json=body)
+            try:
+                r = self._http.post(self._base + path, json=body)
+            except httpx.HTTPError as e:
+                return 0, {"detail": f"{type(e).__name__}: {e}"}, time.monotonic() - t0
             elapsed = time.monotonic() - t0
             if r.status_code != 429:
                 try:
                     return r.status_code, r.json(), elapsed
                 except ValueError:
                     return r.status_code, {"detail": r.text[:200]}, elapsed
-            self.rate_limited += 1
-            time.sleep(float(r.headers.get("retry-after", 5)))
+            with self._lock:
+                self.rate_limited += 1
+            time.sleep(_retry_after_s(r.headers.get("retry-after")))
+        return 429, {"detail": "still rate limited after retries"}, 0.0
 
     def fit(
         self, model: str, dataset_id: str, X: np.ndarray, y: list
@@ -96,6 +107,16 @@ class Client:
         )
 
 
+def _retry_after_s(header: str | None) -> float:
+    """Seconds to wait from a Retry-After header (seconds form; anything
+    else, such as the HTTP-date form, gets the default), kept to [1, 30]."""
+    try:
+        seconds = float(header) if header is not None else 5.0
+    except ValueError:
+        seconds = 5.0
+    return min(max(seconds, 1.0), 30.0)
+
+
 def table(
     rng: np.random.Generator, rows: int, features: int
 ) -> tuple[np.ndarray, list[str]]:
@@ -110,7 +131,7 @@ def summarize(seconds: list[float]) -> dict:
     return {
         "n": len(xs),
         "p50_s": round(statistics.median(xs), 3),
-        "p95_s": round(xs[min(len(xs) - 1, int(0.95 * len(xs)))], 3),
+        "p95_s": round(xs[math.ceil(0.95 * len(xs)) - 1], 3),  # nearest rank
         "max_s": round(xs[-1], 3),
         "over_stall": sum(x > STALL_S for x in xs),
     }
@@ -154,6 +175,8 @@ class GpuPoller:
 
     def __exit__(self, *exc) -> None:
         self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
 
     def summary(self) -> dict | None:
         if not self.samples:
@@ -227,7 +250,12 @@ def phase_latency(client: Client, tag: str, rng: np.random.Generator) -> dict:
                     round(fit_s, 3) if status == 200 else f"{status}: {body}"
                 )
             predicts = [client.predict(model, ds, Xt) for _ in range(3)]
-            point["predict_p50_s"] = round(statistics.median(p[2] for p in predicts), 3)
+            ok = [p[2] for p in predicts if p[0] == 200]
+            point["predict_p50_s"] = (
+                round(statistics.median(ok), 3)
+                if ok
+                else f"{predicts[0][0]}: {predicts[0][1]}"
+            )
             out[f"{model} {rows}x{features}"] = point
             print(f"latency {model:11s} {rows:>6}x{features:<4} {point}", flush=True)
     out["slowest"] = slowest.as_list()
@@ -282,7 +310,11 @@ def phase_throughput(
     tables = [(m, f"bench-{tag}-tp-{m}-{i}") for i in range(4) for m in MODELS]
     for model, ds in tables:
         X, y = table(rng, 10_000, 100)
-        client.fit(model, ds, X, y)
+        status, body, _ = client.fit(model, ds, X, y)
+        if status != 200:
+            raise RuntimeError(
+                f"throughput setup: fit {model} {ds} got {status}: {body}"
+            )
     tests = [rng.normal(size=(1_000, 100)).round(3) for _ in range(4)]
     tally = Tally()
     stop = time.monotonic() + duration_s
@@ -295,13 +327,15 @@ def phase_throughput(
                 "predict", model, *client.predict(model, ds, tests[rnd.randrange(4)])
             )
 
+    started = time.monotonic()
     with poller:
         ts = [threading.Thread(target=worker, args=(i,)) for i in range(threads_n)]
         [t.start() for t in ts]
         [t.join() for t in ts]
+    wall_s = time.monotonic() - started
     out = {
         m: summarize(tally.seconds[m])
-        | {"per_min": round(len(tally.seconds[m]) / duration_s * 60, 1)}
+        | {"per_min": round(len(tally.seconds[m]) / wall_s * 60, 1)}
         for m in MODELS
     } | {
         "n_errors": len(tally.errors),

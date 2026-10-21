@@ -542,7 +542,10 @@ class ProcessShard:
             self._forget(req_id)
             raise
         try:
-            result, timings = fut.result(timeout_s)
+            # Everything between the router and the worker's own phases:
+            # pickling, the pipe, the worker's thread pool queue.
+            with timing.phase("worker_call"):
+                result, timings = fut.result(timeout_s)
         except FutureTimeoutError:
             self._forget(req_id)
             raise TimeoutError(

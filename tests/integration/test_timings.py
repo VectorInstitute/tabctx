@@ -28,3 +28,4 @@ def test_fit_and_predict_report_where_their_time_went(two_replica_service):
     ).json()
     assert {"read_table", "wait_device", "predict_device"} <= set(predict["timings_ms"])
     assert predict["timings_ms"]["n_predict_chunks"] == 1
+    assert isinstance(predict["timings_ms"]["n_predict_chunks"], int)

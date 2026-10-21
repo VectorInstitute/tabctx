@@ -11,7 +11,7 @@ export TABCTX_SPILL_CAPACITY_BYTES="${TABCTX_SPILL_CAPACITY_BYTES:-53687091200}"
 export TABPFN_MODEL_VERSION="${TABPFN_MODEL_VERSION:-v3.5}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-6}"
 export RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1
-mkdir -p out
+mkdir -p out "$(dirname "$OUT")"
 rm -rf "$TABCTX_SPILL_DIR"
 ray stop --force >/dev/null 2>&1 || true
 ray start --head --disable-usage-stats --include-dashboard=true --dashboard-host=127.0.0.1 >/dev/null

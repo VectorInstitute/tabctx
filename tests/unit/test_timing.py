@@ -1,6 +1,7 @@
 """Per-request timing breakdowns (tabctx/timing.py) and where they're
 recorded: the engine's phases, and across worker processes."""
 
+import threading
 import time
 
 import pytest
@@ -96,8 +97,7 @@ def test_worker_process_breakdowns_reach_the_caller(tmp_path):
         built.close()
 
 
-@pytest.mark.parametrize("phase_name", ["restore"])
-def test_a_predict_of_a_spilled_context_records_its_restore(tmp_path, phase_name):
+def test_a_predict_of_a_spilled_context_records_its_restore(tmp_path):
     from tabctx.backends.fake import FakeBackend
     from tabctx.cache.manager import ContextCacheManager
     from tabctx.cache.spill import DiskSpillStore
@@ -119,4 +119,56 @@ def test_a_predict_of_a_spilled_context_records_its_restore(tmp_path, phase_name
     with timing.collect() as t:
         engine.predict(ds, X[:2])
     out = t.as_dict()
-    assert phase_name in out and out["n_restores"] == 1
+    assert "restore" in out and out["n_restores"] == 1
+
+
+def test_coalesced_predicts_each_report_their_batch_breakdown():
+    from tabctx.batching import CoalescingPredictor
+
+    engine = _engine()
+    X, y = [[float(i), 1.0] for i in range(20)], ["a", "b"] * 10
+    ds = engine.fit(X, y)
+    predictor = CoalescingPredictor(engine, window_s=0.2)
+    results: list[dict] = [{}, {}]
+
+    def call(i: int) -> None:
+        with timing.collect() as t:
+            predictor.predict(ds, X[:2])
+        results[i] = t.as_dict()
+
+    threads = [threading.Thread(target=call, args=(i,)) for i in range(2)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert predictor.engine_calls == 1  # really one merged call
+    for out in results:
+        assert "predict_device" in out and "coalesce_wait" in out
+        assert out["n_batched_with"] == 2
+
+
+def test_a_fit_that_fails_mid_phase_releases_the_device():
+    from tabctx.backends.fake import FakeBackend
+    from tabctx.cache.manager import ContextCacheManager
+    from tabctx.engine import TabctxEngine
+    from tabctx.memory.calibration_data import A100_40GB_TABICL_CALIBRATION
+    from tabctx.memory.estimator import PowerLawMemoryEstimator
+
+    class FailsOnce(FakeBackend):
+        failed = False
+
+        def fit(self, X, y, task):
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("boom")
+            return super().fit(X, y, task)
+
+    engine = TabctxEngine(
+        backend=FailsOnce(),
+        cache=ContextCacheManager(capacity_bytes=200_000_000),
+        estimator=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION),
+    )
+    X, y = [[float(i), 1.0] for i in range(20)], ["a", "b"] * 10
+    with timing.collect(), pytest.raises(RuntimeError, match="boom"):
+        engine.fit(X, y)
+    done = threading.Event()
+    threading.Thread(target=lambda: (engine.fit(X, y), done.set()), daemon=True).start()
+    assert done.wait(10), "the failed fit left the device lock held"
