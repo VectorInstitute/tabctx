@@ -65,6 +65,11 @@ Environment variables:
   host-bound, so threads contend for the GIL: measured on 4x A100, four
   concurrent fits took 2x as long each from threads, single-GPU time
   from processes.
+- ``TABCTX_COMPILE``: ``1`` (default) compiles TabICL's attention blocks
+  at warmup. ``TABCTX_COMPILE_AFTER_WARMUP``: ``0`` (default) runs call
+  shapes warmup didn't cover eagerly; ``1`` compiles them inside the
+  requests that hit them (5-25 s per graph family on an A100, ~4x on an
+  A40; see backends/tabicl_compile.py).
 """
 
 from __future__ import annotations
@@ -117,6 +122,7 @@ UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
 WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
+COMPILE_AFTER_WARMUP_ENV_VAR = "TABCTX_COMPILE_AFTER_WARMUP"
 FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
 
 logger = logging.getLogger(__name__)
@@ -148,6 +154,10 @@ class ServeSettings:
     # torch.compile the models' hot blocks where measured to help (TabICL's
     # attention blocks: backends/tabicl_compile.py).
     compile_models: bool = True
+    # Compile graphs for call shapes warmup didn't cover, inside the
+    # requests that hit them, instead of running those eagerly (see
+    # tabicl_compile.stop_compiling_new_graphs).
+    compile_after_warmup: bool = False
     # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
     # (backends/yeo_johnson.py).
     fast_preprocessing: bool = True
@@ -241,6 +251,9 @@ class ServeSettings:
             offload_dir=offload_dir,
             worker_processes=_env_flag(WORKER_PROCESSES_ENV_VAR, cls.worker_processes),
             compile_models=_env_flag(COMPILE_ENV_VAR, cls.compile_models),
+            compile_after_warmup=_env_flag(
+                COMPILE_AFTER_WARMUP_ENV_VAR, cls.compile_after_warmup
+            ),
             fast_preprocessing=_env_flag(
                 FAST_PREPROCESSING_ENV_VAR, cls.fast_preprocessing
             ),
@@ -574,6 +587,7 @@ def _build_real_backend(
             cpu_safety_factor=0.6 / host_slots,
             compile_blocks=settings.compile_models,
             fast_preprocessing=settings.fast_preprocessing,
+            compile_after_warmup=settings.compile_after_warmup,
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.

@@ -115,3 +115,25 @@ def test_new_graphs_compile_on_a_serving_thread_past_dynamo_default_limit():
     thread.join()
     assert counters["stats"]["unique_graphs"] == graphs + 1
     dynamo.reset()
+
+
+def test_after_warmup_uncovered_shapes_run_eagerly_instead_of_compiling():
+    from torch._dynamo import eval_frame
+
+    from tabctx.backends.tabicl_compile import stop_compiling_new_graphs
+
+    before = eval_frame._stance.stance
+    try:
+        assert stop_compiling_new_graphs() is True
+        assert eval_frame._stance.stance == "eager_on_recompile"
+    finally:
+        torch.compiler.set_stance(before)
+
+
+def test_compile_after_warmup_is_off_unless_asked(monkeypatch):
+    from tabctx.serve.factory import COMPILE_AFTER_WARMUP_ENV_VAR, ServeSettings
+
+    monkeypatch.delenv(COMPILE_AFTER_WARMUP_ENV_VAR, raising=False)
+    assert ServeSettings.from_env().compile_after_warmup is False
+    monkeypatch.setenv(COMPILE_AFTER_WARMUP_ENV_VAR, "1")
+    assert ServeSettings.from_env().compile_after_warmup is True

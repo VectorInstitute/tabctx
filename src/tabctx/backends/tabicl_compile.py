@@ -27,11 +27,15 @@ cached vs uncached, size-1 dimensions, ...). Only tabicl's fp16 autocast
 path (tables of 1,024+ rows) is compiled: smaller tables run in fp32 in
 ~0.1 s and would double the graphs. ~50 graphs compile in the backend's
 warmup at replica start (~130 s per worker on an A100, workers in
-parallel; Inductor's cache barely shortens it, tracing dominates). Calls
-warmup doesn't cover still compile inside a request, once per worker:
-tables of ~30k rows hand the blocks differently strided inputs (1-7 more
-graphs, 5-25 s on an A100 for the first such fit, 10,000 x 500 one more),
-and other unusual shapes may too.
+parallel; Inductor's cache barely shortens it, tracing dominates).
+
+After warmup nothing compiles inside a request (stop_compiling_new_graphs):
+a call no warmed graph fits runs eagerly. Families warmup can't foresee
+remain -- tables of ~20k+ rows hand the blocks differently strided inputs,
+regression predicts of 1,024+ rows take the fp16 path, and calls
+overlapping on one worker produce variants -- and compiling them in
+requests cost 45-200 s fits on prod's A40s. TABCTX_COMPILE_AFTER_WARMUP=1
+restores compiling them.
 
 Failure. Compilation errors fall back to eager (dynamo's suppress_errors),
 so a missing compiler toolchain costs speed, not availability.
@@ -127,6 +131,28 @@ def compile_settings(devices: int) -> dict[str, Any]:
         "accumulated_recompile_limit": max(config.accumulated_recompile_limit, limit),
         "suppress_errors": True,
     }
+
+
+def stop_compiling_new_graphs() -> bool:
+    """After warmup: run calls that no compiled graph fits eagerly instead
+    of compiling one inside the request (torch.compiler stance
+    "eager_on_recompile", process-wide). A compile costs 5-25 s per graph
+    family on an A100 and ~4x that on an A40, and a request can need
+    several (larger tables, other predict sizes, overlapping calls); on
+    prod that was 45-200 s fits under light load, holding the device so
+    other models' calls waited too (tabctx 0.14 timings_ms). Eager for a
+    family warmup missed costs ~1.5-2x its compiled time instead. Returns
+    False on a torch without stances (compiling continues as before)."""
+    try:
+        import torch
+    except ImportError:
+        return False
+    set_stance = getattr(getattr(torch, "compiler", None), "set_stance", None)
+    if set_stance is None:
+        return False
+    set_stance("eager_on_recompile")
+    logger.info("tabicl: warmup done; uncovered call shapes run eagerly from now on")
+    return True
 
 
 def warn_if_not_compiled() -> bool:

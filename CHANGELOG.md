@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **TabICL compiled new graphs inside requests** (#47): call shapes warmup didn't cover -- tables of ~20k+ rows (differently strided inputs), 1,024+-row regression predicts, and variants that overlapping calls on one worker produce -- each compiled 1-7 graphs inside the request that hit them, 5-25 s on an A100 and ~4x that on prod's A40s, holding the device so other models' calls waited too. On prod, a 5,000 x 500 TabICL fit compiled 3 graphs on every call (25.8 s, `timings_ms` from 0.14.0). After warmup, a call no compiled graph fits now runs eagerly instead (`torch.compiler.set_stance("eager_on_recompile")`, process-wide, via `tabicl_compile.stop_compiling_new_graphs`). On an A100: a first 20,000 x 100 fit 12.5 s -> 3.0 s, a first 1,000-row regression predict 1.8 s -> 0.14 s; eager costs ~30% on those families once a compile would have been paid (20,000 x 100 2.3 s compiled vs 2.9 s eager). `TABCTX_COMPILE_AFTER_WARMUP=1` restores compiling them.
+### Added
+- `prod_bench.py --log-calls` saves every call with its `timings_ms`, for timelines of where stalls go.
 
 ## [0.14.0] - 2026-10-21
 ### Added
