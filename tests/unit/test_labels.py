@@ -136,3 +136,69 @@ def test_engine_fits_the_inferred_task_when_none_is_given():
     assert engine.predict(reg, X[:2], return_proba=True).classes is None  # regression
     clf = engine.fit(X, [i % 2 for i in range(10)])
     assert engine.predict(clf, X[:2], return_proba=True).classes == ["0", "1"]
+
+
+def test_whole_number_quantities_are_inferred_as_regression():
+    from tabctx.labels import MAX_INFERRED_CLASSES
+
+    prices = [208500, 181500, 223500, 140000] * 10 + list(range(100, 200))
+    assert infer_task(prices) == "regression"
+    codes = list(range(MAX_INFERRED_CLASSES)) * 3  # many classes, still codes
+    assert infer_task(codes) == "classification"
+    states = [i % 50 for i in range(1000)]  # 50 codes, each seen ~20 times
+    assert infer_task(states) == "classification"
+    assert infer_task(list(range(MAX_INFERRED_CLASSES + 1))) == "regression"
+    # An explicit classification of whole numbers is the caller's call.
+    assert resolve_task(prices, "classification") == "classification"
+
+
+def test_tabicl_reports_its_class_limit_instead_of_failing_the_cache_build(
+    monkeypatch,
+):
+    pytest.importorskip("torch")
+    from types import SimpleNamespace
+
+    from tabctx.backends.tabicl import TabICLBackend
+
+    class ManyClasses:
+        kv_cache = True
+        n_classes_ = 573
+        model_ = SimpleNamespace(max_classes=10)
+
+        def fit(self, X, y):
+            return self
+
+    backend = TabICLBackend.__new__(TabICLBackend)
+    backend._device = "cpu"
+    backend._fast_preprocessing = False
+    monkeypatch.setattr(
+        backend, "_make_estimator", lambda task: ManyClasses(), raising=False
+    )
+    with pytest.raises(InvalidInputError, match="at most 10 classes.*TabPFN: 160"):
+        backend.prepare_fit([[1.0]] * 3, ["a", "b", "c"], "classification")
+
+
+def test_tabicl_rejects_too_many_classes_before_preprocessing(monkeypatch):
+    pytest.importorskip("torch")
+    from types import SimpleNamespace
+
+    from tabctx.backends.tabicl import TabICLBackend
+
+    class Loaded:
+        kv_cache = True
+        model_ = SimpleNamespace(max_classes=10)
+
+        def fit(self, X, y):
+            raise AssertionError("preprocessing ran for a table it must reject")
+
+    backend = TabICLBackend.__new__(TabICLBackend)
+    backend._device = "cpu"
+    backend._fast_preprocessing = False
+    monkeypatch.setattr(
+        backend, "_make_estimator", lambda task: Loaded(), raising=False
+    )
+    labels = [f"c{i}" for i in range(15)]
+    with pytest.raises(
+        InvalidInputError, match="at most 10 classes and this table has 15"
+    ):
+        backend.prepare_fit([[1.0]] * 15, labels, "classification")

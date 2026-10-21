@@ -32,7 +32,7 @@ Changelog = "https://github.com/VectorInstitute/tabctx/blob/main/CHANGELOG.md"
 Roadmap = "https://github.com/VectorInstitute/tabctx/blob/main/ROADMAP.md"
 
 [project.optional-dependencies]
-tabicl = ["tabicl", "torch"]
+tabicl = ["tabicl>=2.2.0", "torch"]
 # TabPFN v8+ weights are license-gated by PriorLabs: register at
 # https://ux.priorlabs.ai, accept the license, export TABPFN_TOKEN.
 tabpfn = ["tabpfn", "torch"]

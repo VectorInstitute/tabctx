@@ -64,10 +64,27 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.types import ArrayLike, PredictOutcome
+
+
+def _concat_rows(tables: list[ArrayLike]) -> ArrayLike:
+    """Members' test rows as one table: one array when every member sent
+    a 2-D array of the same width (the serving layer's form), else a list
+    of rows -- a mismatched member then fails the merged call and is
+    retried alone."""
+    if all(isinstance(t, np.ndarray) and t.ndim == 2 for t in tables) and (
+        len({t.shape[1] for t in tables}) == 1
+    ):
+        return np.concatenate(tables)
+    merged: list = []
+    for t in tables:
+        merged.extend(t)
+    return merged
 
 
 @dataclass
@@ -160,9 +177,7 @@ class CoalescingPredictor:
             self._execute_individually(dataset_id, return_proba, members)
             return
 
-        merged: list = []
-        for m in members:
-            merged.extend(m.X_test)
+        merged = _concat_rows([m.X_test for m in members])
         try:
             with self._lock:
                 self.engine_calls += 1

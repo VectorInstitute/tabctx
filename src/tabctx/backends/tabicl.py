@@ -111,6 +111,21 @@ class _PreparedFit:
     model: Any
 
 
+def _check_cacheable_classes(
+    limit: int | None, n_classes: int, task: Task, y: ArrayLike
+) -> None:
+    """tabicl serves more classes than the model's native limit (10) with
+    several forward passes per predict, which its kv cache can't hold, so
+    a cached context is limited to that many. Says so before the cache
+    build fails with a bare ValueError (a 500)."""
+    if limit is not None and n_classes > limit:
+        raise InvalidInputError(
+            f"TabICL serves at most {limit} classes and this table has "
+            f"{n_classes}; use a model that supports more (TabPFN: 160)"
+            f"{regression_hint(y, task)}"
+        )
+
+
 def _build_cache(model: Any) -> None:
     """tabicl's fit() from the kv-cache step on (it follows the ensemble's
     preprocessing in both TabICLClassifier and TabICLRegressor): pick the
@@ -317,6 +332,18 @@ class TabICLBackend(QuiescedMeasurement):
             est._load_model = lambda: None
         return est
 
+    def _check_class_count(self, task: Task, y: ArrayLike, model: Any) -> None:
+        """The class limit, checked before preprocessing when the model is
+        already loaded (it is after warmup), so a table with hundreds of
+        classes is rejected at once rather than after its ensemble's
+        preprocessing; prepare_fit checks again after fit, once tabicl
+        has counted the classes itself."""
+        if task != "classification" or not model.kv_cache:
+            return
+        limit = getattr(getattr(model, "model_", None), "max_classes", None)
+        n_classes = len(np.unique(np.asarray(y).astype(str)))
+        _check_cacheable_classes(limit, n_classes, task, y)
+
     def _stash_backbone(self, task: Task, model: Any) -> None:
         if task in self._shared_backbones:
             return
@@ -346,6 +373,7 @@ class TabICLBackend(QuiescedMeasurement):
         # backends/base.py), but the underlying pretrained nn.Module is
         # shared across fits after the first (see __init__).
         model = self._make_estimator(task)
+        self._check_class_count(task, y, model)
         kv_cache = model.kv_cache
         model.kv_cache = False
         # With fast_preprocessing, power transforms fit on this backend's GPU
@@ -374,6 +402,14 @@ class TabICLBackend(QuiescedMeasurement):
             ) from e
         finally:
             model.kv_cache = kv_cache
+        n_classes = getattr(model, "n_classes_", None)
+        if task == "classification" and kv_cache and n_classes is not None:
+            _check_cacheable_classes(
+                getattr(getattr(model, "model_", None), "max_classes", None),
+                n_classes,
+                task,
+                y,
+            )
         return _PreparedFit(task, model)
 
     def fit_prepared(self, prepared: _PreparedFit) -> Any:

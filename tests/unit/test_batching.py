@@ -231,3 +231,26 @@ class TestFailureIsolation:
         messages = {str(e) for e in outcomes.values()}
         assert "bug in coalescing internals" in messages  # the leader's own error
         assert any("batch leader failed" in m for m in messages)  # follower's
+
+
+class TestConcatRows:
+    def test_same_width_arrays_stay_one_array(self):
+        import numpy as np
+
+        from tabctx.batching import _concat_rows
+
+        merged = _concat_rows([np.ones((2, 3)), np.full((1, 3), np.nan)])
+        assert isinstance(merged, np.ndarray) and merged.shape == (3, 3)
+        assert np.isnan(merged[2]).all()
+
+    def test_mixed_forms_or_widths_fall_back_to_rows(self):
+        import numpy as np
+
+        from tabctx.batching import _concat_rows
+
+        assert _concat_rows([[[1.0, 2.0]], np.ones((1, 2))]) == [
+            [1.0, 2.0],
+            pytest.approx(np.ones(2)),
+        ]
+        merged = _concat_rows([np.ones((1, 2)), np.ones((1, 3))])
+        assert isinstance(merged, list) and len(merged) == 2

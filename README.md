@@ -137,8 +137,10 @@ estimator = AdaptiveMemoryEstimator(fallback=PowerLawMemoryEstimator(A100_40GB_T
 cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
 engine = TabctxEngine(backend=TabICLBackend(), cache=cache, estimator=estimator)
 
-# task is inferred from y_train when omitted (non-integer numbers mean
-# regression); pass task="classification" or "regression" to be explicit.
+# task is inferred from y_train when omitted (non-integer numbers, or many
+# distinct whole numbers such as prices, mean regression); pass
+# task="classification" or "regression" to be explicit. Missing values
+# (NaN, or null in JSON) are fine: both models handle them.
 dataset_id = engine.fit(X_train, y_train)
 result = engine.predict(dataset_id, X_test, return_proba=True)
 
@@ -491,7 +493,8 @@ for classification, R² for regression; training sets capped at 10,000 rows.
 | Ames house prices (R²) | 1,168 × 79 | 0.857 | 0.824 | 0.917 |
 
 Categorical columns were sent as integer codes and missing numbers as the
-training median, since fit and predict take numbers only. Regression needs
+training median (prod ran 0.13.0, which takes numbers only; from 0.14 a
+missing cell can be sent as `null`). Regression needs
 `"task": "regression"` on fit.
 
 ## Status & Roadmap

@@ -45,6 +45,43 @@ class TestParseTrainCsv:
         p = _write(tmp_path, "f0,label\n1,cat\n2,dog\n", name="text.csv")
         assert parse_train_csv(p, None)[1] == ["cat", "dog"]
 
+    def test_missing_feature_values_become_nan(self, tmp_path):
+        p = _write(tmp_path, "f0,f1,f2,label\n1,,NA,x\nnull, n/a ,2,y\n3,NaN,None,x\n")
+        X, y, _ = parse_train_csv(p, "classification")
+        assert np.isnan(X).tolist() == [
+            [False, True, True],
+            [True, True, False],
+            [False, True, True],
+        ]
+        assert X[0, 0] == 1.0 and X[1, 2] == 2.0
+        assert y == ["x", "y", "x"]
+
+    def test_text_that_is_not_a_missing_value_is_still_rejected(self, tmp_path):
+        p = _write(tmp_path, "f0,label\n1,x\nabc,y\n")
+        with pytest.raises(InvalidInputError, match="non-numeric"):
+            parse_train_csv(p, "classification")
+
+    def test_a_blank_label_is_rejected(self, tmp_path):
+        p = _write(tmp_path, "f0,label\n1,x\n2,\n")
+        with pytest.raises(InvalidInputError, match="row 2 has no label"):
+            parse_train_csv(p, "classification")
+
+    def test_na_in_a_numeric_target_column_is_a_missing_label(self, tmp_path):
+        p = _write(tmp_path, "f0,y\n1,2.5\n2,NA\n3,1.5\n")
+        with pytest.raises(InvalidInputError, match="row 2 has no label"):
+            parse_train_csv(p, None)
+
+    def test_na_among_text_classes_is_a_class(self, tmp_path):
+        p = _write(tmp_path, "f0,label\n1,cat\n2,NA\n3,dog\n")
+        assert parse_train_csv(p, None)[1] == ["cat", "NA", "dog"]
+
+    def test_missing_test_values_become_nan(self, tmp_path):
+        p = _write(tmp_path, "f0,f1\n,1\n2,NA\n")
+        assert np.isnan(parse_features_csv(p)).tolist() == [
+            [True, False],
+            [False, True],
+        ]
+
     def test_missing_target_column_rejected(self, tmp_path):
         p = _write(tmp_path, "f0,f1\n1,2\n")
         with pytest.raises(InvalidInputError, match="nope"):
