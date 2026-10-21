@@ -51,6 +51,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from typing import Protocol
 
+from tabctx import timing
 from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
@@ -286,13 +287,17 @@ class MultiDeviceEngine:
         name = self._shards[0].resolve_backend_name(backend)
         request = FitRequest(len(X), n_features, name, dataset_id)
         if dataset_id is None:
-            index = self._place(request)
+            with timing.phase("place"):
+                index = self._place(request)
             resolved = self._fit_on(index, X, y, task, None, name, feature_names)
             if announce:
                 self._emit("placed", resolved, index, name)
             return resolved
-        with self._id_locks.hold(dataset_id):
-            index = self._place(request)
+        with contextlib.ExitStack() as held:
+            with timing.phase("wait_dataset_lock"):
+                held.enter_context(self._id_locks.hold(dataset_id))
+            with timing.phase("place"):
+                index = self._place(request)
             resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
             if announce:
                 self._emit("placed", resolved, index, name)
