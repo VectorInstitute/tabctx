@@ -10,10 +10,10 @@ and scores it next to a gradient-boosting baseline trained on the same
 features and a trivial one (majority class / mean). A served model should
 beat trivial by a wide margin and match or beat boosting on these sizes.
 
-Preprocessing is what a gateway user has to do today, because fit and
-predict take numbers only: categorical columns become integer codes
-(missing -> -1) and missing numbers are filled with the training median.
-The share of filled cells is reported per dataset.
+Categorical columns become integer codes (missing -> -1). Missing numbers
+are filled with the training median (--missing impute, as servers before
+tabctx 0.14 require) or sent as null for the model to handle itself
+(--missing null). The share of missing cells is reported per dataset.
 
 Usage:
   VP_API_KEY=... eval_real_datasets.py --models tabicl-v2 tabpfn-3.5 \\
@@ -131,13 +131,19 @@ class Split:
     y_train: np.ndarray
     X_test: np.ndarray
     y_test: np.ndarray
-    filled_share: float
+    missing_share: float
 
 
 def prepare(
-    X: pd.DataFrame, y: pd.Series, task: Task, max_train: int, max_test: int, seed: int
+    X: pd.DataFrame,
+    y: pd.Series,
+    task: Task,
+    max_train: int,
+    max_test: int,
+    seed: int,
+    impute: bool = True,
 ) -> Split:
-    """Split, then encode and fill using training data only."""
+    """Split, then encode (and fill, if impute) using training data only."""
     y = y.astype(str) if task == "classification" else y.astype(float)
     stratify = y if task == "classification" else None
     X_tr, X_te, y_tr, y_te = train_test_split(
@@ -165,16 +171,23 @@ def prepare(
         return out
 
     enc_tr, enc_te = encode(X_tr, X_tr), encode(X_te, X_tr)
-    medians = enc_tr.median().fillna(0.0)
     cells = enc_tr.size + enc_te.size
-    filled = int(enc_tr.isna().sum().sum() + enc_te.isna().sum().sum())
+    missing = int(enc_tr.isna().sum().sum() + enc_te.isna().sum().sum())
+    if impute:
+        medians = enc_tr.median().fillna(0.0)
+        enc_tr, enc_te = enc_tr.fillna(medians), enc_te.fillna(medians)
     return Split(
-        enc_tr.fillna(medians).to_numpy(np.float64),
+        enc_tr.to_numpy(np.float64),
         y_tr.to_numpy(),
-        enc_te.fillna(medians).to_numpy(np.float64),
+        enc_te.to_numpy(np.float64),
         y_te.to_numpy(),
-        filled / cells if cells else 0.0,
+        missing / cells if cells else 0.0,
     )
+
+
+def _json_rows(arr: np.ndarray) -> list[list[float | None]]:
+    """JSON has no NaN: a missing cell goes as null."""
+    return [[None if np.isnan(v) else float(v) for v in row] for row in arr]
 
 
 def score(
@@ -254,14 +267,14 @@ def served(gateway: Gateway, ds: Dataset, split: Split) -> dict:
     )
     t0 = time.monotonic()
     status, out = gateway.fit(
-        ("json", (split.X_train.tolist(), y_train)), dataset_id, ds.task
+        ("json", (_json_rows(split.X_train), y_train)), dataset_id, ds.task
     )
     fit_s = time.monotonic() - t0
     if status != 200:
         return {"error": f"fit {status}: {str(out.get('detail'))[:200]}"}
     t0 = time.monotonic()
     status, out = gateway.predict(
-        dataset_id, split.X_test.tolist(), return_proba=ds.task == "classification"
+        dataset_id, _json_rows(split.X_test), return_proba=ds.task == "classification"
     )
     predict_s = time.monotonic() - t0
     if status != 200:
@@ -284,6 +297,12 @@ def main() -> int:
     p.add_argument("--max-train", type=int, default=10_000)
     p.add_argument("--max-test", type=int, default=2_000)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--missing",
+        choices=["impute", "null"],
+        default="impute",
+        help="fill missing numbers with the training median, or send them as null",
+    )
     p.add_argument("--timeout", type=float, default=600)
     p.add_argument("--save", default=None)
     args = p.parse_args()
@@ -292,7 +311,15 @@ def main() -> int:
     results = []
     for ds in (d for d in DATASETS if d.name in args.datasets):
         X, y = ds.load()
-        split = prepare(X, y, ds.task, args.max_train, args.max_test, args.seed)
+        split = prepare(
+            X,
+            y,
+            ds.task,
+            args.max_train,
+            args.max_test,
+            args.seed,
+            impute=args.missing == "impute",
+        )
         row = {
             "dataset": ds.name,
             "source": ds.source,
@@ -303,7 +330,7 @@ def main() -> int:
             "n_classes": len(np.unique(split.y_train))
             if ds.task == "classification"
             else None,
-            "filled_share": round(split.filled_share, 4),
+            "missing_share": round(split.missing_share, 4),
             "trivial": trivial(ds.task, split),
             "boosting": boosting(ds.task, split, args.seed),
         }
@@ -321,6 +348,7 @@ def main() -> int:
                     "timestamp": datetime.now(UTC).isoformat(),
                     "base_url": args.base_url,
                     "seed": args.seed,
+                    "missing": args.missing,
                     "max_train": args.max_train,
                     "max_test": args.max_test,
                     "results": results,

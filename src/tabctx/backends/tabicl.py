@@ -111,6 +111,23 @@ class _PreparedFit:
     model: Any
 
 
+def _check_cacheable_classes(model: Any, task: Task, y: ArrayLike) -> None:
+    """tabicl serves more classes than the model's native limit (10) with
+    several forward passes per predict, which its kv cache can't hold, so
+    a cached context is limited to that many. Says so before the cache
+    build fails with a bare ValueError (a 500)."""
+    if task != "classification" or not model.kv_cache:
+        return
+    limit = getattr(getattr(model, "model_", None), "max_classes", None)
+    n_classes = getattr(model, "n_classes_", None)
+    if limit is not None and n_classes is not None and n_classes > limit:
+        raise InvalidInputError(
+            f"TabICL serves at most {limit} classes and this table has "
+            f"{n_classes}; use tabpfn-3.5 for up to 160 classes"
+            f"{regression_hint(y, task)}"
+        )
+
+
 def _build_cache(model: Any) -> None:
     """tabicl's fit() from the kv-cache step on (it follows the ensemble's
     preprocessing in both TabICLClassifier and TabICLRegressor): pick the
@@ -374,6 +391,7 @@ class TabICLBackend(QuiescedMeasurement):
             ) from e
         finally:
             model.kv_cache = kv_cache
+        _check_cacheable_classes(model, task, y)
         return _PreparedFit(task, model)
 
     def fit_prepared(self, prepared: _PreparedFit) -> Any:

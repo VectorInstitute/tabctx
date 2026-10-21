@@ -51,6 +51,7 @@ from tabctx.multidevice import MultiDeviceEngine
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.tables import rows_to_array
 from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
@@ -83,17 +84,19 @@ class GpuMemory(BaseModel):
     reserved_mb: float
 
 
+_TABLE_DOC = "Rows of numbers; null marks a missing value."
+
 _TASK_DOC = (
     "classification or regression. Omit it to infer from train_y: non-integer "
-    "numbers mean regression, anything else (text, integer class codes) "
-    "classification."
+    "numbers, or whole numbers with more than 30 distinct values, mean "
+    "regression; anything else (text, class codes) classification."
 )
 
 
 class LegacyPredictRequest(BaseModel):
-    train_X: list[list[float]]
+    train_X: list[list[float | None]] = Field(description=_TABLE_DOC)
     train_y: list[float | str]
-    test_X: list[list[float]]
+    test_X: list[list[float | None]] = Field(description=_TABLE_DOC)
     task: Literal["classification", "regression"] | None = Field(
         default=None, description=_TASK_DOC
     )
@@ -121,7 +124,9 @@ class LegacyPredictResponse(BaseModel):
 
 class FitRequest(BaseModel):
     # Inline path (small tables) ...
-    train_X: list[list[float]] | None = None
+    train_X: list[list[float | None]] | None = Field(
+        default=None, description=_TABLE_DOC
+    )
     train_y: list[float | str] | None = None
     # ... or by-reference path (large tables): a prior POST /v1/tabctx/upload
     # of a CSV whose columns are features plus one target column.
@@ -160,7 +165,9 @@ class FitResponse(BaseModel):
 class TabctxPredictRequest(BaseModel):
     dataset_id: str
     # Inline path ...
-    test_X: list[list[float]] | None = None
+    test_X: list[list[float | None]] | None = Field(
+        default=None, description=_TABLE_DOC
+    )
     # ... or by-reference: an uploaded CSV of feature columns only, with
     # the same header (names and order) the training CSV had.
     test_upload_id: str | None = None
@@ -310,9 +317,9 @@ class TabctxService:
         start = time.monotonic()
         try:
             outcome = self._engine.fit_predict(
-                req.train_X,
+                rows_to_array(req.train_X),
                 req.train_y,
-                req.test_X,
+                rows_to_array(req.test_X),
                 task=req.task,
                 return_proba=req.return_proba,
             )
@@ -415,7 +422,7 @@ class TabctxService:
                 "fit needs either train_X and train_y (inline) or "
                 "train_upload_id (an uploaded CSV)"
             )
-        return req.train_X, req.train_y, None
+        return rows_to_array(req.train_X), req.train_y, None
 
     def _fit_sync(
         self, req: FitRequest, headers: dict[str, str], session_id: str | None
@@ -495,7 +502,7 @@ class TabctxService:
                 "predict needs either test_X (inline) or test_upload_id "
                 "(an uploaded CSV)"
             )
-        return req.test_X
+        return rows_to_array(req.test_X)
 
     def _predict_sync(
         self,

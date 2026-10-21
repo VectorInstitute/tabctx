@@ -1,8 +1,10 @@
 """What the training labels say about the task.
 
 A caller shouldn't need to name the task for the obvious cases, so when
-it's omitted it comes from the labels (resolve_task): non-integer numbers
-are a continuous target, anything else is classification. Only actual
+it's omitted it comes from the labels (resolve_task): non-integer numbers,
+or whole numbers with more distinct values than a class list would have
+(prices, counts), are a continuous target; anything else is
+classification. Only actual
 numbers count: text labels are categories even when they look numeric
 ("250.01" as a diagnosis code), as they always were. CSV labels arrive as
 text, so the CSV parser converts them first when the task is left open
@@ -23,6 +25,10 @@ from tabctx.errors import InvalidInputError
 from tabctx.types import ArrayLike, Task
 
 _REGRESSION_HINT = "if train_y is a continuous target, pass task='regression'"
+
+# Whole-number labels with more distinct values than this are inferred to
+# be a quantity, not class codes (an explicit task overrides).
+MAX_INFERRED_CLASSES = 30
 
 
 def _as_numbers(y: ArrayLike) -> np.ndarray | None:
@@ -55,12 +61,16 @@ def _fractional(values: np.ndarray) -> np.ndarray:
 
 
 def infer_task(y: ArrayLike) -> Task:
-    """Regression when every label is a number and some aren't whole;
-    classification otherwise, which keeps integer-coded classes classes."""
+    """Regression when every label is a number and some aren't whole, or
+    when whole numbers take more than MAX_INFERRED_CLASSES distinct values;
+    classification otherwise, which keeps class codes (0, 1, 2, ...) and
+    text labels classes."""
     values = _as_numbers(y)
     if values is not None:
         _check_finite(values)
         if _fractional(values).any():
+            return "regression"
+        if np.unique(values).size > MAX_INFERRED_CLASSES:
             return "regression"
     return "classification"
 

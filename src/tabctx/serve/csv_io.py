@@ -10,7 +10,8 @@ transport, not a general CSV ingester):
 - First row is a header of column names.
 - Feature columns must be numeric; parsed as float32 (halves memory for
   the 10^5-10^6-row tables this path exists for; both backends compute
-  in float32/16 internally anyway).
+  in float32/16 internally anyway). An empty cell, ``NA``, ``N/A``,
+  ``null`` or ``NaN`` is a missing value (NaN), which both backends handle.
 - For training CSVs, one column is the target (``target_column``, or the
   LAST column when unspecified). Target values parse as strings for
   classification and floats for regression; with no task given, the
@@ -41,18 +42,35 @@ def _read_header(path: Path) -> list[str]:
     return [c.strip() for c in first.split(",")]
 
 
+# Spellings of a missing value, compared case-insensitively after strip.
+_MISSING = frozenset({"", "na", "n/a", "nan", "null", "none"})
+
+
+def _cell(text: str) -> float:
+    text = text.strip()
+    return np.nan if text.lower() in _MISSING else float(text)
+
+
 def _load_float_columns(path: Path, usecols: list[int], what: str) -> np.ndarray:
+    load = {
+        "delimiter": ",",
+        "skiprows": 1,
+        "usecols": usecols,
+        "dtype": np.float32,
+        "ndmin": 2,
+    }
     try:
-        arr = np.loadtxt(
-            path,
-            delimiter=",",
-            skiprows=1,
-            usecols=usecols,
-            dtype=np.float32,
-            ndmin=2,
-        )
-    except ValueError as e:
-        raise InvalidInputError(f"{what}: non-numeric or ragged CSV data ({e})") from e
+        arr = np.loadtxt(path, **load)
+    except ValueError:
+        # numpy's fast parser rejects empty cells and NA spellings; parse
+        # again cell by cell (slower, so only for files that need it),
+        # still rejecting text that isn't a number or a missing value.
+        try:
+            arr = np.loadtxt(path, converters=_cell, **load)
+        except ValueError as e:
+            raise InvalidInputError(
+                f"{what}: non-numeric or ragged CSV data ({e})"
+            ) from e
     if arr.shape[0] == 0:
         raise InvalidInputError(f"{what}: CSV has a header but no data rows")
     return arr
@@ -65,7 +83,13 @@ def _read_text_column(path: Path, index: int) -> list[str]:
         )
     except ValueError as e:
         raise InvalidInputError(f"train target: unreadable CSV column ({e})") from e
-    return [str(v).strip() for v in arr[:, 0]]
+    labels = [str(v).strip() for v in arr[:, 0]]
+    if "" in labels:
+        raise InvalidInputError(
+            f"train target: row {labels.index('') + 1} has no label; every "
+            "training row needs one"
+        )
+    return labels
 
 
 def _floats_or_none(texts: list[str]) -> list[float] | None:
