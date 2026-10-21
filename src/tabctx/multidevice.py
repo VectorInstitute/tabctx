@@ -55,6 +55,7 @@ from tabctx import timing
 from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
+from tabctx.keyed_locks import KeyedLocks
 from tabctx.labels import resolve_task
 from tabctx.placement import (
     DeviceView,
@@ -119,28 +120,6 @@ class Shard(Protocol):
     def evict(self, dataset_id: str) -> None: ...
 
 
-class _KeyedLocks:
-    """One lock per key, created on demand and dropped when unused."""
-
-    def __init__(self) -> None:
-        self._guard = threading.Lock()
-        self._locks: dict[str, list] = {}  # key -> [lock, users]
-
-    @contextlib.contextmanager
-    def hold(self, key: str) -> Iterator[None]:
-        with self._guard:
-            entry = self._locks.setdefault(key, [threading.Lock(), 0])
-            entry[1] += 1
-        try:
-            with entry[0]:
-                yield
-        finally:
-            with self._guard:
-                entry[1] -= 1
-                if entry[1] == 0:
-                    del self._locks[key]
-
-
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
     return DatasetNotFoundError(
         f"no cached context for dataset_id={dataset_id!r} -- it was never "
@@ -166,7 +145,7 @@ class MultiDeviceEngine:
             raise ValueError("every device must serve the same models")
         self._shards = shards
         self._devices = devices
-        self._id_locks = _KeyedLocks()
+        self._id_locks = KeyedLocks()
         self._window_s = activity_window_s
         self._clock = clock
         self._inflight = [0] * len(shards)

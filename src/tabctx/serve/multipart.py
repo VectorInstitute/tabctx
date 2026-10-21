@@ -11,14 +11,18 @@ Malformed bodies raise InvalidInputError (a 422).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
-from python_multipart.exceptions import MultipartParseError
+from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
 from starlette.concurrency import run_in_threadpool
 
 from tabctx.errors import InvalidInputError
+
+# python-multipart logs every malformed body it meets; the 422 says it.
+logging.getLogger("python_multipart").setLevel(logging.ERROR)
 
 FILE_FIELD = "file"
 MAX_FIELDS = 16
@@ -40,8 +44,8 @@ async def read_form(
     if not boundary:
         raise InvalidInputError("multipart body without a boundary")
     form = _Form(begin_file)
-    parser = MultipartParser(boundary, form.callbacks())
     try:
+        parser = MultipartParser(boundary, form.callbacks())
         async for chunk in stream:
             parser.write(chunk)
             if form.pending:
@@ -50,7 +54,7 @@ async def read_form(
         if form.in_part:
             raise InvalidInputError("the multipart body ends inside a part")
         form.flush()
-    except MultipartParseError as e:
+    except FormParserError as e:
         if form.writer is not None:
             form.writer.abort()
         raise InvalidInputError(f"malformed multipart body: {e}") from e
@@ -69,6 +73,7 @@ class _Form:
         self.pending: list[bytes] = []  # file bytes parsed, not yet written
         self.in_part = False
         self.open_part = ""
+        self._n_fields = 0
         self._in_file = False
         self._data = bytearray()
         self._header_name = b""
@@ -123,8 +128,14 @@ class _Form:
                 raise InvalidInputError("a request carries one table file")
             self.writer = self._begin_file()
             self._in_file = True
-        elif len(self.fields) >= MAX_FIELDS:
-            raise InvalidInputError(f"more than {MAX_FIELDS} form fields")
+        elif name == FILE_FIELD:
+            raise InvalidInputError(
+                f"send the table as a file part (curl: -F {FILE_FIELD}=@train.csv)"
+            )
+        else:
+            self._n_fields += 1
+            if self._n_fields > MAX_FIELDS:
+                raise InvalidInputError(f"more than {MAX_FIELDS} form fields")
 
     def _part_data(self, data: bytes, start: int, end: int) -> None:
         if self._in_file:

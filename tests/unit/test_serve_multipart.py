@@ -114,8 +114,68 @@ def test_schema_code_maps_are_built_once_and_not_pickled():
 def test_schema_cache_is_a_bounded_lru():
     cache = SchemaCache(max_entries=2)
     a, b, c = (TableSchema(((n,),)) for n in "abc")
-    cache.put("a", a)
-    cache.put("b", b)
+    for key, schema in (("a", a), ("b", b)):
+        with cache.fitting(key) as record:
+            record(schema)
     assert cache.get("a") is a  # now most recent
-    cache.put("c", c)
+    with cache.fitting("c") as record:
+        record(c)
     assert cache.get("b") is None and cache.get("a") is a and cache.get("c") is c
+
+
+def test_schema_cache_bounds_bytes_and_skips_huge_schemas():
+    big = TableSchema((tuple(f"category-{i}" for i in range(2000)),))
+    cache = SchemaCache(max_bytes=big.approx_bytes * 2 + 10)
+    for key in ("x", "y", "z"):
+        with cache.fitting(key) as record:
+            record(big)
+    assert cache.get("x") is None and cache.get("z") is big
+    tiny = SchemaCache(max_bytes=100)
+    with tiny.fitting("x") as record:
+        record(big)
+    assert tiny.get("x") is None  # falls back to the engine's copy
+
+
+def test_a_fit_drops_the_cached_schema_until_it_succeeds():
+    import threading
+
+    cache = SchemaCache()
+    old, new = TableSchema((("old",),)), TableSchema((("new",),))
+    with cache.fitting("d") as record:
+        record(old)
+    with pytest.raises(RuntimeError), cache.fitting("d"):
+        assert cache.get("d") is None  # a failed fit leaves the engine to answer
+        raise RuntimeError("fit failed")
+    assert cache.get("d") is None
+
+    # Fits of one id record one at a time: the second waits for the first.
+    order = []
+    entered = threading.Event()
+
+    def slow_fit():
+        with cache.fitting("d") as record:
+            entered.set()
+            threading.Event().wait(0.05)
+            record(old)
+            order.append("first")
+
+    t = threading.Thread(target=slow_fit)
+    t.start()
+    entered.wait()
+    with cache.fitting("d") as record:
+        record(new)
+        order.append("second")
+    t.join()
+    assert order == ["first", "second"] and cache.get("d") is new
+
+
+def test_long_boundaries_and_plain_file_fields_are_422(store):
+    with pytest.raises(InvalidInputError, match="malformed"):
+        read(body(), store, content_type="multipart/form-data; boundary=" + "b" * 300)
+    with pytest.raises(InvalidInputError, match="-F file=@"):
+        read(body([("file", "a,b\n1,2\n")]), store)
+
+
+def test_repeated_fields_count_against_the_limit(store):
+    with pytest.raises(InvalidInputError, match="more than 16"):
+        read(body([("dataset_id", "x")] * 17), store)

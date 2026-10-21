@@ -119,13 +119,19 @@ def _labels(col, task: Task | None, pa) -> list:
     missing = [i for i, v in enumerate(values) if v is None or v != v]
     if missing:
         _no_label(missing[0])
-    if pa.types.is_boolean(kind) or not all(isinstance(v, int | float) for v in values):
+    numeric = (
+        pa.types.is_integer(kind)
+        or pa.types.is_floating(kind)
+        or pa.types.is_decimal(kind)
+    )
+    if not numeric:
         if task == "regression":
             raise InvalidInputError(
                 f"regression needs numeric labels; the target has {kind}"
             )
         return [str(v) for v in values]
-    return _numeric_labels([str(v) for v in values], [float(v) for v in values], task)
+    numbers = col.cast(pa.float64()).to_pylist()
+    return _numeric_labels([str(v) for v in values], numbers, task)
 
 
 def _text_labels(texts: list[str | None], task: Task | None) -> list:
@@ -176,8 +182,7 @@ def _kept_text(path: Path, names: list[str], text_columns: Collection[str]):
 
 
 def _features(arrow, names: list[str], text_columns: Collection[str]):
-    """Each column converted and released in turn, so the whole arrow
-    table and the whole converted table aren't held at once."""
+    """Each column converted in turn."""
     for name in names:
         col = arrow.column(0)
         arrow = arrow.remove_column(0)
@@ -195,7 +200,8 @@ def _feature(col, name: str, keep_text: bool) -> np.ndarray:
         if pa.types.is_string(kind) or pa.types.is_large_string(kind):
             return _text_feature(col.to_pylist(), numeric_ok=not keep_text)
         if pa.types.is_temporal(kind):
-            col = _seconds(col, pa)
+            # float64: the schema stores them from an offset (tabctx.schema).
+            return _seconds(col, pa).to_numpy()
         return col.cast(pa.float32(), safe=False).to_numpy()
     except (pa.ArrowInvalid, pa.ArrowNotImplementedError, pa.ArrowTypeError) as e:
         what = "not UTF-8 text" if pa.types.is_binary(kind) else f"of type {kind}"
@@ -293,13 +299,15 @@ def _open_csv(path: Path):
 def _csv_header(path: Path) -> list[str]:
     """A CSV's column names as written (unstripped), read ahead of the
     table so columns can be typed by name."""
+    line = b""
     with _open_csv(path) as source:
-        head = source.read(1 << 20)
+        while b"\n" not in line and (block := source.read(1 << 16)):
+            line += block
     try:
-        lines = head.decode("utf-8-sig").splitlines()
+        text = line.split(b"\n", 1)[0].rstrip(b"\r").decode("utf-8-sig")
     except UnicodeDecodeError:
         return []  # reading the table reports it
-    return next(stdlib_csv.reader(lines[:1]), []) if lines else []
+    return next(stdlib_csv.reader([text]), [])
 
 
 def _read_arrow(path: Path, text_columns: Collection[str], raw_text: Collection[str]):

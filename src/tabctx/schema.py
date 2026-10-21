@@ -37,10 +37,14 @@ Columns = Sequence[np.ndarray]
 @dataclass(frozen=True)
 class TableSchema:
     """Per feature column: None if numeric, else its categories in code
-    order. names: the columns' names, when the table had a header."""
+    order. names: the columns' names, when the table had a header.
+    offsets: per column, a value subtracted before the model's float32,
+    for columns given in float64 (times as seconds since the epoch, where
+    float32 alone would round to 128 s): the training minimum."""
 
     categories: tuple[tuple[str, ...] | None, ...]
     names: tuple[str, ...] | None = None
+    offsets: tuple[float | None, ...] | None = None
 
     @property
     def n_features(self) -> int:
@@ -49,6 +53,15 @@ class TableSchema:
     @property
     def has_text(self) -> bool:
         return any(c is not None for c in self.categories)
+
+    @cached_property
+    def approx_bytes(self) -> int:
+        """Roughly what the schema takes in memory (its text dominates)."""
+        text = [
+            *(self.names or ()),
+            *(c for cats in self.categories if cats for c in cats),
+        ]
+        return 64 * len(self.categories) + sum(len(t) + 56 for t in text)
 
     @property
     def text_names(self) -> tuple[str, ...]:
@@ -67,7 +80,12 @@ class TableSchema:
     ) -> tuple[TableSchema, np.ndarray]:
         """The schema of a training table, and the table encoded with it."""
         categories = tuple(_categories(col) for col in columns)
-        schema = cls(categories, tuple(names) if names is not None else None)
+        offsets = tuple(_offset(col) for col in columns)
+        schema = cls(
+            categories,
+            tuple(names) if names is not None else None,
+            offsets if any(o is not None for o in offsets) else None,
+        )
         return schema, schema.encode(columns)
 
     # ---- predict -------------------------------------------------------
@@ -81,10 +99,16 @@ class TableSchema:
             )
         n_rows = len(columns[0]) if columns else 0
         out = np.empty((n_rows, self.n_features), dtype=np.float32)
-        for j, (col, codes) in enumerate(zip(columns, self._codes, strict=True)):
-            out[:, j] = (
-                _numbers(col, self._label(j)) if codes is None else _encode(col, codes)
-            )
+        offsets = self.offsets or (None,) * self.n_features
+        for j, (col, codes, offset) in enumerate(
+            zip(columns, self._codes, offsets, strict=True)
+        ):
+            if codes is not None:
+                out[:, j] = _encode(col, codes)
+            elif offset is not None:
+                out[:, j] = _numbers(col, self._label(j), np.float64) - offset
+            else:
+                out[:, j] = _numbers(col, self._label(j))
         return out
 
     @cached_property
@@ -96,8 +120,12 @@ class TableSchema:
         )
 
     def __getstate__(self) -> dict:
-        # The code maps are rebuilt on use, not shipped between processes.
-        return {k: v for k, v in self.__dict__.items() if k != "_codes"}
+        # Derived values are rebuilt on use, not shipped between processes.
+        return {
+            k: v
+            for k, v in self.__dict__.items()
+            if k not in ("_codes", "approx_bytes")
+        }
 
     def select(self, names: Sequence[str], columns: Columns) -> Columns:
         """A named table's columns in schema order (by name when the
@@ -123,13 +151,16 @@ class TableSchema:
         return {
             "categories": [list(c) if c is not None else None for c in self.categories],
             "names": list(self.names) if self.names is not None else None,
+            "offsets": list(self.offsets) if self.offsets is not None else None,
         }
 
     @classmethod
     def from_json(cls, data: dict) -> TableSchema:
+        offsets = data.get("offsets")
         return cls(
             tuple(tuple(c) if c is not None else None for c in data["categories"]),
             tuple(data["names"]) if data.get("names") is not None else None,
+            tuple(offsets) if offsets is not None else None,
         )
 
 
@@ -153,11 +184,27 @@ def _categories(col: np.ndarray) -> tuple[str, ...] | None:
     return tuple(sorted({_as_text(v) for v in present}))
 
 
-def _numbers(col: np.ndarray, label: str) -> np.ndarray:
+# float32 holds every integer up to 2**24 exactly; past it, values are
+# stored from the training minimum so differences keep their resolution.
+_FLOAT32_EXACT = float(2**24)
+
+
+def _offset(col: np.ndarray) -> float | None:
+    """For a float64 column with values past float32's exact range (times
+    as seconds since the epoch): its training minimum."""
+    if col.dtype != np.float64:
+        return None
+    finite = col[np.isfinite(col)]
+    if not finite.size or np.abs(finite).max() < _FLOAT32_EXACT:
+        return None
+    return float(finite.min())
+
+
+def _numbers(col: np.ndarray, label: str, dtype=np.float32) -> np.ndarray:
     if col.dtype.kind in "biuf":
-        return col
+        return col.astype(dtype, copy=False)
     try:
-        return np.array([v if _present(v) else np.nan for v in col], dtype=np.float32)
+        return np.array([v if _present(v) else np.nan for v in col], dtype=dtype)
     except (TypeError, ValueError):
         text = next(v for v in col if isinstance(v, str))
         raise InvalidInputError(

@@ -627,16 +627,17 @@ class TabctxService:
             # The schema (column names, text categories) is recorded on
             # the cached context so test tables are encoded the same way;
             # it lives and dies with the context, spill included.
-            self._engine.fit(
-                X,
-                y,
-                task=task,
-                dataset_id=scoped_id,
-                backend=model_id,
-                schema=schema,
-            )
-            if schema is not None:
-                self._schemas.put(scoped_id, schema)
+            with self._schemas.fitting(scoped_id) as record:
+                self._engine.fit(
+                    X,
+                    y,
+                    task=task,
+                    dataset_id=scoped_id,
+                    backend=model_id,
+                    schema=schema,
+                )
+                if schema is not None:
+                    record(schema)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,

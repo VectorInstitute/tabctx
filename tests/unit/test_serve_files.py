@@ -88,7 +88,7 @@ class TestFormats:
         csv = "t,clock,y\n2020-01-01 10:00:00.5,10:30:00,1\n1970-01-01 00:00:01,00:00:02,2\n"
         cols = train(tmp_path, csv)[0].columns
         assert cols[0][1] == 1.0
-        assert cols[0][0] == np.float32(1577872800.5)
+        assert cols[0][0] == 1577872800.5  # float64 here; offset by the schema
         assert cols[1].tolist() == [37800.0, 2.0]
         table = pa.table(
             {
@@ -215,3 +215,41 @@ def test_parquet_strings_stay_text_even_when_numeric(tmp_path):
     table = pa.table({"zip": ["007", "010"], "y": ["a", "b"]})
     features, _ = read_training_table(write(tmp_path, parquet(table)), "y", None)
     assert list(features.columns[0]) == ["007", "010"]
+
+
+def test_a_long_csv_with_text_reads_its_header(tmp_path):
+    # The header is read ahead to type the label column; a multi-byte
+    # character anywhere later must not break that.
+    rows = "".join(f"café{i % 7},0{i % 2 + 1}\n" for i in range(120_000))
+    p = write(tmp_path, "town,y\n" + rows)
+    assert p.stat().st_size > 1 << 20
+    _, y = read_training_table(p, None, None)
+    assert set(y) == {"01", "02"}
+
+
+def test_crlf_headers_type_the_label_column(tmp_path):
+    assert labels(tmp_path, "f,y\r\n1,01\r\n2,02\r\n") == ["01", "02"]
+
+
+def test_decimal_labels_are_numbers(tmp_path):
+    import decimal
+
+    values = pa.array(
+        [decimal.Decimal("1.5"), decimal.Decimal("2.5")], pa.decimal128(2, 1)
+    )
+    table = pa.table({"x": [1.0, 2.0], "y": values})
+    path = write(tmp_path, parquet(table))
+    assert read_training_table(path, None, "regression")[1] == [1.5, 2.5]
+    assert read_training_table(path, None, None)[1] == [1.5, 2.5]
+
+
+def test_times_keep_subsecond_resolution_through_the_schema(tmp_path):
+    from tabctx.schema import TableSchema
+
+    csv = "t,y\n2020-01-01 10:00:00.5,1\n2020-01-01 10:00:01,2\n2020-01-01 10:00:02,1\n"
+    features, _ = train(tmp_path, csv)
+    schema, X = TableSchema.learn(features.columns, features.names)
+    assert X[:, 0].tolist() == [0.0, 0.5, 1.5]
+    test = read_table(write(tmp_path, "t\n2020-01-01 10:00:03\n", name="test"))
+    assert schema.encode(test.columns).tolist() == [[2.5]]
+    assert TableSchema.from_json(schema.to_json()) == schema
