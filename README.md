@@ -499,12 +499,13 @@ missing cell can be sent as `null`). Regression needs
 
 ## Status & Roadmap
 
-v0.13.0: multi-model endpoint, calibrated peak-aware admission, disk
+v0.14.0: multi-model endpoint, calibrated peak-aware admission, disk
 spillover, multi-replica routing and multi-GPU replicas with a worker
 process per GPU have all shipped and been validated on real GPUs (see
-[CHANGELOG.md](CHANGELOG.md)); 0.13.0 fixes predict chunking and
-compiled TabICL in serving (#47), and serves on Vector's 4x A40 prod
-node. Open roadmap items are
+[CHANGELOG.md](CHANGELOG.md)); 0.14.0 infers the task from the labels,
+accepts missing values, and reports where each request's time went
+(`timings_ms`). Vector's 4x A40 prod node serves 0.13.0 until it is
+updated. Open roadmap items are
 tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.

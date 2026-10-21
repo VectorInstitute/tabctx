@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.14.0] - 2026-10-21
 ### Added
 - **Where a request's time went** (`timings_ms` on fit and predict responses). A slow call can be waiting (for placement to hear back from a busy worker, for host memory, for the device's lock), moving data (spilling contexts to make room, restoring a spilled one) or computing (CPU preprocessing, the device, compiling a graph), which look the same from outside -- and prod's logs aren't readable from where the stalls are reported. Each request now carries a collector (`tabctx/timing.py`, a ContextVar) that the engine, the multi-GPU router and the worker processes record phases into: `read_table`, `place`, `wait_dataset_lock`, `wait_prepare_gate`, `prepare`, `wait_host_memory`, `wait_device`, `make_room`, `fit_device`, `restore`, `predict_device`, and counts `n_graphs_compiled`, `n_restores`, `n_predict_chunks`. Worker processes send theirs back with each reply. Diagnostic: phases can overlap and keys may change.
 - `benchmarks/prod_bench.py`: the prod benchmark as a gateway user sees it -- single-user latency (first and repeat fits of new tables per size), mixed load (two users per model looping fit + predicts; tails and calls over 5 s), and throughput (concurrent predicts with per-GPU utilization sampled from the Ray dashboard) -- keeping the slowest calls with their `timings_ms`. Baseline: `baselines/prod-bench-0.13.0.json`. `benchmarks/gke/serve_bench.sh` runs it against Ray Serve in the devbox, configured like prod; `devbox.sh` also offers 2-GPU machines.
