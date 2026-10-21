@@ -191,7 +191,8 @@ ready-to-run deployment (`fit`/`predict` endpoints, health checks, live
 memory-usage reporting). See `benchmarks/README.md` for how to measure it
 once it's running.
 
-**Talk to a deployment** with the bundled client (pure stdlib, sets the
+**Talk to a deployment** as a scikit-learn model (see the Quickstart
+above), or with the bundled client (pure stdlib, sets the
 routing/tenancy headers for you, raises the same tabctx exceptions the
 in-process engine does):
 
@@ -201,6 +202,7 @@ from tabctx.client import TabctxClient
 client = TabctxClient("http://localhost:8000", tenant_id="acme")
 client.fit(X_train, y_train, dataset_id="churn-v1")
 result = client.predict("churn-v1", X_test, return_proba=True)
+client.fit_file("train.parquet", target="churned", dataset_id="churn-v2")
 ```
 
 ## Scaling out: multi-replica serving
@@ -386,10 +388,11 @@ what is still missing.
 
 **Works today:**
 
-- *Publish an application* = `upload_csv` + `fit_uploaded(dataset_id=<app>)`
+- *Publish an application* = `fit_file(<table file>, dataset_id=<app>)`
   under the admin's tenant; the context is encoded once and cached on
-  the GPU. The training CSV's header is recorded on the context, so
-  test CSVs are schema-checked against it.
+  the GPU. The training table's schema (column names, text categories)
+  is recorded on the context, so test tables are encoded the same way
+  and test files are matched to its columns by name.
 - *Select an application* = `predict(<app>, ...)` with the same tenant
   header. Many applications coexist in one deployment under one memory
   budget; both models can be mixed (`model="tabicl-v2"` / `"tabpfn-3.5"`).
@@ -436,7 +439,9 @@ pip install tabctx               # core library (FakeBackend, no GPU deps)
 pip install "tabctx[tabicl]"     # + real TabICL backend (torch, tabicl)
 pip install "tabctx[tabpfn]"     # + TabPFN backend (weights license-gated:
                                  #   ux.priorlabs.ai + export TABPFN_TOKEN)
-pip install "tabctx[serve]"      # + Ray Serve deployment (ray[serve], fastapi)
+pip install "tabctx[serve]"      # + Ray Serve deployment (ray[serve], fastapi,
+                                 #   pyarrow and python-multipart for table files)
+pip install "tabctx[client]"     # + scikit-learn estimators (scikit-learn, pyarrow)
 pip install "tabctx[dev]"        # + test dependencies
 ```
 
@@ -547,21 +552,21 @@ for classification, R² for regression; training sets capped at 10,000 rows.
 | Ames house prices (R²) | 1,168 × 79 | 0.857 | 0.824 | 0.917 |
 
 Categorical columns were sent as integer codes and missing numbers as the
-training median (prod ran 0.13.0, which takes numbers only; from 0.14 a
-missing cell can be sent as `null`). Regression needs
-`"task": "regression"` on fit.
+training median, because prod ran 0.13.0, which takes numbers only. From
+0.14 a missing cell can be sent as `null`, and from 0.15 text columns as
+they are (the server codes them). Regression needs `"task": "regression"`
+on fit, or, from 0.14, labels that look continuous.
 
 ## Status & Roadmap
 
-v0.14.0: multi-model endpoint, calibrated peak-aware admission, disk
+v0.15.0: multi-model endpoint, calibrated peak-aware admission, disk
 spillover, multi-replica routing and multi-GPU replicas with a worker
 process per GPU have all shipped and been validated on real GPUs (see
-[CHANGELOG.md](CHANGELOG.md)); 0.14.0 infers the task from the labels,
-accepts missing values, and reports where each request's time went
-(`timings_ms`); 0.14.1 stops TabICL compiling graphs inside requests
-(#47); 0.15.0 takes table files (CSV, Parquet) in the request and text
-columns, and adds scikit-learn estimators (#63). Vector's 4x A40 prod
-node serves 0.14.1 until it is updated. Open roadmap items are
+[CHANGELOG.md](CHANGELOG.md)). Recent releases: 0.14.0 infers the task
+from the labels, accepts missing values, and reports where each
+request's time went (`timings_ms`); 0.14.1 stops TabICL compiling graphs
+inside requests (#47); 0.15.0 takes table files (CSV, Parquet) in the
+request and text columns, and adds scikit-learn estimators (#63). Open roadmap items are
 tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.
