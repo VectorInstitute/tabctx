@@ -17,6 +17,9 @@ class TestValidateLabels:
             [0.0, 1.0, 1.0],  # integer-valued floats (JSON numbers)
             ["0", "1", "1"],  # CSV labels arrive as text
             ["yes", "1.5"],  # mixed text: not numeric, left to the backend
+            ["250.01", "401.9"],  # numeric-looking text is still categories
+            [True, False],
+            [10**400, 1],  # beyond float range: whole, not checked further
         ],
     )
     def test_accepts_discrete_classes(self, y):
@@ -26,9 +29,8 @@ class TestValidateLabels:
         "y",
         [
             [212500.5, 180000.0, 99000.0],  # a price
-            ["4.526", "3.585"],  # CSV text of a continuous target
             np.array([0.1, 0.2]),
-            [1.0, float("nan")],  # not a class label either
+            np.array([[0.1], [0.2]]),  # a column vector
         ],
     )
     def test_rejects_non_integer_numbers_with_the_fix_in_the_message(self, y):
@@ -37,6 +39,12 @@ class TestValidateLabels:
 
     def test_regression_takes_any_numbers(self):
         validate_labels([212500.5, 0.1], "regression")
+
+    @pytest.mark.parametrize("task", ["classification", "regression", None])
+    @pytest.mark.parametrize("y", [[1.0, float("nan")], np.array([0.5, np.inf])])
+    def test_missing_labels_are_rejected_whatever_the_task(self, y, task):
+        with pytest.raises(InvalidInputError, match="NaN/inf"):
+            resolve_task(y, task)
 
 
 class TestRegressionHint:
@@ -94,7 +102,7 @@ class TestInferTask:
         "y, task",
         [
             ([212500.5, 180000.0], "regression"),  # a continuous target
-            (["4.526", "3.585"], "regression"),  # its CSV text
+            (["4.526", "3.585"], "classification"),  # text: categories
             (["a", "b"], "classification"),
             ([0, 1, 1], "classification"),  # integer class codes stay classes
             ([1.0, 2.0], "classification"),  # whole numbers too

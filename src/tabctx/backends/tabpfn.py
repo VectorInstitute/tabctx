@@ -32,6 +32,7 @@ by the protocol -- fit() mutates estimator state) is already cheap.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import pickle
 from typing import Any
@@ -48,6 +49,8 @@ from tabctx.backends._outcome import classification_outcome
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.labels import regression_hint
 from tabctx.types import ArrayLike, PredictOutcome, Task
+
+logger = logging.getLogger(__name__)
 
 _FIT_MODES = {
     "kv": "fit_with_cache",
@@ -148,6 +151,7 @@ class TabPFNBackend(QuiescedMeasurement):
             # features, or classes) raises before meaningful GPU work; a
             # caller's oversized table is bad input, not a server fault.
             self._last_context_bytes = None
+            logger.warning("tabpfn rejected a training table", exc_info=True)
             raise InvalidInputError(
                 f"tabpfn rejected the training table: {e}{regression_hint(y, task)}"
             ) from e

@@ -361,9 +361,14 @@ class TabICLBackend(QuiescedMeasurement):
         try:
             with device_scope(self._device), fast:
                 model.fit(X, y)
+        except np.linalg.LinAlgError:
+            raise  # numerics inside preprocessing: a fault, not bad input
         except ValueError as e:
             # tabicl's input checks (e.g. continuous labels for a
             # classifier) raise before device work: bad input, not a fault.
+            # Logged with its traceback, since the 422 detail carries only
+            # the message.
+            logger.warning("tabicl rejected a training table", exc_info=True)
             raise InvalidInputError(
                 f"tabicl rejected the training table: {e}{regression_hint(y, task)}"
             ) from e

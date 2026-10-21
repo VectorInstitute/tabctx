@@ -68,6 +68,13 @@ def _read_text_column(path: Path, index: int) -> list[str]:
     return [str(v).strip() for v in arr[:, 0]]
 
 
+def _floats_or_none(texts: list[str]) -> list[float] | None:
+    try:
+        return [float(t) for t in texts]
+    except ValueError:
+        return None
+
+
 def parse_train_csv(
     path: Path, task: Task | None, target_column: str | None = None
 ) -> tuple[np.ndarray, list, list[str]]:
@@ -91,9 +98,12 @@ def parse_train_csv(
 
     y: list
     if task is None:
+        # CSV has no types: a target column that parses as numbers is
+        # numbers, and those decide the task; anything else is classes.
         y = _read_text_column(path, target_idx)
-        if infer_task(y) == "regression":
-            y = [float(v) for v in y]
+        values = _floats_or_none(y)
+        if values is not None and infer_task(values) == "regression":
+            y = values
     elif task == "regression":
         y_arr = _load_float_columns(path, [target_idx], "train target")
         y = [float(v) for v in y_arr[:, 0]]
