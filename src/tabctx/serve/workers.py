@@ -55,6 +55,7 @@ from typing import Any
 
 from tabctx import timing
 from tabctx.errors import BackendComputeError
+from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ _METHODS = frozenset(
         "fit",
         "predict",
         "evict",
-        "feature_names",
+        "schema",
         "estimate_fit_bytes",
         "report",
     }
@@ -636,7 +637,7 @@ class ProcessShard:
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str:
         return self._call(
             "fit",
@@ -645,7 +646,7 @@ class ProcessShard:
             task=task,
             dataset_id=dataset_id,
             backend=backend,
-            feature_names=feature_names,
+            schema=schema,
         )
 
     def predict(
@@ -653,8 +654,8 @@ class ProcessShard:
     ) -> PredictOutcome:
         return self._call("predict", dataset_id, X_test, return_proba=return_proba)
 
-    def feature_names(self, dataset_id: str) -> list[str] | None:
-        return self._call("feature_names", dataset_id)
+    def schema(self, dataset_id: str) -> TableSchema | None:
+        return self._call("schema", dataset_id)
 
     def evict(self, dataset_id: str) -> None:
         self._call("evict", dataset_id)

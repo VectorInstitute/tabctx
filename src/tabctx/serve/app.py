@@ -26,13 +26,16 @@ serve/tenancy.py) closes the guessable-dataset_id data-leakage gap.
 import logging
 import time
 import uuid
+from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi.exceptions import RequestValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError
 from ray import serve
 from ray.serve.config import RequestRouterConfig
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
 
 from tabctx import (
     AdmissionRejected,
@@ -49,10 +52,11 @@ from tabctx.batching import CoalescingPredictor
 from tabctx.events import RecentEvents
 from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
+from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
-from tabctx.serve.csv_io import parse_features_csv, parse_train_csv
 from tabctx.serve.factory import ServeSettings, build_engine
-from tabctx.serve.tables import rows_to_array
+from tabctx.serve.files import read_table, split_target
+from tabctx.serve.tables import encode_rows, learn_rows
 from tabctx.serve.tenancy import (
     TenantRequiredError,
     resolve_tenant_id,
@@ -85,7 +89,12 @@ class GpuMemory(BaseModel):
     reserved_mb: float
 
 
-_TABLE_DOC = "Rows of numbers; null marks a missing value."
+_TABLE_DOC = (
+    "Rows of cells: numbers, text (a category: the server encodes text "
+    "columns at fit and reuses that encoding at predict), or null for a "
+    "missing value."
+)
+Cell = float | str | None
 
 _TIMINGS_DOC = (
     "Where this request's time went on the server, in ms per phase (waits "
@@ -106,9 +115,9 @@ _TASK_DOC = (
 
 
 class LegacyPredictRequest(BaseModel):
-    train_X: list[list[float | None]] = Field(description=_TABLE_DOC)
+    train_X: list[list[Cell]] = Field(description=_TABLE_DOC)
     train_y: list[float | str]
-    test_X: list[list[float | None]] = Field(description=_TABLE_DOC)
+    test_X: list[list[Cell]] = Field(description=_TABLE_DOC)
     task: Literal["classification", "regression"] | None = Field(
         default=None, description=_TASK_DOC
     )
@@ -139,14 +148,18 @@ class LegacyPredictResponse(BaseModel):
 
 class FitRequest(BaseModel):
     # Inline path (small tables) ...
-    train_X: list[list[float | None]] | None = Field(
-        default=None, description=_TABLE_DOC
-    )
+    train_X: list[list[Cell]] | None = Field(default=None, description=_TABLE_DOC)
     train_y: list[float | str] | None = None
-    # ... or by-reference path (large tables): a prior POST /v1/tabctx/upload
-    # of a CSV whose columns are features plus one target column.
+    # ... or a table file: sent with the request (multipart `file`), or a
+    # prior POST /v1/tabctx/upload referenced by id. Its columns are the
+    # features plus one target column.
     train_upload_id: str | None = None
-    target_column: str | None = None  # default: the CSV's last column
+    target_column: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("target_column", "target"),
+        description="The table file's label column (also accepted as `target`); "
+        "default: its last column.",
+    )
     task: Literal["classification", "regression"] | None = Field(
         default=None, description=_TASK_DOC
     )
@@ -183,11 +196,11 @@ class FitResponse(BaseModel):
 class TabctxPredictRequest(BaseModel):
     dataset_id: str
     # Inline path ...
-    test_X: list[list[float | None]] | None = Field(
-        default=None, description=_TABLE_DOC
-    )
-    # ... or by-reference: an uploaded CSV of feature columns only, with
-    # the same header (names and order) the training CSV had.
+    test_X: list[list[Cell]] | None = Field(default=None, description=_TABLE_DOC)
+    # ... or a table file (multipart `file`, or an upload's id). When the
+    # training table was a file, columns are matched by name, so their
+    # order doesn't matter and extra columns (such as the target) are
+    # ignored; otherwise by position.
     test_upload_id: str | None = None
     return_proba: bool = False
 
@@ -226,6 +239,34 @@ def _map_error(e: Exception) -> HTTPException:
     if isinstance(e, _COMPUTE_ERRORS):
         return HTTPException(507, str(e))
     raise e
+
+
+def _request_body(model: type[BaseModel]) -> dict:
+    """OpenAPI for a body that is JSON, or multipart/form-data with the
+    same fields as form fields plus the table as a `file` part."""
+    schema = model.model_json_schema()
+    form = {
+        **schema,
+        "properties": {
+            "file": {
+                "type": "string",
+                "format": "binary",
+                "description": "The table: CSV (plain, gzip or zstd) or Parquet, "
+                "with a header row.",
+            },
+            **schema["properties"],
+        },
+        "required": ["file", *schema.get("required", [])],
+    }
+    return {
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {"schema": schema},
+                "multipart/form-data": {"schema": form},
+            },
+        }
+    }
 
 
 def _replica_tag() -> str | None:
@@ -338,10 +379,11 @@ class TabctxService:
         start = time.monotonic()
         try:
             task = resolve_task(req.train_y, req.task)
+            X, schema = learn_rows(req.train_X)
             outcome = self._engine.fit_predict(
-                rows_to_array(req.train_X),
+                X,
                 req.train_y,
-                rows_to_array(req.test_X),
+                encode_rows(req.test_X, schema),
                 task=task,
                 return_proba=req.return_proba,
             )
@@ -416,52 +458,123 @@ class TabctxService:
             served_by=_replica_tag(),
         )
 
-    @fastapi_app.post("/v1/tabctx/fit", response_model=FitResponse)
-    async def tabctx_fit(self, req: FitRequest, request: Request) -> FitResponse:
+    # ---- request bodies: JSON, or multipart/form-data with a table file ----
+
+    async def _read_request[R: BaseModel](
+        self, request: Request, model: type[R]
+    ) -> tuple[R, Path | None]:
+        """The request's fields, and its table file if it sent one. A JSON
+        body carries the fields; a multipart/form-data body carries them as
+        form fields and the table as a `file` part, written to disk (size-
+        capped as /upload is) for the caller to read and discard."""
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith("multipart/form-data"):
+            try:
+                return model.model_validate_json(await request.body()), None
+            except ValidationError as e:
+                raise RequestValidationError(e.errors()) from e
+        async with request.form(max_files=1, max_fields=16) as form:
+            upload = form.get("file")
+            if not isinstance(upload, UploadFile):
+                raise HTTPException(
+                    422, "a multipart request carries its table as a `file` part"
+                )
+            fields = {k: v for k, v in form.items() if isinstance(v, str)}
+            try:
+                req = model.model_validate(fields)
+            except ValidationError as e:
+                raise RequestValidationError(e.errors()) from e
+            return req, await self._receive(upload)
+
+    async def _receive(self, upload: UploadFile) -> Path:
+        writer = self._uploads.begin()
+        try:
+            while chunk := await upload.read(1 << 20):
+                writer.write(chunk)
+        except UploadTooLargeError as e:
+            raise _map_error(e) from e
+        except BaseException:
+            writer.abort()
+            raise
+        return writer.finish()
+
+    def _table_file(
+        self, sent: Path | None, upload_id: str | None, tenant_id: str | None
+    ) -> Path | None:
+        """The request's table file: sent with it, or an earlier upload."""
+        if sent is not None and upload_id is not None:
+            raise InvalidInputError("send a table file or an upload id, not both")
+        if upload_id is not None:
+            return self._uploads.consume(upload_id, tenant_id)
+        return sent
+
+    @fastapi_app.post(
+        "/v1/tabctx/fit",
+        response_model=FitResponse,
+        openapi_extra=_request_body(FitRequest),
+    )
+    async def tabctx_fit(self, request: Request) -> FitResponse:
+        req, file = await self._read_request(request, FitRequest)
         session_id = session_id_from_headers(request.headers)
-        return await run_in_threadpool(
-            self._fit_sync, req, dict(request.headers), session_id
-        )
+        try:
+            return await run_in_threadpool(
+                self._fit_sync, req, file, dict(request.headers), session_id
+            )
+        finally:
+            if file is not None:
+                self._uploads.discard(file)
 
     def _resolve_train_table(
-        self, req: FitRequest, tenant_id: str | None
-    ) -> tuple[object, object, list[str] | None]:
-        """Returns (X, y, feature_names_or_None) from whichever of the
-        inline / by-reference paths the request used -- exactly one."""
+        self, req: FitRequest, file: Path | None, tenant_id: str | None
+    ) -> tuple[object, object, TableSchema | None]:
+        """Returns (X, y, schema) from whichever of inline rows or a table
+        file the request used -- exactly one."""
         inline = req.train_X is not None or req.train_y is not None
-        if inline and req.train_upload_id is not None:
-            raise InvalidInputError(
-                "provide either inline train_X/train_y or train_upload_id, not both"
-            )
-        if req.train_upload_id is not None:
-            path = self._uploads.consume(req.train_upload_id, tenant_id)
-            try:
-                X, y, feature_names = parse_train_csv(path, req.task, req.target_column)
-            finally:
-                self._uploads.discard(path)
-            return X, y, feature_names
+        file = self._table_file(file, req.train_upload_id, tenant_id)
+        try:
+            if inline and file is not None:
+                raise InvalidInputError(
+                    "provide either inline train_X/train_y or a table file, not both"
+                )
+            if file is not None:
+                features, y = split_target(
+                    read_table(file), req.target_column, req.task
+                )
+                schema, X = TableSchema.learn(features.columns, features.names)
+                return X, y, schema
+        finally:
+            if file is not None:
+                self._uploads.discard(file)
         if req.train_X is None or req.train_y is None:
             raise InvalidInputError(
-                "fit needs either train_X and train_y (inline) or "
-                "train_upload_id (an uploaded CSV)"
+                "fit needs either train_X and train_y (inline) or a table file"
             )
-        return rows_to_array(req.train_X), req.train_y, None
+        X, schema = learn_rows(req.train_X)
+        return X, req.train_y, schema
 
     def _fit_sync(
-        self, req: FitRequest, headers: dict[str, str], session_id: str | None
+        self,
+        req: FitRequest,
+        file: Path | None,
+        headers: dict[str, str],
+        session_id: str | None,
     ) -> FitResponse:
         with timing.collect() as timings:
-            response = self._fit_timed(req, headers, session_id)
+            response = self._fit_timed(req, file, headers, session_id)
         response.timings_ms = timings.as_dict()
         return response
 
     def _fit_timed(
-        self, req: FitRequest, headers: dict[str, str], session_id: str | None
+        self,
+        req: FitRequest,
+        file: Path | None,
+        headers: dict[str, str],
+        session_id: str | None,
     ) -> FitResponse:
         try:
             tenant_id = resolve_tenant_id(headers)
             with timing.phase("read_table"):
-                X, y, feature_names = self._resolve_train_table(req, tenant_id)
+                X, y, schema = self._resolve_train_table(req, file, tenant_id)
             task = resolve_task(y, req.task)
             n_train = len(X)
             n_features = len(X[0]) if n_train else 0
@@ -474,17 +587,16 @@ class TabctxService:
             )
             scoped_id = scope_dataset_id(tenant_id, dataset_id)
             model_id = req.model or self._engine.default_backend
-            # A CSV-fit context records its header on the cached context
-            # so a test CSV's columns can be checked against it (a
-            # silently reordered column would mean garbage predictions);
-            # the schema lives and dies with the context, spill included.
+            # The schema (column names, text categories) is recorded on
+            # the cached context so test tables are encoded the same way;
+            # it lives and dies with the context, spill included.
             self._engine.fit(
                 X,
                 y,
                 task=task,
                 dataset_id=scoped_id,
                 backend=model_id,
-                feature_names=feature_names,
+                schema=schema,
             )
         except (
             *_AUTH_ERRORS,
@@ -504,52 +616,69 @@ class TabctxService:
             served_by=_replica_tag(),
         )
 
-    @fastapi_app.post("/v1/tabctx/predict", response_model=TabctxPredictResponse)
-    async def tabctx_predict(
-        self, req: TabctxPredictRequest, request: Request
-    ) -> TabctxPredictResponse:
+    @fastapi_app.post(
+        "/v1/tabctx/predict",
+        response_model=TabctxPredictResponse,
+        openapi_extra=_request_body(TabctxPredictRequest),
+    )
+    async def tabctx_predict(self, request: Request) -> TabctxPredictResponse:
+        req, file = await self._read_request(request, TabctxPredictRequest)
         session_id = session_id_from_headers(request.headers)
-        return await run_in_threadpool(
-            self._predict_sync, req, dict(request.headers), session_id
-        )
+        try:
+            return await run_in_threadpool(
+                self._predict_sync, req, file, dict(request.headers), session_id
+            )
+        finally:
+            if file is not None:
+                self._uploads.discard(file)
 
     def _resolve_test_table(
-        self, req: TabctxPredictRequest, tenant_id: str | None, scoped_id: str
+        self,
+        req: TabctxPredictRequest,
+        file: Path | None,
+        tenant_id: str | None,
+        scoped_id: str,
     ) -> object:
-        if req.test_X is not None and req.test_upload_id is not None:
-            raise InvalidInputError(
-                "provide either inline test_X or test_upload_id, not both"
-            )
-        if req.test_upload_id is not None:
-            path = self._uploads.consume(req.test_upload_id, tenant_id)
-            try:
-                # Schema check against the training CSV's header when the
-                # context was fit by reference; inline-fit (or unknown)
-                # contexts fall back to the engine's feature-count check.
-                return parse_features_csv(path, self._engine.feature_names(scoped_id))
-            finally:
-                self._uploads.discard(path)
-        if req.test_X is None:
-            raise InvalidInputError(
-                "predict needs either test_X (inline) or test_upload_id "
-                "(an uploaded CSV)"
-            )
-        return rows_to_array(req.test_X)
+        file = self._table_file(file, req.test_upload_id, tenant_id)
+        try:
+            if req.test_X is not None and file is not None:
+                raise InvalidInputError(
+                    "provide either inline test_X or a table file, not both"
+                )
+            if file is None and req.test_X is None:
+                raise InvalidInputError(
+                    "predict needs either test_X (inline) or a table file"
+                )
+            # Encoded as the training table was (text categories, column
+            # names); contexts from before schemas existed have none.
+            schema = self._engine.schema(scoped_id)
+            if file is None:
+                return encode_rows(req.test_X, schema)
+            text = schema.text_names if schema is not None else ()
+            table = read_table(file, text_columns=text).features(text)
+            if schema is None:
+                schema = TableSchema((None,) * len(table.columns))
+            return schema.encode(schema.select(table.names, table.columns))
+        finally:
+            if file is not None:
+                self._uploads.discard(file)
 
     def _predict_sync(
         self,
         req: TabctxPredictRequest,
+        file: Path | None,
         headers: dict[str, str],
         session_id: str | None,
     ) -> TabctxPredictResponse:
         with timing.collect() as timings:
-            response = self._predict_timed(req, headers, session_id)
+            response = self._predict_timed(req, file, headers, session_id)
         response.timings_ms = timings.as_dict()
         return response
 
     def _predict_timed(
         self,
         req: TabctxPredictRequest,
+        file: Path | None,
         headers: dict[str, str],
         session_id: str | None,
     ) -> TabctxPredictResponse:
@@ -559,7 +688,7 @@ class TabctxService:
             resolve_dataset_id(session_id, req.dataset_id)
             scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
             with timing.phase("read_table"):
-                X_test = self._resolve_test_table(req, tenant_id, scoped_id)
+                X_test = self._resolve_test_table(req, file, tenant_id, scoped_id)
             outcome = self._predictor.predict(
                 scoped_id, X_test, return_proba=req.return_proba
             )

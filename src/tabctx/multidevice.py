@@ -62,6 +62,7 @@ from tabctx.placement import (
     LeastActiveThatFits,
     PlacementPolicy,
 )
+from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -106,14 +107,14 @@ class Shard(Protocol):
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str: ...
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome: ...
 
-    def feature_names(self, dataset_id: str) -> list[str] | None: ...
+    def schema(self, dataset_id: str) -> TableSchema | None: ...
 
     def evict(self, dataset_id: str) -> None: ...
 
@@ -266,9 +267,9 @@ class MultiDeviceEngine:
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str:
-        return self._fit(X, y, task, dataset_id, backend, feature_names, announce=True)
+        return self._fit(X, y, task, dataset_id, backend, schema, announce=True)
 
     def _fit(
         self,
@@ -277,7 +278,7 @@ class MultiDeviceEngine:
         task: Task | None,
         dataset_id: str | None,
         backend: str | None,
-        feature_names: list[str] | None,
+        schema: TableSchema | None,
         announce: bool,
     ) -> str:
         """fit(); `announce` emits residency events (not for fit_predict's
@@ -289,7 +290,7 @@ class MultiDeviceEngine:
         if dataset_id is None:
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, None, name, feature_names)
+            resolved = self._fit_on(index, X, y, task, None, name, schema)
             if announce:
                 self._emit("placed", resolved, index, name)
             return resolved
@@ -298,7 +299,7 @@ class MultiDeviceEngine:
                 held.enter_context(self._id_locks.hold(dataset_id))
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
+            resolved = self._fit_on(index, X, y, task, dataset_id, name, schema)
             if announce:
                 self._emit("placed", resolved, index, name)
             # Only now that the new context is in place: drop copies on
@@ -329,7 +330,7 @@ class MultiDeviceEngine:
             ResidencyEvent(kind, dataset_id, self._devices[index], backend)
         )
 
-    def _fit_on(self, index, X, y, task, dataset_id, backend, feature_names) -> str:
+    def _fit_on(self, index, X, y, task, dataset_id, backend, schema) -> str:
         with self._active(index):
             return self._shards[index].fit(
                 X,
@@ -337,7 +338,7 @@ class MultiDeviceEngine:
                 task=task,
                 dataset_id=dataset_id,
                 backend=backend,
-                feature_names=feature_names,
+                schema=schema,
             )
 
     def predict(
@@ -362,11 +363,11 @@ class MultiDeviceEngine:
                     continue
         raise _not_found(dataset_id)
 
-    def feature_names(self, dataset_id: str) -> list[str] | None:
+    def schema(self, dataset_id: str) -> TableSchema | None:
         for index in self._locate(dataset_id):
-            names = self._shards[index].feature_names(dataset_id)
-            if names is not None:
-                return names
+            schema = self._shards[index].schema(dataset_id)
+            if schema is not None:
+                return schema
         return None
 
     def fit_predict(

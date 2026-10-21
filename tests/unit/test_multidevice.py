@@ -15,6 +15,7 @@ from tabctx.cache.spill import DiskSpillStore
 from tabctx.engine import TabctxEngine
 from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
+from tabctx.schema import TableSchema
 
 BYTES_PER_CELL = 10
 CAPACITY = 10_000  # per device: 1,000 cells resident or in flight
@@ -255,11 +256,12 @@ class TestRouting:
         dataset_id = engine.fit(*table(10, label="g"))
         assert engine.predict(dataset_id, [[0.0]]).predictions == ["g"]
 
-    def test_feature_names_follow_the_context(self):
+    def test_schema_follows_the_context(self):
         engine, _, _ = build(2)
-        engine.fit(*table(5, features=2), dataset_id="d", feature_names=["p", "q"])
-        assert engine.feature_names("d") == ["p", "q"]
-        assert engine.feature_names("missing") is None
+        schema = TableSchema((None, ("a", "b")), ("p", "q"))
+        engine.fit(*table(5, features=2), dataset_id="d", schema=schema)
+        assert engine.schema("d") == schema
+        assert engine.schema("missing") is None
 
     def test_fit_predict_leaves_nothing_cached(self):
         engine, shards, _ = build(2)
@@ -433,7 +435,7 @@ class TestConcurrency:
             engine.stats,
             engine.device_stats,
             engine.admission_headroom_bytes,
-            lambda: engine.feature_names("missing"),
+            lambda: engine.schema("missing"),
         ):
             t, box = start(call)
             t.join(3)

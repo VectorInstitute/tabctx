@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **A table file in the fit or predict request itself.** `/v1/tabctx/fit` and `/v1/tabctx/predict` take multipart/form-data as well as JSON: the same fields as form fields, the table as a `file` part (`curl -F dataset_id=churn -F target=churned -F file=@train.parquet`), so a file is one call instead of upload-then-reference. The file streams to the replica's disk under the upload size cap, is read, and is deleted. OpenAPI documents both body types.
+- **Parquet and compressed CSV.** Files (sent with the request or through `/v1/tabctx/upload`) may be CSV (plain, gzip or zstd) or Parquet, detected from the content (`serve/files.py`, pyarrow, replacing the numpy CSV parser). A 5,000 x 500 float table is 51 MB as JSON and 13 MB as Parquet; reading it takes 16 ms. `pyarrow` and `python-multipart` join the `serve` extra.
+- **Text columns** (#63). Feature cells may be text in JSON rows and files alike. At fit, each text column's values are coded in sorted order (`tabctx/schema.py`, `TableSchema`); the encoding is kept with the context (spill included) and applied at predict, where a value the training table never had becomes missing. Text where the training table had numbers is a 422 naming the column. All-number JSON tables still convert in one numpy call (validation takes ~20% longer for the wider cell type: 88 -> 108 ms for a 5,000 x 500 body).
+### Changed
+- **Test files are matched to the training file's columns by name**: any order, and extra columns (such as the target) are ignored; a missing column is a 422 naming it. A reordered header used to be a 422.
+- `CachedContext.feature_names` / `engine.feature_names()` became `CachedContext.schema` / `engine.schema()` (a `TableSchema`: names and text categories); `fit(feature_names=...)` is `fit(schema=...)`. Spill files from earlier versions load with their column names.
 
 ## [0.14.1] - 2026-10-21
 ### Fixed

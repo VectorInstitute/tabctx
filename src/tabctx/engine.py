@@ -26,6 +26,7 @@ from tabctx.errors import (
 from tabctx.labels import resolve_task
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
+from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 # Predicts of at most this many test rows against a resident context run
@@ -292,16 +293,16 @@ class TabctxEngine:
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str:
         """Encode and cache a training context. Returns a dataset_id to pass
         to predict() -- generated automatically unless the caller supplies
         one (e.g. to reuse a stable, caller-known identifier).
 
-        feature_names (optional) records the training table's column
-        names on the cached context (see CachedContext) for callers that
-        validate a test table's header against it; the engine itself only
-        ever checks feature *count*.
+        schema (optional) records how the training table's columns were
+        encoded (tabctx.schema) on the cached context, for callers that
+        encode test tables the same way; the engine itself only ever
+        checks feature *count*.
 
         Raises InvalidInputError for malformed input (mismatched X/y
         lengths, empty tables, ragged rows) before anything else -- checked
@@ -376,7 +377,7 @@ class TabctxEngine:
                     n_features=n_features,
                     payload=payload,
                     est_bytes=est_bytes,
-                    feature_names=feature_names,
+                    schema=schema,
                 )
                 self._cache.put(context)
         return resolved_id
@@ -582,9 +583,9 @@ class TabctxEngine:
             if restored is None:
                 raise _not_found(dataset_id)
 
-    def feature_names(self, dataset_id: str) -> list[str] | None:
-        """Column names recorded at fit() for a cached context, or None
-        when the context is unknown or was fit without names. Reloads a
+    def schema(self, dataset_id: str) -> TableSchema | None:
+        """The schema recorded at fit() for a cached context, or None
+        when the context is unknown or was fit without one. Reloads a
         spilled context as a side effect, exactly as predict() would."""
         if self._cache.peek(dataset_id) is None:
             try:
@@ -592,7 +593,7 @@ class TabctxEngine:
             except DatasetNotFoundError:
                 return None
         context = self._cache.peek(dataset_id)
-        return context.feature_names if context is not None else None
+        return context.schema if context is not None else None
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False

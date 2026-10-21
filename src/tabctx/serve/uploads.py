@@ -196,6 +196,15 @@ class _UploadWriter:
         self._store._register(record)
         return record
 
+    def finish(self) -> Path:
+        """Close the file and hand it to the caller, unregistered: for a
+        table sent with the request that uses it, which the caller reads
+        and then discard()s."""
+        assert self._open, "writer already committed/aborted"
+        self._open = False
+        self._file.close()
+        return self._path
+
     def abort(self) -> None:
         if self._open:
             self._open = False

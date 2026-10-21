@@ -13,6 +13,7 @@ from tabctx.memory import (
     AdaptiveMemoryEstimator,
     PowerLawMemoryEstimator,
 )
+from tabctx.schema import TableSchema
 
 
 def _ctx(dataset_id: str, est_bytes: int = 100, payload=None) -> CachedContext:
@@ -141,24 +142,38 @@ class TestCacheManagerIntegration:
         cache = ContextCacheManager(capacity_bytes=100, spill_store=spill)
         assert cache.get("big") is None
 
-    def test_feature_names_survive_the_spill_tier(self, tmp_path):
+    def test_schema_survives_the_spill_tier(self, tmp_path):
         spill = DiskSpillStore(tmp_path)
         ctx = _ctx("csv")
-        ctx.feature_names = ["age", "bmi"]
+        ctx.schema = TableSchema((None, ("f", "m")), ("age", "sex"))
         assert spill.spill(ctx)
-        assert spill.load("csv").feature_names == ["age", "bmi"]
+        assert spill.load("csv").schema == ctx.schema
 
-    def test_meta_without_feature_names_loads_as_none(self, tmp_path):
-        # Files written by a version before feature_names existed.
+    def _rewrite_meta(self, spill, dataset_id, edit):
         import json
 
+        meta_path, _ = spill._paths(dataset_id)
+        meta = json.loads(meta_path.read_text())
+        edit(meta)
+        meta_path.write_text(json.dumps(meta))
+
+    def test_meta_from_before_schemas_loads_its_names(self, tmp_path):
+        # 0.14 and earlier recorded only a CSV's column names.
         spill = DiskSpillStore(tmp_path)
         assert spill.spill(_ctx("old"))
-        meta_path, _ = spill._paths("old")
-        meta = json.loads(meta_path.read_text())
-        del meta["feature_names"]
-        meta_path.write_text(json.dumps(meta))
-        assert spill.load("old").feature_names is None
+
+        def old_format(meta):
+            del meta["schema"]
+            meta["feature_names"] = ["age", "bmi"]
+
+        self._rewrite_meta(spill, "old", old_format)
+        assert spill.load("old").schema == TableSchema((None, None), ("age", "bmi"))
+
+    def test_meta_without_any_schema_loads_as_none(self, tmp_path):
+        spill = DiskSpillStore(tmp_path)
+        assert spill.spill(_ctx("older"))
+        self._rewrite_meta(spill, "older", lambda meta: meta.pop("schema"))
+        assert spill.load("older").schema is None
 
     def test_no_spill_store_behaves_as_before(self):
         cache = ContextCacheManager(capacity_bytes=150)

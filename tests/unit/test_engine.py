@@ -7,6 +7,7 @@ from tabctx.engine import TabctxEngine
 from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
 from tabctx.memory.calibration_data import A100_40GB_TABICL_CALIBRATION
 from tabctx.memory.estimator import PowerLawMemoryEstimator
+from tabctx.schema import TableSchema
 
 TRAIN_X = [[float(i), float(i) * 2] for i in range(20)]
 TRAIN_Y = ["a" if i % 2 == 0 else "b" for i in range(20)]
@@ -163,19 +164,22 @@ def test_predict_chunks_large_test_sets_transparently():
     # every row gets exactly one prediction, in order.
 
 
-def test_feature_names_recorded_at_fit_and_queryable():
+SCHEMA = TableSchema((("lo", "hi"), None), ("band", "x"))
+
+
+def test_schema_recorded_at_fit_and_queryable():
     engine, _ = make_engine()
-    dataset_id = engine.fit(TRAIN_X, TRAIN_Y, feature_names=["f0", "f1"])
-    assert engine.feature_names(dataset_id) == ["f0", "f1"]
-    # Inline fits (no names) and unknown ids both read as None.
-    assert engine.feature_names(engine.fit(TRAIN_X, TRAIN_Y)) is None
-    assert engine.feature_names("never-fit") is None
-    # A re-fit of the same id without names must not keep stale names.
+    dataset_id = engine.fit(TRAIN_X, TRAIN_Y, schema=SCHEMA)
+    assert engine.schema(dataset_id) == SCHEMA
+    # Fits without a schema and unknown ids both read as None.
+    assert engine.schema(engine.fit(TRAIN_X, TRAIN_Y)) is None
+    assert engine.schema("never-fit") is None
+    # A re-fit of the same id without a schema must not keep a stale one.
     engine.fit(TRAIN_X, TRAIN_Y, dataset_id=dataset_id)
-    assert engine.feature_names(dataset_id) is None
+    assert engine.schema(dataset_id) is None
 
 
-def test_feature_names_survive_eviction_to_the_spill_tier(tmp_path):
+def test_schema_survives_eviction_to_the_spill_tier(tmp_path):
     from tabctx.cache.spill import DiskSpillStore
 
     backend = FakeBackend(bytes_hint=100)
@@ -184,9 +188,9 @@ def test_feature_names_survive_eviction_to_the_spill_tier(tmp_path):
     )
     estimator = PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
     engine = TabctxEngine(backend=backend, cache=cache, estimator=estimator)
-    engine.fit(TRAIN_X, TRAIN_Y, dataset_id="csv", feature_names=["f0", "f1"])
+    engine.fit(TRAIN_X, TRAIN_Y, dataset_id="csv", schema=SCHEMA)
     engine.fit(TRAIN_X, TRAIN_Y, dataset_id="other")  # spills "csv"
-    assert engine.feature_names("csv") == ["f0", "f1"]
+    assert engine.schema("csv") == SCHEMA
 
 
 def test_stats_reflect_cached_contexts():

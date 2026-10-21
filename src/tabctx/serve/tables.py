@@ -1,9 +1,10 @@
 """Inline JSON tables -> arrays for the engine.
 
-JSON has no NaN, so a missing cell arrives as ``null`` (None). Both
-backends handle missing values natively, so a null becomes NaN here and
-the table goes on as a float32 array. Converting once at the edge also
-spares the engine its per-row Python checks for large inline tables.
+JSON has no NaN, so a missing cell arrives as ``null`` (None) and becomes
+NaN; both backends handle missing values natively. A cell may also be
+text, which makes its column a text column (tabctx.schema). An all-number
+table (the common case) converts in one numpy call, so large numeric
+tables pay no per-cell Python cost.
 """
 
 from __future__ import annotations
@@ -12,15 +13,60 @@ from collections.abc import Sequence
 
 import numpy as np
 
+from tabctx.schema import TableSchema
 
-def rows_to_array(rows: Sequence[Sequence[float | None]]) -> np.ndarray | Sequence:
-    """A float array with null -> NaN, or the rows unchanged when they
-    aren't a rectangle (ragged, empty), so the engine's own validation
-    reports the problem in its usual terms."""
+Rows = Sequence[Sequence[float | str | None]]
+
+
+def rows_to_array(rows: Rows) -> np.ndarray | None:
+    """An all-number table as float32 (null -> NaN), or None when it has
+    text, isn't a rectangle, or is empty."""
     try:
-        # float32, as CSV tables are parsed: both backends compute in
+        # float32, as files are encoded: both backends compute in
         # float32/16, and it halves what crosses to the worker processes.
         arr = np.asarray(rows, dtype=np.float32)
     except (TypeError, ValueError):
+        return None
+    return arr if arr.ndim == 2 and arr.size else None
+
+
+def learn_rows(rows: Rows) -> tuple[np.ndarray | Rows, TableSchema | None]:
+    """A training table, encoded, and the schema to encode test rows with.
+    A table that isn't a non-empty rectangle comes back as is, with no
+    schema, for the engine to reject in its usual terms."""
+    arr = rows_to_array(rows)
+    if arr is not None:
+        return arr, TableSchema((None,) * arr.shape[1])
+    columns = _columns(rows)
+    if columns is None:
+        return rows, None
+    schema, X = TableSchema.learn(columns)
+    return X, schema
+
+
+def encode_rows(rows: Rows, schema: TableSchema | None) -> np.ndarray | Rows:
+    """Test rows encoded as the training table was."""
+    arr = rows_to_array(rows)
+    if arr is not None and (schema is None or not schema.has_text):
+        return arr
+    columns = _columns(rows)
+    if columns is None:
         return rows
-    return arr if arr.ndim == 2 else rows
+    if schema is None:
+        # A context fit before schemas existed: numbers only.
+        schema = TableSchema((None,) * len(columns))
+    return schema.encode(columns)
+
+
+def _columns(rows: Rows) -> list[np.ndarray] | None:
+    if not rows or not rows[0]:
+        return None
+    width = len(rows[0])
+    if any(len(row) != width for row in rows):
+        return None
+    columns = []
+    for values in zip(*rows, strict=True):
+        col = np.empty(len(values), dtype=object)
+        col[:] = values
+        columns.append(col)
+    return columns

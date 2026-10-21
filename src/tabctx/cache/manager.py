@@ -26,6 +26,7 @@ from typing import Any
 
 from tabctx.cache.policies import EvictionPolicy, LRUEvictionPolicy
 from tabctx.errors import CacheCapacityError
+from tabctx.schema import TableSchema
 from tabctx.types import EngineStats, Task
 
 logger = logging.getLogger(__name__)
@@ -40,11 +41,10 @@ class CachedContext:
     n_features: int
     payload: Any
     est_bytes: int
-    # Training-table column names when the context was fit from a CSV
-    # (serve/csv_io.py); None for inline tables. Travels with the
-    # context through the spill tier so a restored context keeps its
-    # schema check.
-    feature_names: list[str] | None = None
+    # How the training table's columns were encoded (tabctx.schema), so
+    # test tables are encoded the same way. Travels with the context
+    # through the spill tier.
+    schema: TableSchema | None = None
     created_at: float = field(default_factory=time.monotonic)
     last_accessed_at: float = field(default_factory=time.monotonic)
 
