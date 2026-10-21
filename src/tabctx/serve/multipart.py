@@ -14,13 +14,13 @@ InvalidInputError (a 422).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
 
 from python_multipart.exceptions import FormParserError
 from python_multipart.multipart import MultipartParser, parse_options_header
-from starlette.concurrency import run_in_threadpool
 
 from tabctx.errors import InvalidInputError
 
@@ -59,7 +59,7 @@ async def read_form(
         async for chunk in stream:
             parser.write(chunk)
             if form.pending:
-                await run_in_threadpool(form.flush)
+                await asyncio.to_thread(form.flush)
         parser.finalize()
         if form.in_part:
             raise InvalidInputError("the multipart body ends inside a part")
