@@ -585,7 +585,8 @@ class TabICLBackend(QuiescedMeasurement):
         # (rows, features): with compiled blocks, tabicl's fp16 autocast path
         # (1,024+ rows; the only one compiled), including a 1-feature table
         # (dynamo specializes size-1 dimensions, so they get their own
-        # graphs).
+        # graphs). Families these don't cover run eagerly once every backend
+        # in the process has warmed up (serve/factory.finish_warmup).
         shapes = ((32, 4), (1100, 4), (1100, 1)) if self._compiled else ((32, 4),)
         for rows, features in shapes:
             X = rng.normal(size=(rows, features))

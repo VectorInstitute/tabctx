@@ -65,6 +65,12 @@ Environment variables:
   host-bound, so threads contend for the GIL: measured on 4x A100, four
   concurrent fits took 2x as long each from threads, single-GPU time
   from processes.
+- ``TABCTX_COMPILE``: ``1`` (default) compiles TabICL's attention blocks
+  at warmup. ``TABCTX_COMPILE_AFTER_WARMUP``: ``0`` (default) runs call
+  shapes warmup didn't cover eagerly (process-wide, once every backend has
+  warmed up: any torch.compile in the process stops compiling new graphs);
+  ``1`` compiles them inside the requests that hit them (5-25 s per graph
+  family on an A100, ~4x on an A40; see backends/tabicl_compile.py).
 """
 
 from __future__ import annotations
@@ -117,6 +123,7 @@ UPLOAD_TTL_S_ENV_VAR = "TABCTX_UPLOAD_TTL_S"
 DEVICES_ENV_VAR = "TABCTX_DEVICES"
 WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
+COMPILE_AFTER_WARMUP_ENV_VAR = "TABCTX_COMPILE_AFTER_WARMUP"
 FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
 
 logger = logging.getLogger(__name__)
@@ -148,6 +155,10 @@ class ServeSettings:
     # torch.compile the models' hot blocks where measured to help (TabICL's
     # attention blocks: backends/tabicl_compile.py).
     compile_models: bool = True
+    # Compile graphs for call shapes warmup didn't cover, inside the
+    # requests that hit them, instead of running those eagerly (see
+    # tabicl_compile.stop_compiling_new_graphs).
+    compile_after_warmup: bool = False
     # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
     # (backends/yeo_johnson.py).
     fast_preprocessing: bool = True
@@ -241,6 +252,9 @@ class ServeSettings:
             offload_dir=offload_dir,
             worker_processes=_env_flag(WORKER_PROCESSES_ENV_VAR, cls.worker_processes),
             compile_models=_env_flag(COMPILE_ENV_VAR, cls.compile_models),
+            compile_after_warmup=_env_flag(
+                COMPILE_AFTER_WARMUP_ENV_VAR, cls.compile_after_warmup
+            ),
             fast_preprocessing=_env_flag(
                 FAST_PREPROCESSING_ENV_VAR, cls.fast_preprocessing
             ),
@@ -726,6 +740,25 @@ def build_shard(
     )
 
 
+def finish_warmup(settings: ServeSettings) -> None:
+    """Call once every backend in this process has warmed up: from then on,
+    calls no compiled graph fits run eagerly rather than compiling inside a
+    request (tabicl_compile.stop_compiling_new_graphs). Process-wide, so it
+    must wait for the last warmup -- an in-process engine over several
+    devices warms each device in turn, and graphs are per device."""
+    if not settings.compile_models or settings.compile_after_warmup:
+        return
+    from tabctx.backends.tabicl_compile import (
+        compiled_blocks_installed,
+        stop_compiling_new_graphs,
+    )
+
+    # Only a process that compiled something: on a CPU (or with no tabicl)
+    # there is nothing to protect, and the stance would outlive this engine.
+    if compiled_blocks_installed():
+        stop_compiling_new_graphs()
+
+
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     settings = settings or ServeSettings.from_env()
     devices = resolve_devices(settings)
@@ -758,6 +791,8 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         )
         for device in devices
     ]
+    if not fake_only:
+        finish_warmup(settings)
     first = shards[0]
     engine: TabctxEngine | MultiDeviceEngine = (
         MultiDeviceEngine([s.engine for s in shards], list(devices))

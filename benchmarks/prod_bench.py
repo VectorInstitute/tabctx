@@ -191,6 +191,11 @@ class GpuPoller:
         }
 
 
+CALL_LOG: list[dict] | None = None  # every call, when --log-calls is given
+_CALL_LOG_LOCK = threading.Lock()
+_START = time.monotonic()
+
+
 class Slowest:
     """The slowest calls of a phase with their server timing breakdown
     (timings_ms, from tabctx 0.14), to say where the time went."""
@@ -201,6 +206,16 @@ class Slowest:
         self._lock = threading.Lock()
 
     def add(self, seconds: float, what: str, body: dict) -> None:
+        if CALL_LOG is not None:
+            with _CALL_LOG_LOCK:
+                CALL_LOG.append(
+                    {
+                        "end_s": round(time.monotonic() - _START, 2),
+                        "s": round(seconds, 3),
+                        "call": what,
+                        "timings_ms": body.get("timings_ms"),
+                    }
+                )
         with self._lock:
             self._calls.append((seconds, what, body.get("timings_ms")))
             self._calls.sort(key=lambda c: -c[0])
@@ -357,7 +372,13 @@ def main() -> int:
     p.add_argument("--threads", type=int, default=16)
     p.add_argument("--dashboard", default="http://localhost:8265")
     p.add_argument("--save")
+    p.add_argument(
+        "--log-calls", action="store_true", help="save every call with its timings_ms"
+    )
     args = p.parse_args()
+    global CALL_LOG
+    if args.log_calls:
+        CALL_LOG = []
 
     tag = uuid.uuid4().hex[:6]
     client = Client(args.base_url, os.environ["VP_API_KEY"])
@@ -378,6 +399,8 @@ def main() -> int:
             client, tag, args.throughput_s, args.threads, poller
         )
     result["rate_limited"] = client.rate_limited
+    if CALL_LOG is not None:
+        result["calls"] = CALL_LOG
     if args.save:
         Path(args.save).write_text(json.dumps(result, indent=2) + "\n")
     print(f"done; rate-limited requests: {client.rate_limited}", flush=True)

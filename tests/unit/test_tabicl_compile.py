@@ -115,3 +115,30 @@ def test_new_graphs_compile_on_a_serving_thread_past_dynamo_default_limit():
     thread.join()
     assert counters["stats"]["unique_graphs"] == graphs + 1
     dynamo.reset()
+
+
+def test_after_warmup_uncovered_shapes_run_eagerly_instead_of_compiling():
+    from torch._dynamo import eval_frame
+    from torch._dynamo.utils import counters
+
+    from tabctx.backends.tabicl_compile import stop_compiling_new_graphs
+
+    @torch.compile(backend="eager", dynamic=False)
+    def f(x):
+        return x * 2 + 1
+
+    f(torch.ones(3))  # one graph, as warmup would leave
+    graphs = counters["stats"]["unique_graphs"]
+    before = eval_frame._stance.stance
+    try:
+        assert stop_compiling_new_graphs() is True
+        assert torch.equal(f(torch.ones(3)), torch.full((3,), 3.0))  # cached graph
+        assert torch.equal(f(torch.ones(5)), torch.full((5,), 3.0))  # new shape: eager
+        results = []
+        thread = threading.Thread(target=lambda: results.append(f(torch.ones(7))))
+        thread.start()
+        thread.join()
+        assert torch.equal(results[0], torch.full((7,), 3.0))  # another thread too
+        assert counters["stats"]["unique_graphs"] == graphs  # nothing compiled
+    finally:
+        torch.compiler.set_stance(before)
