@@ -1,6 +1,6 @@
 """Unit tests for the pure-stdlib HTTP client (client.py).
 
-urllib.request.urlopen is monkeypatched throughout -- no real network I/O,
+tabctx.client._open is monkeypatched throughout -- no real network I/O,
 no running server required. This exercises exactly what the client
 promises callers: automatic affinity/tenant headers, response parsing,
 server-error -> tabctx-exception mapping, and 503 backpressure retry.
@@ -71,9 +71,7 @@ def no_real_sleep(monkeypatch):
 
 def _install(monkeypatch, handler):
     """handler(req) -> _FakeResponse, or raises urllib.error.HTTPError."""
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda req, timeout=None: handler(req)
-    )
+    monkeypatch.setattr("tabctx.client._open", lambda req, timeout=None: handler(req))
 
 
 class TestMapStatus:
@@ -561,3 +559,58 @@ class TestBackpressureRetry:
             client.fit([[1.0]], ["a"])
         assert attempts["n"] == 1
         assert no_real_sleep == []
+
+
+class TestRedirectsAndKeys:
+    def test_redirects_are_refused_and_the_key_stays_put(self, monkeypatch):
+        import http.server
+        import threading
+
+        seen: list[dict] = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                seen.append(dict(self.headers))
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1:1/elsewhere")
+                self.end_headers()
+
+            do_POST = do_GET  # noqa: N815
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            client = TabctxClient(
+                f"http://127.0.0.1:{server.server_port}", api_key="secret-key"
+            )
+            with pytest.raises(TabctxError, match="redirect") as err:
+                client.models()
+            assert "secret-key" not in str(err.value)
+            with pytest.raises(TabctxError, match="redirect"):
+                client.fit_file(b"a,b\n1,2\n", dataset_id="d")
+            assert len(seen) == 2  # each request went to this server only
+        finally:
+            server.shutdown()
+
+    def test_a_401_without_a_key_says_how_to_send_one(self, monkeypatch):
+        monkeypatch.delenv("TABCTX_API_KEY", raising=False)
+
+        def handler(req):
+            raise _http_error(401, {"detail": "Missing API key"})
+
+        _install(monkeypatch, handler)
+        with pytest.raises(PermissionError, match="TABCTX_API_KEY"):
+            TabctxClient("http://example.test").models()
+
+
+@pytest.mark.parametrize("make", [bytes, bytearray, memoryview])
+def test_multipart_bodies_from_bytes_like_files(make):
+    from tabctx.client import _Multipart
+
+    form = _Multipart({"dataset_id": "d"}, make(b"a,b\n1,2\n"))
+    body = b"".join(form.chunks())
+    assert len(body) == form.length and b"a,b\n1,2\n" in body

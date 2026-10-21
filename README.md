@@ -29,11 +29,45 @@ endpoint**, chat-completions style -- requests pick a model by exact id
 one memory budget. A protocol seam (`backends/base.py`) keeps adding
 models cheap.
 
+## Quickstart: as a scikit-learn model
+
+```bash
+pip install "tabctx[client]"
+export TABCTX_BASE_URL=https://proxy.vectorinstitute.ai   # or your own deployment
+export TABCTX_API_KEY=...                                  # a gateway key, if it needs one
+```
+
+```python
+from sklearn.datasets import fetch_openml
+from sklearn.model_selection import train_test_split
+from tabctx import TabctxClassifier
+
+X, y = fetch_openml("credit-g", version=1, as_frame=True, return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
+
+clf = TabctxClassifier(model="tabpfn-3.5").fit(X_train, y_train)
+clf.score(X_test, y_test)          # the training table stays cached on a GPU
+clf.predict_proba(X_test)
+```
+
+`TabctxClassifier` and `TabctxRegressor` (`tabctx/estimators.py`) take
+DataFrames, arrays or lists of rows with text columns, dates and missing
+values as they are, return labels as given, and work with clone,
+pipelines and `cross_val_score`. Each table travels as one Parquet file;
+large predicts are split under the request limit (`max_request_bytes`),
+and a context the server dropped is fit again from the training file
+the estimator keeps. The API key never appears in a repr and is left out
+of pickles, so with `n_jobs > 1` or a saved model set `TABCTX_API_KEY`.
+
+The lower-level client speaks the HTTP API directly:
+
 ```python
 client = TabctxClient("http://localhost:8000")
 client.models()                                    # -> tabicl-v2, tabpfn-3.5
 client.fit(X, y, dataset_id="churn", model="tabpfn-3.5")
 client.predict("churn", X_test)                    # served by tabpfn-3.5
+client.fit_file("train.parquet", target="churned", dataset_id="churn", model="tabicl-v2")
+client.predict_file("churn", "test.csv", model="tabicl-v2")
 ```
 
 Deploy one model (`TABCTX_BACKEND=tabicl`) or several
@@ -90,7 +124,9 @@ deployment is exactly fast enough.
 
 *Figure: a request enters through Ray Serve's consistent-hash proxy
 (affinity on the session header) into a `TabctxService` replica, which
-resolves the tenant, parses inline JSON or an uploaded CSV, and coalesces
+resolves the tenant, reads inline JSON rows or a table file (CSV or
+Parquet, sent with the request or uploaded first), encodes text columns
+with the context's schema, and coalesces
 same-context predicts. With several GPUs, a `MultiDeviceEngine` places
 each fit on one GPU and routes predicts to the GPU holding the context,
 from lock-free snapshots; each GPU's engine runs in its own worker
@@ -106,8 +142,9 @@ The unit everything revolves around is a **context**: one training
 table, encoded once by one model, addressed by `dataset_id` (scoped per
 tenant) and reused by every later `predict()` against it. A context
 carries its payload (the fitted estimator with its kv cache), the model
-that fit it, its shape and, when it came from a CSV, its column names,
-plus a measured byte cost. All models deployed on a device share one
+that fit it, its shape, its schema (column names, and the codes of its
+text columns, so new rows are encoded the same way), plus a measured
+byte cost. All models deployed on a device share one
 cache and one memory budget, so admission control sees the whole
 device's usage regardless of which model a request picks.
 

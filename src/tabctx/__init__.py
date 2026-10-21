@@ -24,6 +24,27 @@ from tabctx.errors import (
 )
 from tabctx.types import EngineStats, PredictOutcome, Task
 
+# The scikit-learn estimators need scikit-learn, which tabctx itself
+# doesn't: imported on first use (`from tabctx import TabctxClassifier`).
+_ESTIMATORS = ("TabctxClassifier", "TabctxRegressor")
+
+
+def __getattr__(name: str):
+    if name in _ESTIMATORS:
+        try:
+            from tabctx import estimators
+        except ImportError as e:
+            raise ImportError(
+                f"{name} needs scikit-learn and pyarrow: pip install 'tabctx[client]'"
+            ) from e
+        return getattr(estimators, name)
+    raise AttributeError(f"module 'tabctx' has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *_ESTIMATORS])
+
+
 __all__ = [
     "AdmissionRejected",
     "BackendComputeError",

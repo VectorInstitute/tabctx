@@ -48,6 +48,9 @@ serve = [
     "pyarrow>=14",
     "python-multipart>=0.0.9",
 ]
+# The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
+# tables as Parquet (without it, gzip CSV).
+client = ["scikit-learn>=1.6", "pyarrow>=14"]
 dev = ["pytest>=7.0", "pytest-cov", "httpx"]
 
 [dependency-groups]
