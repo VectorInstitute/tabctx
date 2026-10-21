@@ -17,7 +17,9 @@ Features:
   spaces ignored).
 - Numbers stay numbers; dates and times become seconds (since the epoch,
   or since midnight for a time of day); any other text makes its column
-  a text column, encoded by tabctx.schema.
+  a text column, encoded by tabctx.schema. A Parquet string column is
+  text even when its values look like numbers ("007"); a CSV has no
+  types, so there a column of number-like text is numbers.
 
 Labels (the target column) keep their text as written: ``"1.0"`` and
 ``"01"`` are classes of their own, and ``"NA"`` can be a class among text
@@ -69,7 +71,8 @@ def read_table(path: Path, text_columns: Collection[str] = ()) -> Table:
     text whatever their values look like (a training text column must
     stay text at predict: "007" is not 7)."""
     names, arrow = _read(path, text_columns)
-    return Table(names, list(_features(arrow, names, text_columns)))
+    keep = _kept_text(path, names, text_columns)
+    return Table(names, list(_features(arrow, names, keep)))
 
 
 def read_training_table(
@@ -97,7 +100,8 @@ def read_training_table(
     labels = _labels(arrow.column(index), task, pa)
     arrow = arrow.remove_column(index)
     del names[index]
-    return Table(names, list(_features(arrow, names, ()))), labels
+    keep = _kept_text(path, names, ())
+    return Table(names, list(_features(arrow, names, keep))), labels
 
 
 # ---- labels -----------------------------------------------------------------
@@ -162,6 +166,13 @@ def _no_label(row: int) -> None:
 
 
 # ---- features ---------------------------------------------------------------
+
+
+def _kept_text(path: Path, names: list[str], text_columns: Collection[str]):
+    """Columns whose text stays text even when it looks like numbers: all
+    of a Parquet file's (it has types: a string column is text), and in a
+    CSV, which has none, the named ones."""
+    return set(names) if _is_parquet(path) else set(text_columns)
 
 
 def _features(arrow, names: list[str], text_columns: Collection[str]):

@@ -209,3 +209,9 @@ class TestLabels:
 def test_malformed_files_are_rejected_with_a_reason(tmp_path, text, match):
     with pytest.raises(InvalidInputError, match=match):
         read_table(write(tmp_path, text))
+
+
+def test_parquet_strings_stay_text_even_when_numeric(tmp_path):
+    table = pa.table({"zip": ["007", "010"], "y": ["a", "b"]})
+    features, _ = read_training_table(write(tmp_path, parquet(table)), "y", None)
+    assert list(features.columns[0]) == ["007", "010"]
