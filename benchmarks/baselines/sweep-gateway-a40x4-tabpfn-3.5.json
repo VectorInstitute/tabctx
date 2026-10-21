@@ -1,0 +1,436 @@
+{
+  "timestamp": "2026-10-20T19:11:37.899822+00:00",
+  "base_url": "https://proxy.vectorinstitute.ai/v1",
+  "model": "tabpfn-3.5",
+  "points": [
+    {
+      "n_features": 10,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.29,
+      "predict_s": 0.167,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.269,
+      "predict_s": 0.16,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.302,
+      "predict_s": 0.169,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 1000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.444,
+      "predict_s": 0.185,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 2000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.678,
+      "predict_s": 0.203,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 3500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.115,
+      "predict_s": 0.164,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 5000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.7,
+      "predict_s": 0.199,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 7500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 50.88,
+      "predict_s": 0.238,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 10000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 3.432,
+      "predict_s": 0.182,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 15000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 54.275,
+      "predict_s": 0.201,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 20000,
+      "upload": true,
+      "upload_bytes": 1671934,
+      "fit_s": 7.825,
+      "predict_s": 0.188,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 30000,
+      "upload": true,
+      "upload_bytes": 2508206,
+      "fit_s": 64.186,
+      "predict_s": 0.255,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 45000,
+      "upload": true,
+      "upload_bytes": 3763156,
+      "fit_s": 63.516,
+      "predict_s": 0.241,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 65000,
+      "upload": true,
+      "upload_bytes": 5434053,
+      "fit_s": 47.135,
+      "predict_s": 0.252,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 100000,
+      "upload": true,
+      "upload_bytes": 8361196,
+      "fit_s": 99.41,
+      "predict_s": 10.556,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 150000,
+      "upload": true,
+      "upload_bytes": 12540846,
+      "fit_s": 349.826,
+      "predict_s": 12.142,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 200000,
+      "upload": true,
+      "upload_bytes": 16721365,
+      "fit_s": 377.651,
+      "predict_s": 15.16,
+      "status": 200
+    },
+    {
+      "n_features": 10,
+      "n_rows": 300000,
+      "upload": true,
+      "upload_bytes": 25084681,
+      "fit_s": 16.317,
+      "status": 413,
+      "detail": "training shape (300000 rows x 10 features) is estimated to need 85009189259 bytes at peak, exceeding this replica's 38133081702 byte maximum admission headroom (even with an empty cache)"
+    },
+    {
+      "n_features": 100,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.316,
+      "predict_s": 0.242,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.506,
+      "predict_s": 0.241,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 500,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.742,
+      "predict_s": 0.288,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 1000,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.215,
+      "predict_s": 0.218,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 1636210,
+      "fit_s": 1.765,
+      "predict_s": 0.271,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 2862915,
+      "fit_s": 2.933,
+      "predict_s": 0.236,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 4089891,
+      "fit_s": 4.131,
+      "predict_s": 9.692,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 7500,
+      "upload": true,
+      "upload_bytes": 6135798,
+      "fit_s": 5.938,
+      "predict_s": 0.235,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 10000,
+      "upload": true,
+      "upload_bytes": 8180156,
+      "fit_s": 57.532,
+      "predict_s": 9.809,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 15000,
+      "upload": true,
+      "upload_bytes": 12271385,
+      "fit_s": 12.647,
+      "predict_s": 9.73,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 20000,
+      "upload": true,
+      "upload_bytes": 16359056,
+      "fit_s": 18.347,
+      "predict_s": 9.836,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 30000,
+      "upload": true,
+      "upload_bytes": 24539536,
+      "fit_s": 29.429,
+      "predict_s": 9.744,
+      "status": 200
+    },
+    {
+      "n_features": 100,
+      "n_rows": 45000,
+      "upload": true,
+      "upload_bytes": 36808107,
+      "fit_s": 0.304,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    },
+    {
+      "n_features": 500,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 0.752,
+      "predict_s": 0.635,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 250,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 1.394,
+      "predict_s": 0.626,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 500,
+      "upload": true,
+      "upload_bytes": 2043644,
+      "fit_s": 2.967,
+      "predict_s": 15.285,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 1000,
+      "upload": true,
+      "upload_bytes": 4084755,
+      "fit_s": 4.062,
+      "predict_s": 0.7,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 8166245,
+      "fit_s": 6.532,
+      "predict_s": 19.677,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 14287940,
+      "fit_s": 58.378,
+      "predict_s": 11.067,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 20413026,
+      "fit_s": 64.98,
+      "predict_s": 11.18,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 7500,
+      "upload": true,
+      "upload_bytes": 30619110,
+      "fit_s": 24.35,
+      "predict_s": 11.279,
+      "status": 200
+    },
+    {
+      "n_features": 500,
+      "n_rows": 10000,
+      "upload": true,
+      "upload_bytes": 40820858,
+      "fit_s": 0.349,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 100,
+      "upload": false,
+      "upload_bytes": null,
+      "fit_s": 45.213,
+      "predict_s": 0.864,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 250,
+      "upload": true,
+      "upload_bytes": 2045160,
+      "fit_s": 1.677,
+      "predict_s": 19.112,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 500,
+      "upload": true,
+      "upload_bytes": 4085478,
+      "fit_s": 4.916,
+      "predict_s": 0.93,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 1000,
+      "upload": true,
+      "upload_bytes": 8166887,
+      "fit_s": 6.528,
+      "predict_s": 13.588,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 2000,
+      "upload": true,
+      "upload_bytes": 16328370,
+      "fit_s": 12.108,
+      "predict_s": 13.025,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 3500,
+      "upload": true,
+      "upload_bytes": 28570551,
+      "fit_s": 71.939,
+      "predict_s": 13.072,
+      "status": 200
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 5000,
+      "upload": true,
+      "upload_bytes": 40817686,
+      "fit_s": 0.346,
+      "status": 413,
+      "detail": "\n<html><head>\n<meta http-equiv=\"content-type\" content=\"text/html;charset=utf-8\">\n<title>413 Request Entity Too Large</title>\n</head>\n<body text=#000000 bgcolor=#ffffff>\n<h1>Error: Request Entity Too Large</h1>\n<h2>Your client issued a request that was too large.\n</h2>\n<h2></h2>\n</body></html>\n"
+    }
+  ],
+  "max_admitted_rows": {
+    "10": 200000,
+    "100": 30000,
+    "500": 7500,
+    "1000": 3500
+  }
+}

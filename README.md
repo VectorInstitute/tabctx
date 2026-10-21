@@ -468,14 +468,38 @@ sharing one A100-40GB** (v0.7.0, 2026-08-29,
   inducing-point column attention, confirmed empirically out to 700
   columns; `benchmarks/baselines/v0.5.0-feature-sweep.json`, pre-kv-cache).
 
+## Accuracy on real datasets (through the prod gateway)
+
+Both served models were fit on public datasets (the Kaggle classics, from
+OpenML and scikit-learn) and scored on a held-out 20% split, next to
+scikit-learn's HistGradientBoosting on the same features
+(`benchmarks/eval_real_datasets.py`, 2026-10-20, tabctx 0.13.0 on 4x A40,
+`benchmarks/baselines/eval-real-gateway-a40x4.json`). Accuracy / ROC-AUC
+for classification, R² for regression; training sets capped at 10,000 rows.
+
+| Dataset | Train rows × features | Boosting | TabICLv2 | TabPFN-3.5 |
+|---|---|---|---|---|
+| Titanic | 1,047 × 7 | 0.801 / 0.867 | 0.836 / 0.891 | 0.844 / 0.885 |
+| Adult income | 10,000 × 14 | 0.862 / 0.916 | 0.869 / 0.921 | 0.875 / 0.927 |
+| Bank marketing | 10,000 × 16 | 0.896 / 0.916 | 0.908 / 0.940 | 0.908 / 0.944 |
+| German credit | 800 × 20 | 0.770 / 0.825 | 0.785 / 0.842 | 0.790 / 0.853 |
+| Breast cancer | 455 × 30 | 0.939 / 0.987 | 0.974 / 0.994 | 0.974 / 0.996 |
+| Digits (10 classes) | 1,437 × 64 | 0.961 / 1.000 | 0.994 / 1.000 | 0.994 / 1.000 |
+| California housing (R²) | 10,000 × 8 | 0.834 | 0.872 | 0.893 |
+| Ames house prices (R²) | 1,168 × 79 | 0.857 | 0.824 | 0.917 |
+
+Categorical columns were sent as integer codes and missing numbers as the
+training median, since fit and predict take numbers only. Regression needs
+`"task": "regression"` on fit.
+
 ## Status & Roadmap
 
 v0.13.0: multi-model endpoint, calibrated peak-aware admission, disk
 spillover, multi-replica routing and multi-GPU replicas with a worker
 process per GPU have all shipped and been validated on real GPUs (see
 [CHANGELOG.md](CHANGELOG.md)); 0.13.0 fixes predict chunking and
-compiled TabICL in serving (#47). Vector's 4x A40 prod node serves
-0.12.0 until it is updated. Open roadmap items are
+compiled TabICL in serving (#47), and serves on Vector's 4x A40 prod
+node. Open roadmap items are
 tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.

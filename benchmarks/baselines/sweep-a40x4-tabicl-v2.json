@@ -1,0 +1,508 @@
+{
+  "timestamp": "2026-10-20T17:14:06.643301+00:00",
+  "base_url": "http://127.0.0.1:18000/tabctx",
+  "model": "tabicl-v2",
+  "points": [
+    {
+      "n_features": 10,
+      "n_rows": 100,
+      "upload": false,
+      "fit_s": 0.414,
+      "status": 200,
+      "predict_s": 0.146
+    },
+    {
+      "n_features": 10,
+      "n_rows": 250,
+      "upload": false,
+      "fit_s": 0.425,
+      "status": 200,
+      "predict_s": 0.169
+    },
+    {
+      "n_features": 10,
+      "n_rows": 500,
+      "upload": false,
+      "fit_s": 0.453,
+      "status": 200,
+      "predict_s": 0.168
+    },
+    {
+      "n_features": 10,
+      "n_rows": 1000,
+      "upload": false,
+      "fit_s": 0.66,
+      "status": 200,
+      "predict_s": 0.168
+    },
+    {
+      "n_features": 10,
+      "n_rows": 2000,
+      "upload": false,
+      "fit_s": 0.625,
+      "status": 200,
+      "predict_s": 0.155
+    },
+    {
+      "n_features": 10,
+      "n_rows": 3500,
+      "upload": false,
+      "fit_s": 0.689,
+      "status": 200,
+      "predict_s": 0.167
+    },
+    {
+      "n_features": 10,
+      "n_rows": 5000,
+      "upload": false,
+      "fit_s": 0.89,
+      "status": 200,
+      "predict_s": 0.186
+    },
+    {
+      "n_features": 10,
+      "n_rows": 7500,
+      "upload": false,
+      "fit_s": 1.172,
+      "status": 200,
+      "predict_s": 0.187
+    },
+    {
+      "n_features": 10,
+      "n_rows": 10000,
+      "upload": false,
+      "fit_s": 1.456,
+      "status": 200,
+      "predict_s": 0.175
+    },
+    {
+      "n_features": 10,
+      "n_rows": 15000,
+      "upload": false,
+      "fit_s": 2.43,
+      "status": 200,
+      "predict_s": 0.193
+    },
+    {
+      "n_features": 10,
+      "n_rows": 20000,
+      "upload": true,
+      "fit_s": 2.582,
+      "status": 200,
+      "predict_s": 0.167
+    },
+    {
+      "n_features": 10,
+      "n_rows": 30000,
+      "upload": true,
+      "fit_s": 4.336,
+      "status": 200,
+      "predict_s": 0.224
+    },
+    {
+      "n_features": 10,
+      "n_rows": 45000,
+      "upload": true,
+      "fit_s": 8.059,
+      "status": 200,
+      "predict_s": 0.236
+    },
+    {
+      "n_features": 10,
+      "n_rows": 65000,
+      "upload": true,
+      "fit_s": 13.417,
+      "status": 200,
+      "predict_s": 0.257
+    },
+    {
+      "n_features": 10,
+      "n_rows": 100000,
+      "upload": true,
+      "fit_s": 26.68,
+      "status": 200,
+      "predict_s": 0.286
+    },
+    {
+      "n_features": 10,
+      "n_rows": 150000,
+      "upload": true,
+      "status": 413,
+      "fit_s": 2.522,
+      "detail": "training shape (150000 rows x 10 features) is estimated to need 66908780194 bytes at peak, exceeding this replica's 38133081702 byte maximum admission headroom (even with an empty cache)"
+    },
+    {
+      "n_features": 100,
+      "n_rows": 100,
+      "upload": false,
+      "fit_s": 0.514,
+      "status": 200,
+      "predict_s": 0.208
+    },
+    {
+      "n_features": 100,
+      "n_rows": 250,
+      "upload": false,
+      "fit_s": 0.607,
+      "status": 200,
+      "predict_s": 0.179
+    },
+    {
+      "n_features": 100,
+      "n_rows": 500,
+      "upload": false,
+      "fit_s": 0.746,
+      "status": 200,
+      "predict_s": 0.188
+    },
+    {
+      "n_features": 100,
+      "n_rows": 1000,
+      "upload": false,
+      "fit_s": 1.007,
+      "status": 200,
+      "predict_s": 0.248
+    },
+    {
+      "n_features": 100,
+      "n_rows": 2000,
+      "upload": true,
+      "fit_s": 1.019,
+      "status": 200,
+      "predict_s": 0.287
+    },
+    {
+      "n_features": 100,
+      "n_rows": 3500,
+      "upload": true,
+      "fit_s": 1.537,
+      "status": 200,
+      "predict_s": 0.297
+    },
+    {
+      "n_features": 100,
+      "n_rows": 5000,
+      "upload": true,
+      "fit_s": 2.262,
+      "status": 200,
+      "predict_s": 0.292
+    },
+    {
+      "n_features": 100,
+      "n_rows": 7500,
+      "upload": true,
+      "fit_s": 2.57,
+      "status": 200,
+      "predict_s": 0.223
+    },
+    {
+      "n_features": 100,
+      "n_rows": 10000,
+      "upload": true,
+      "fit_s": 3.42,
+      "status": 200,
+      "predict_s": 0.37
+    },
+    {
+      "n_features": 100,
+      "n_rows": 15000,
+      "upload": true,
+      "fit_s": 5.574,
+      "status": 200,
+      "predict_s": 0.328
+    },
+    {
+      "n_features": 100,
+      "n_rows": 20000,
+      "upload": true,
+      "fit_s": 7.172,
+      "status": 200,
+      "predict_s": 0.285
+    },
+    {
+      "n_features": 100,
+      "n_rows": 30000,
+      "upload": true,
+      "fit_s": 12.576,
+      "status": 200,
+      "predict_s": 0.312
+    },
+    {
+      "n_features": 100,
+      "n_rows": 45000,
+      "upload": true,
+      "fit_s": 20.22,
+      "status": 200,
+      "predict_s": 0.374
+    },
+    {
+      "n_features": 100,
+      "n_rows": 65000,
+      "upload": true,
+      "fit_s": 28.409,
+      "status": 200,
+      "predict_s": 0.357
+    },
+    {
+      "n_features": 100,
+      "n_rows": 100000,
+      "upload": true,
+      "fit_s": 102.56,
+      "status": 200,
+      "predict_s": 0.339
+    },
+    {
+      "n_features": 100,
+      "n_rows": 150000,
+      "upload": true,
+      "status": 413,
+      "fit_s": 13.217,
+      "detail": "training shape (150000 rows x 100 features) is estimated to need 70067285564 bytes at peak, exceeding this replica's 38133081702 byte maximum admission headroom (even with an empty cache)"
+    },
+    {
+      "n_features": 500,
+      "n_rows": 100,
+      "upload": false,
+      "fit_s": 1.185,
+      "status": 200,
+      "predict_s": 0.602
+    },
+    {
+      "n_features": 500,
+      "n_rows": 250,
+      "upload": false,
+      "fit_s": 1.729,
+      "status": 200,
+      "predict_s": 0.639
+    },
+    {
+      "n_features": 500,
+      "n_rows": 500,
+      "upload": true,
+      "fit_s": 1.51,
+      "status": 200,
+      "predict_s": 0.478
+    },
+    {
+      "n_features": 500,
+      "n_rows": 1000,
+      "upload": true,
+      "fit_s": 1.969,
+      "status": 200,
+      "predict_s": 0.403
+    },
+    {
+      "n_features": 500,
+      "n_rows": 2000,
+      "upload": true,
+      "fit_s": 3.585,
+      "status": 200,
+      "predict_s": 0.494
+    },
+    {
+      "n_features": 500,
+      "n_rows": 3500,
+      "upload": true,
+      "fit_s": 6.434,
+      "status": 200,
+      "predict_s": 24.048
+    },
+    {
+      "n_features": 500,
+      "n_rows": 5000,
+      "upload": true,
+      "fit_s": 8.381,
+      "status": 200,
+      "predict_s": 26.214
+    },
+    {
+      "n_features": 500,
+      "n_rows": 7500,
+      "upload": true,
+      "fit_s": 11.635,
+      "status": 200,
+      "predict_s": 23.81
+    },
+    {
+      "n_features": 500,
+      "n_rows": 10000,
+      "upload": true,
+      "fit_s": 14.304,
+      "status": 200,
+      "predict_s": 25.091
+    },
+    {
+      "n_features": 500,
+      "n_rows": 15000,
+      "upload": true,
+      "fit_s": 21.473,
+      "status": 200,
+      "predict_s": 23.89
+    },
+    {
+      "n_features": 500,
+      "n_rows": 20000,
+      "upload": true,
+      "fit_s": 34.795,
+      "status": 200,
+      "predict_s": 25.642
+    },
+    {
+      "n_features": 500,
+      "n_rows": 30000,
+      "upload": true,
+      "fit_s": 111.825,
+      "status": 200,
+      "predict_s": 24.372
+    },
+    {
+      "n_features": 500,
+      "n_rows": 45000,
+      "upload": true,
+      "fit_s": 137.875,
+      "status": 200,
+      "predict_s": 24.221
+    },
+    {
+      "n_features": 500,
+      "n_rows": 65000,
+      "upload": true,
+      "status": "error",
+      "detail": "TabctxError: HTTP 408: HTTP 408"
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 100,
+      "upload": false,
+      "fit_s": 32.556,
+      "status": 200,
+      "predict_s": 0.82
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 250,
+      "upload": true,
+      "fit_s": 32.569,
+      "status": 200,
+      "predict_s": 0.957
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 500,
+      "upload": true,
+      "fit_s": 33.669,
+      "status": 200,
+      "predict_s": 0.733
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 1000,
+      "upload": true,
+      "fit_s": 33.426,
+      "status": 200,
+      "predict_s": 30.133
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 2000,
+      "upload": true,
+      "fit_s": 37.932,
+      "status": 200,
+      "predict_s": 30.165
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 3500,
+      "upload": true,
+      "fit_s": 43.076,
+      "status": 200,
+      "predict_s": 30.13
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 5000,
+      "upload": true,
+      "fit_s": 47.059,
+      "status": 200,
+      "predict_s": 29.941
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 7500,
+      "upload": true,
+      "fit_s": 338.551,
+      "status": 200,
+      "predict_s": 30.777
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 10000,
+      "upload": true,
+      "fit_s": 90.931,
+      "status": 200,
+      "predict_s": 30.21
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 15000,
+      "upload": true,
+      "fit_s": 113.38,
+      "status": 200,
+      "predict_s": 30.512
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 20000,
+      "upload": true,
+      "fit_s": 121.561,
+      "status": 200,
+      "predict_s": 30.255
+    },
+    {
+      "n_features": 1000,
+      "n_rows": 30000,
+      "upload": true,
+      "status": "error",
+      "detail": "TabctxError: HTTP 408: HTTP 408"
+    }
+  ],
+  "max_admitted_rows": {
+    "10": 100000,
+    "100": 100000,
+    "500": 45000,
+    "1000": 20000
+  },
+  "limits": {
+    "models": [
+      "tabicl-v2",
+      "tabpfn-3.5"
+    ],
+    "default_model": "tabicl-v2",
+    "cache_mode": "kv",
+    "memory_ceiling_bytes": 28917960449,
+    "admission_headroom_bytes": 34455872102,
+    "cache_used_bytes": 31722104320,
+    "gpu_memory_fraction": 1.0,
+    "gpu_capacity_bytes": 47697690624,
+    "devices": [
+      "cuda:0",
+      "cuda:1",
+      "cuda:2",
+      "cuda:3"
+    ],
+    "device_admission_headroom_bytes": [
+      27793179750,
+      34455872102,
+      27924918374,
+      30636252262
+    ],
+    "max_admissible_train_rows_by_feature_count": {
+      "10": 100000,
+      "50": 100000,
+      "100": 100000,
+      "200": 70515,
+      "500": 69686
+    },
+    "note": "Admission limits are per-replica, usage-aware (they shrink as this replica's cache fills and recover as contexts are evicted), and adaptive: they loosen for shapes similar to ones this replica has measured. A rejected fit returns 413 with the same numbers. With several GPUs, a table must fit on one of them: the limits are the best single device's."
+  }
+}

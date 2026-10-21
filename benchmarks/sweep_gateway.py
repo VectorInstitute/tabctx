@@ -59,7 +59,9 @@ class Gateway:
         body = json.dumps(payload | {"model": self._model}).encode()
         return self._send(path, body, {"Content-Type": "application/json"})
 
-    def fit(self, encoded, dataset_id: str) -> tuple[int, dict]:
+    def fit(
+        self, encoded, dataset_id: str, task: str = "classification"
+    ) -> tuple[int, dict]:
         kind, data = encoded
         if kind == "csv":
             status, out = self._send(
@@ -77,11 +79,14 @@ class Gateway:
         else:
             X, y = data
             payload = {"dataset_id": dataset_id, "train_X": X, "train_y": y}
-        return self._post_json("/tabctx/fit", payload)
+        return self._post_json("/tabctx/fit", payload | {"task": task})
 
-    def predict(self, dataset_id: str, X_test: list) -> tuple[int, dict]:
+    def predict(
+        self, dataset_id: str, X_test: list, return_proba: bool = False
+    ) -> tuple[int, dict]:
         return self._post_json(
-            "/tabctx/predict", {"dataset_id": dataset_id, "test_X": X_test}
+            "/tabctx/predict",
+            {"dataset_id": dataset_id, "test_X": X_test, "return_proba": return_proba},
         )
 
 
