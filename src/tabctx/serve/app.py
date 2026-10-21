@@ -88,8 +88,9 @@ _TABLE_DOC = "Rows of numbers; null marks a missing value."
 
 _TASK_DOC = (
     "classification or regression. Omit it to infer from train_y: non-integer "
-    "numbers, or whole numbers with more than 30 distinct values, mean "
-    "regression; anything else (text, class codes) classification."
+    "numbers, or whole numbers with more distinct values than both 30 and 5% "
+    "of the rows, mean regression; anything else (text, class codes) "
+    "classification."
 )
 
 
@@ -111,6 +112,9 @@ _PREDICTIONS_DOC = (
 
 
 class LegacyPredictResponse(BaseModel):
+    task: Literal["classification", "regression"] | None = Field(
+        default=None, description="The task fit: the request's, or inferred."
+    )
     request_id: str
     predictions: list = Field(description=_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
@@ -316,11 +320,12 @@ class TabctxService:
             torch.cuda.reset_peak_memory_stats(d)
         start = time.monotonic()
         try:
+            task = resolve_task(req.train_y, req.task)
             outcome = self._engine.fit_predict(
                 rows_to_array(req.train_X),
                 req.train_y,
                 rows_to_array(req.test_X),
-                task=req.task,
+                task=task,
                 return_proba=req.return_proba,
             )
         except (
@@ -353,6 +358,7 @@ class TabctxService:
             gpu_memory,
         )
         return LegacyPredictResponse(
+            task=task,
             request_id=request_id,
             predictions=outcome.predictions,
             probabilities=outcome.probabilities,

@@ -60,3 +60,4 @@ def test_legacy_predict_infers_the_task_too(two_replica_service):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["classes"] is None  # regression has none
+    assert resp.json()["task"] == "regression"

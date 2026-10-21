@@ -26,9 +26,13 @@ from tabctx.types import ArrayLike, Task
 
 _REGRESSION_HINT = "if train_y is a continuous target, pass task='regression'"
 
-# Whole-number labels with more distinct values than this are inferred to
-# be a quantity, not class codes (an explicit task overrides).
+# Whole-number labels are inferred to be a quantity, not class codes, when
+# they take more distinct values than both of these: more than a class list
+# usually has, and too many for each to be a class seen several times (an
+# explicit task overrides). 50 state codes in 1,000 rows stay classes; 573
+# sale prices in 1,168 rows are a quantity.
 MAX_INFERRED_CLASSES = 30
+MAX_INFERRED_CLASS_SHARE = 0.05
 
 
 def _as_numbers(y: ArrayLike) -> np.ndarray | None:
@@ -62,15 +66,16 @@ def _fractional(values: np.ndarray) -> np.ndarray:
 
 def infer_task(y: ArrayLike) -> Task:
     """Regression when every label is a number and some aren't whole, or
-    when whole numbers take more than MAX_INFERRED_CLASSES distinct values;
-    classification otherwise, which keeps class codes (0, 1, 2, ...) and
-    text labels classes."""
+    when whole numbers take more distinct values than MAX_INFERRED_CLASSES
+    and MAX_INFERRED_CLASS_SHARE of the rows; classification otherwise,
+    which keeps class codes (0, 1, 2, ...) and text labels classes."""
     values = _as_numbers(y)
     if values is not None:
         _check_finite(values)
         if _fractional(values).any():
             return "regression"
-        if np.unique(values).size > MAX_INFERRED_CLASSES:
+        distinct = np.unique(values).size
+        if distinct > max(MAX_INFERRED_CLASSES, MAX_INFERRED_CLASS_SHARE * values.size):
             return "regression"
     return "classification"
 

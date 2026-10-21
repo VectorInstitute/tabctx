@@ -137,8 +137,8 @@ estimator = AdaptiveMemoryEstimator(fallback=PowerLawMemoryEstimator(A100_40GB_T
 cache = ContextCacheManager(capacity_bytes=estimator.ceiling_bytes())
 engine = TabctxEngine(backend=TabICLBackend(), cache=cache, estimator=estimator)
 
-# task is inferred from y_train when omitted (non-integer numbers, or more
-# than 30 distinct whole numbers, mean regression); pass
+# task is inferred from y_train when omitted (non-integer numbers, or many
+# distinct whole numbers such as prices, mean regression); pass
 # task="classification" or "regression" to be explicit. Missing values
 # (NaN, or null in JSON) are fine: both models handle them.
 dataset_id = engine.fit(X_train, y_train)

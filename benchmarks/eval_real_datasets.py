@@ -187,7 +187,7 @@ def prepare(
 
 def _json_rows(arr: np.ndarray) -> list[list[float | None]]:
     """JSON has no NaN: a missing cell goes as null."""
-    return [[None if np.isnan(v) else float(v) for v in row] for row in arr]
+    return np.where(np.isnan(arr), None, arr).tolist()
 
 
 def score(

@@ -2,7 +2,7 @@
 
 JSON has no NaN, so a missing cell arrives as ``null`` (None). Both
 backends handle missing values natively, so a null becomes NaN here and
-the table goes on as a float array. Converting once at the edge also
+the table goes on as a float32 array. Converting once at the edge also
 spares the engine its per-row Python checks for large inline tables.
 """
 
@@ -18,7 +18,9 @@ def rows_to_array(rows: Sequence[Sequence[float | None]]) -> np.ndarray | Sequen
     aren't a rectangle (ragged, empty), so the engine's own validation
     reports the problem in its usual terms."""
     try:
-        arr = np.asarray(rows, dtype=float)
+        # float32, as CSV tables are parsed: both backends compute in
+        # float32/16, and it halves what crosses to the worker processes.
+        arr = np.asarray(rows, dtype=np.float32)
     except (TypeError, ValueError):
         return rows
     return arr if arr.ndim == 2 else rows

@@ -66,6 +66,15 @@ class TestParseTrainCsv:
         with pytest.raises(InvalidInputError, match="row 2 has no label"):
             parse_train_csv(p, "classification")
 
+    def test_na_in_a_numeric_target_column_is_a_missing_label(self, tmp_path):
+        p = _write(tmp_path, "f0,y\n1,2.5\n2,NA\n3,1.5\n")
+        with pytest.raises(InvalidInputError, match="row 2 has no label"):
+            parse_train_csv(p, None)
+
+    def test_na_among_text_classes_is_a_class(self, tmp_path):
+        p = _write(tmp_path, "f0,label\n1,cat\n2,NA\n3,dog\n")
+        assert parse_train_csv(p, None)[1] == ["cat", "NA", "dog"]
+
     def test_missing_test_values_become_nan(self, tmp_path):
         p = _write(tmp_path, "f0,f1\n,1\n2,NA\n")
         assert np.isnan(parse_features_csv(p)).tolist() == [

@@ -11,7 +11,8 @@ transport, not a general CSV ingester):
 - Feature columns must be numeric; parsed as float32 (halves memory for
   the 10^5-10^6-row tables this path exists for; both backends compute
   in float32/16 internally anyway). An empty cell, ``NA``, ``N/A``,
-  ``null`` or ``NaN`` is a missing value (NaN), which both backends handle.
+  ``null``, ``None`` or ``NaN`` is a missing value (NaN), which both
+  backends handle.
 - For training CSVs, one column is the target (``target_column``, or the
   LAST column when unspecified). Target values parse as strings for
   classification and floats for regression; with no task given, the
@@ -92,6 +93,17 @@ def _read_text_column(path: Path, index: int) -> list[str]:
     return labels
 
 
+def _reject_missing_numeric_labels(labels: list[str]) -> None:
+    """In a numeric target column, NA/null/NaN is a missing label, not a
+    class called "NA": every training row needs one."""
+    missing = [i for i, t in enumerate(labels) if t.lower() in _MISSING]
+    if missing and _floats_or_none([t for t in labels if t.lower() not in _MISSING]):
+        raise InvalidInputError(
+            f"train target: row {missing[0] + 1} has no label ({labels[missing[0]]!r}); "
+            "every training row needs one"
+        )
+
+
 def _floats_or_none(texts: list[str]) -> list[float] | None:
     try:
         return [float(t) for t in texts]
@@ -125,6 +137,7 @@ def parse_train_csv(
         # CSV has no types: a target column that parses as numbers is
         # numbers, and those decide the task; anything else is classes.
         y = _read_text_column(path, target_idx)
+        _reject_missing_numeric_labels(y)
         values = _floats_or_none(y)
         if values is not None and infer_task(values) == "regression":
             y = values

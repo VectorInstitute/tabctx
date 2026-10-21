@@ -9,7 +9,7 @@ from tabctx.serve.tables import rows_to_array
 
 def test_null_cells_become_nan():
     arr = rows_to_array([[1.0, None], [None, 2.0]])
-    assert isinstance(arr, np.ndarray) and arr.dtype == float
+    assert isinstance(arr, np.ndarray) and arr.dtype == np.float32
     assert math.isnan(arr[0, 1]) and math.isnan(arr[1, 0])
     assert arr[0, 0] == 1.0 and arr[1, 1] == 2.0
 
