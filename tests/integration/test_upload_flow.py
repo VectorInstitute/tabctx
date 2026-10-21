@@ -70,18 +70,21 @@ def test_uploads_are_single_use(two_replica_service):
         client.fit_uploaded(upload_id, dataset_id)
 
 
-def test_test_csv_schema_mismatch_is_422(two_replica_service):
+def test_test_csv_columns_are_matched_by_name(two_replica_service):
     client = TabctxClient(two_replica_service)
     dataset_id = "upload-schema"
     upload_id = client.upload_csv(_train_csv(30, 3), dataset_id)
     client.fit_uploaded(upload_id, dataset_id)
 
-    # Wrong column ORDER with the right names -- silently accepting this
-    # would produce garbage predictions.
-    bad = b"f1,f0,f2\n1,2,3\n"
-    bad_upload = client.upload_csv(bad, dataset_id)
-    with pytest.raises(InvalidInputError, match="do not match"):
-        client.predict(dataset_id, test_upload_id=bad_upload)
+    # Any order, extra columns (such as the label) ignored ...
+    reordered = client.upload_csv(b"f2,label,f1,f0\n3,x,1,2\n", dataset_id)
+    assert client.predict(dataset_id, test_upload_id=reordered).predictions == ["hot"]
+    # ... but a missing training column is an error, not a guess.
+    missing = client.upload_csv(b"f1,f0\n1,2\n", dataset_id)
+    with pytest.raises(
+        InvalidInputError, match=r"missing training column\(s\) \['f2'\]"
+    ):
+        client.predict(dataset_id, test_upload_id=missing)
 
 
 def test_uploads_are_tenant_scoped(two_replica_service):
@@ -99,7 +102,7 @@ def test_both_paths_in_one_request_rejected(two_replica_service):
     client = TabctxClient(two_replica_service)
     dataset_id = "upload-both"
     upload_id = client.upload_csv(_train_csv(30, 3), dataset_id)
-    with pytest.raises(InvalidInputError, match="not both"):
+    with pytest.raises(InvalidInputError, match="got several"):
         client._post(
             "/v1/tabctx/fit",
             {
@@ -114,7 +117,7 @@ def test_both_paths_in_one_request_rejected(two_replica_service):
 
 def test_neither_path_rejected(two_replica_service):
     client = TabctxClient(two_replica_service)
-    with pytest.raises(InvalidInputError, match="either"):
+    with pytest.raises(InvalidInputError, match="got none"):
         client._post(
             "/v1/tabctx/fit",
             {"dataset_id": "upload-neither"},

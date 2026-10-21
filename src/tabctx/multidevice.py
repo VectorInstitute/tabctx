@@ -55,6 +55,7 @@ from tabctx import timing
 from tabctx.engine import _validate_fit_input
 from tabctx.errors import DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
+from tabctx.keyed_locks import KeyedLocks
 from tabctx.labels import resolve_task
 from tabctx.placement import (
     DeviceView,
@@ -62,6 +63,7 @@ from tabctx.placement import (
     LeastActiveThatFits,
     PlacementPolicy,
 )
+from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -106,38 +108,16 @@ class Shard(Protocol):
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str: ...
 
     def predict(
         self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
     ) -> PredictOutcome: ...
 
-    def feature_names(self, dataset_id: str) -> list[str] | None: ...
+    def schema(self, dataset_id: str) -> TableSchema | None: ...
 
     def evict(self, dataset_id: str) -> None: ...
-
-
-class _KeyedLocks:
-    """One lock per key, created on demand and dropped when unused."""
-
-    def __init__(self) -> None:
-        self._guard = threading.Lock()
-        self._locks: dict[str, list] = {}  # key -> [lock, users]
-
-    @contextlib.contextmanager
-    def hold(self, key: str) -> Iterator[None]:
-        with self._guard:
-            entry = self._locks.setdefault(key, [threading.Lock(), 0])
-            entry[1] += 1
-        try:
-            with entry[0]:
-                yield
-        finally:
-            with self._guard:
-                entry[1] -= 1
-                if entry[1] == 0:
-                    del self._locks[key]
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -165,7 +145,7 @@ class MultiDeviceEngine:
             raise ValueError("every device must serve the same models")
         self._shards = shards
         self._devices = devices
-        self._id_locks = _KeyedLocks()
+        self._id_locks = KeyedLocks()
         self._window_s = activity_window_s
         self._clock = clock
         self._inflight = [0] * len(shards)
@@ -266,9 +246,9 @@ class MultiDeviceEngine:
         task: Task | None = None,
         dataset_id: str | None = None,
         backend: str | None = None,
-        feature_names: list[str] | None = None,
+        schema: TableSchema | None = None,
     ) -> str:
-        return self._fit(X, y, task, dataset_id, backend, feature_names, announce=True)
+        return self._fit(X, y, task, dataset_id, backend, schema, announce=True)
 
     def _fit(
         self,
@@ -277,7 +257,7 @@ class MultiDeviceEngine:
         task: Task | None,
         dataset_id: str | None,
         backend: str | None,
-        feature_names: list[str] | None,
+        schema: TableSchema | None,
         announce: bool,
     ) -> str:
         """fit(); `announce` emits residency events (not for fit_predict's
@@ -289,7 +269,7 @@ class MultiDeviceEngine:
         if dataset_id is None:
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, None, name, feature_names)
+            resolved = self._fit_on(index, X, y, task, None, name, schema)
             if announce:
                 self._emit("placed", resolved, index, name)
             return resolved
@@ -298,7 +278,7 @@ class MultiDeviceEngine:
                 held.enter_context(self._id_locks.hold(dataset_id))
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, dataset_id, name, feature_names)
+            resolved = self._fit_on(index, X, y, task, dataset_id, name, schema)
             if announce:
                 self._emit("placed", resolved, index, name)
             # Only now that the new context is in place: drop copies on
@@ -329,7 +309,7 @@ class MultiDeviceEngine:
             ResidencyEvent(kind, dataset_id, self._devices[index], backend)
         )
 
-    def _fit_on(self, index, X, y, task, dataset_id, backend, feature_names) -> str:
+    def _fit_on(self, index, X, y, task, dataset_id, backend, schema) -> str:
         with self._active(index):
             return self._shards[index].fit(
                 X,
@@ -337,7 +317,7 @@ class MultiDeviceEngine:
                 task=task,
                 dataset_id=dataset_id,
                 backend=backend,
-                feature_names=feature_names,
+                schema=schema,
             )
 
     def predict(
@@ -362,12 +342,13 @@ class MultiDeviceEngine:
                     continue
         raise _not_found(dataset_id)
 
-    def feature_names(self, dataset_id: str) -> list[str] | None:
+    def schema(self, dataset_id: str) -> TableSchema | None:
         for index in self._locate(dataset_id):
-            names = self._shards[index].feature_names(dataset_id)
-            if names is not None:
-                return names
-        return None
+            try:
+                return self._shards[index].schema(dataset_id)
+            except DatasetNotFoundError:
+                continue  # moved or evicted since the snapshot
+        raise _not_found(dataset_id)
 
     def fit_predict(
         self,

@@ -46,6 +46,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from tabctx.cache.manager import CachedContext
+from tabctx.schema import TableSchema
 
 DEFAULT_SPILL_CAPACITY_BYTES = 50 * 1024**3
 
@@ -122,7 +123,13 @@ class DiskSpillStore:
                         "n_train": context.n_train,
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
-                        "feature_names": context.feature_names,
+                        "schema": context.schema.to_json() if context.schema else None,
+                        # Read by 0.14 and earlier (a rollback keeps names).
+                        "feature_names": (
+                            list(context.schema.names)
+                            if context.schema and context.schema.names
+                            else None
+                        ),
                     }
                 )
             )
@@ -163,8 +170,7 @@ class DiskSpillStore:
             n_features=meta["n_features"],
             payload=payload,
             est_bytes=meta["est_bytes"],
-            # Absent from files written before feature_names existed.
-            feature_names=meta.get("feature_names"),
+            schema=_schema(meta),
         )
 
     def est_bytes(self, dataset_id: str) -> int | None:
@@ -214,3 +220,14 @@ class DiskSpillStore:
             "spill_used_bytes": self.used_bytes,
             "spill_capacity_bytes": self._capacity_bytes,
         }
+
+
+def _schema(meta: dict) -> TableSchema | None:
+    """The spilled context's schema; files from before schemas existed
+    may record only column names (all numeric then)."""
+    if meta.get("schema") is not None:
+        return TableSchema.from_json(meta["schema"])
+    names = meta.get("feature_names")
+    if names is None:
+        return None
+    return TableSchema((None,) * len(names), tuple(names))

@@ -40,7 +40,14 @@ tabpfn = ["tabpfn", "torch"]
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).
 # jinja2 is imported unconditionally by ray.serve's haproxy module but
 # missing from some ray[serve] distributions (seen on a clean CI install).
-serve = ["ray[serve]>=2.58.0", "fastapi", "uvicorn[standard]", "jinja2"]
+serve = [
+    "ray[serve]>=2.58.0",
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "pyarrow>=14",
+    "python-multipart>=0.0.9",
+]
 dev = ["pytest>=7.0", "pytest-cov", "httpx"]
 
 [dependency-groups]
@@ -52,6 +59,8 @@ dev = [
     "httpx",
     "pre-commit",
     "ruff",
+    "pyarrow>=14",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.ruff]

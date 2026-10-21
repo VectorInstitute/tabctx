@@ -145,12 +145,15 @@ def probe_uploads(client: TabctxClient, prefix: str, args) -> None:
         check("uploads are single-use -> 404", False, "no error raised")
     except UploadNotFoundError:
         check("uploads are single-use -> 404", True)
-    bad = client.upload_csv(to_csv(X[:5], None, names[::-1]), ds)
+    reordered = client.upload_csv(to_csv(X[:5], None, names[::-1]), ds)
+    r = client.predict(ds, test_upload_id=reordered)
+    check("reordered test header matched by name", len(r.predictions) == 5)
+    bad = client.upload_csv(to_csv(X[:5, 1:], None, names[1:]), ds)
     try:
         client.predict(ds, test_upload_id=bad)
-        check("reordered test header -> 422", False, "no error raised")
+        check("missing test column -> 422", False, "no error raised")
     except InvalidInputError:
-        check("reordered test header -> 422", True)
+        check("missing test column -> 422", True)
     check(
         "inline predict on CSV-fit context",
         len(client.predict(ds, X[:3].tolist()).predictions) == 3,

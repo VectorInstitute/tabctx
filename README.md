@@ -261,17 +261,40 @@ behind the same API. No client changes and no routing header needed.
   `per_device`); `/v1/tabctx/limits` reports the best single GPU's
   headroom and each device's.
 
-## Large tables: upload, then fit by reference
+## Table files and text columns
+
+A fit or predict can send its table as rows of JSON, or as a file in
+the same request (multipart/form-data, a `file` part beside the other
+fields as form fields):
+
+```bash
+curl $URL/v1/tabctx/fit -F model=tabicl-v2 -F dataset_id=churn -F target=churned -F file=@train.parquet
+curl $URL/v1/tabctx/predict -F dataset_id=churn -F file=@test.csv
+```
+
+- **Formats**, detected from the content: CSV with a header row (plain,
+  gzip or zstd) and Parquet. Parquet keeps types and nulls and is several
+  times smaller than JSON (a 5,000 x 500 float table: 51 MB as JSON,
+  13 MB as Parquet), so it is the way to send a large table.
+- **Text columns** (`"gold"`, `"CA"`) work in files and JSON rows alike:
+  the server codes each text column's values at fit (`tabctx.schema`),
+  keeps that encoding with the context, and applies it at predict; a
+  value the training table never had becomes missing. **Missing values**:
+  JSON `null`, a Parquet null, or a CSV cell that is empty or `NA`,
+  `N/A`, `null`, `None`, `NaN`.
+- **Columns** of a test file are matched to the training file's by
+  name: any order, and extra columns (such as the target) are ignored. A
+  missing one is a 422.
+- The target is `target` (or `target_column`), default the last column.
 
 Tables too big for GPU and host memory together can still fit: TabICL
 offloads stage outputs to memory-mapped files under `TABCTX_OFFLOAD_DIR`
 (default `<TABCTX_SPILL_DIR>/offload`), slower but without exhausting the
 pod's RAM (one A100 fit 130k x 500 this way).
 
-Inline JSON tables are convenient to ~10^4 rows and painful beyond.
-For big tables, stream a CSV first and reference it (the same
-upload/orchestration split hosted tabular APIs use, minus the object
-store -- uploads stream straight to the serving replica's disk):
+A file can also be uploaded first and referenced by id, for one that
+should travel apart from the request that uses it (uploads stream
+straight to the serving replica's disk):
 
 ```python
 client = TabctxClient("http://localhost:8000")
@@ -282,12 +305,6 @@ test_upload = client.upload_csv_file("scoring_batch.csv", "churn-v1")
 result = client.predict("churn-v1", test_upload_id=test_upload)
 ```
 
-The contract, in short:
-
-- Training CSV = header row + numeric feature columns + one target
-  column (`target_column`, default: the last). Test CSVs carry exactly
-  the training feature columns, same names and order -- a reordered
-  header is rejected 422 rather than silently producing garbage.
 - Uploads are **single-use** (consumed by the fit/predict that
   references them) and expire after `TABCTX_UPLOAD_TTL_S` (default 1h);
   size-capped by `TABCTX_MAX_UPLOAD_BYTES` (default 4GiB, enforced
@@ -296,7 +313,7 @@ The contract, in short:
   request must carry the same `x-session-id: <dataset_id>` header as
   everything else -- affinity routes the upload, fit, and predicts to
   one replica. (The bundled client does this for you.)
-- Transport size and admission are separate layers: a huge CSV uploads
+- Transport size and admission are separate layers: a huge file uploads
   fine, and the memory-admission gate then decides whether the *table*
   fits the GPU budget (413 if not).
 
