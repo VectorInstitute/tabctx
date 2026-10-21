@@ -69,3 +69,13 @@ def test_engine_fits_and_predicts_tables_with_missing_values():
     ds = engine.fit(X, ["a", "b"] * 5, schema=schema)
     out = engine.predict(ds, encode_rows([[None, "a"], [2.0, None]], schema))
     assert len(out.predictions) == 2
+
+
+def test_json_rows_get_the_offsets_of_a_file_fit_context():
+    # A time column fit from a file is stored from its training minimum;
+    # JSON rows (float64 until encoded) must be shifted the same way.
+    schema, _ = TableSchema.learn(
+        [np.array([1577872800.5, 1577872801.0]), np.array([1.0, 2.0], np.float32)]
+    )
+    assert schema.offsets == (1577872800.5, None)
+    assert encode_rows([[1577872801.5, 1.0]], schema).tolist() == [[1.0, 1.0]]

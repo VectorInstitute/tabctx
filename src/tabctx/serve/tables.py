@@ -51,7 +51,7 @@ def learn_rows(rows: Rows) -> tuple[np.ndarray | Rows, TableSchema | None]:
 def encode_rows(rows: Rows, schema: TableSchema | None) -> np.ndarray | Rows:
     """Test rows encoded as the training table was."""
     arr = rows_to_array(rows)
-    if arr is not None and (schema is None or not schema.has_text):
+    if arr is not None and (schema is None or not (schema.has_text or schema.offsets)):
         return arr
     columns = _columns(rows)
     if columns is None:
