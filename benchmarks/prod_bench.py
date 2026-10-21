@@ -78,9 +78,12 @@ class Client:
             elapsed = time.monotonic() - t0
             if r.status_code != 429:
                 try:
-                    return r.status_code, r.json(), elapsed
+                    body = r.json()
                 except ValueError:
-                    return r.status_code, {"detail": r.text[:200]}, elapsed
+                    body = {"detail": r.text[:200]}
+                if isinstance(body, dict) and "server-timing" in r.headers:
+                    body["server_timing"] = r.headers["server-timing"]
+                return r.status_code, body, elapsed
             with self._lock:
                 self.rate_limited += 1
             time.sleep(_retry_after_s(r.headers.get("retry-after")))
@@ -202,10 +205,13 @@ class Slowest:
 
     def __init__(self, keep: int = 10) -> None:
         self._keep = keep
-        self._calls: list[tuple[float, str, dict | None]] = []
+        self._calls: list[tuple[float, str, dict | None, str | None]] = []
         self._lock = threading.Lock()
 
     def add(self, seconds: float, what: str, body: dict) -> None:
+        """Record a call: its client-side seconds, what it was, and the
+        server's breakdowns (tabctx's timings_ms; the gateway's
+        Server-Timing, when it sends one)."""
         if CALL_LOG is not None:
             with _CALL_LOG_LOCK:
                 CALL_LOG.append(
@@ -214,17 +220,20 @@ class Slowest:
                         "s": round(seconds, 3),
                         "call": what,
                         "timings_ms": body.get("timings_ms"),
+                        "server_timing": body.get("server_timing"),
                     }
                 )
         with self._lock:
-            self._calls.append((seconds, what, body.get("timings_ms")))
+            self._calls.append(
+                (seconds, what, body.get("timings_ms"), body.get("server_timing"))
+            )
             self._calls.sort(key=lambda c: -c[0])
             del self._calls[self._keep :]
 
     def as_list(self) -> list[dict]:
         return [
-            {"s": round(s, 2), "call": what, "timings_ms": t}
-            for s, what, t in self._calls
+            {"s": round(s, 2), "call": what, "timings_ms": t, "server_timing": st}
+            for s, what, t, st in self._calls
         ]
 
 
