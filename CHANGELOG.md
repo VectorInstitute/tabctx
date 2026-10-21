@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `benchmarks/bench_upload_formats.py`: the same tables through a gateway as JSON and as Parquet, interleaved, splitting each fit's time between the hop to tabctx and tabctx's own work. On prod (0.15.0, 12 fits each of 5,000 x 500 and 10,000 x 100 TabICL): Parquet bodies were 8.5 MiB vs 14.0 MiB, the hop's median 1.2 s vs 2.7 s, its worst 42 s vs 113 s, and 1 fit in 12 took over 10 s vs 3 in 12; tabctx's own work was the same. Baselines `prod-bench-0.15.0.json` and `upload-formats-0.15.0.json`.
 
 ## [0.15.0] - 2026-10-21
 ### Added
