@@ -151,8 +151,11 @@ def stop_compiling_new_graphs() -> bool:
     several (larger tables, other predict sizes, overlapping calls); on
     prod that was 45-200 s fits under light load, holding the device so
     other models' calls waited too (tabctx 0.14 timings_ms). Eager for a
-    family warmup missed costs ~1.5-2x its compiled time instead. Returns
-    False on a torch without stances (compiling continues as before)."""
+    family warmup missed costs ~1.3x its compiled time instead (A100,
+    20,000-40,000-row and 5,000 x 500 fits). Process-wide: it affects every
+    torch.compile in the process, so it is set once all of them have warmed
+    up (serve/factory.finish_warmup). Returns False on a torch without
+    stances (compiling continues as before)."""
     try:
         import torch
     except ImportError:

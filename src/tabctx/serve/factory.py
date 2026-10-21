@@ -67,9 +67,10 @@ Environment variables:
   from processes.
 - ``TABCTX_COMPILE``: ``1`` (default) compiles TabICL's attention blocks
   at warmup. ``TABCTX_COMPILE_AFTER_WARMUP``: ``0`` (default) runs call
-  shapes warmup didn't cover eagerly; ``1`` compiles them inside the
-  requests that hit them (5-25 s per graph family on an A100, ~4x on an
-  A40; see backends/tabicl_compile.py).
+  shapes warmup didn't cover eagerly (process-wide, once every backend has
+  warmed up: any torch.compile in the process stops compiling new graphs);
+  ``1`` compiles them inside the requests that hit them (5-25 s per graph
+  family on an A100, ~4x on an A40; see backends/tabicl_compile.py).
 """
 
 from __future__ import annotations

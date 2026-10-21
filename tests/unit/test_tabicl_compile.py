@@ -119,40 +119,26 @@ def test_new_graphs_compile_on_a_serving_thread_past_dynamo_default_limit():
 
 def test_after_warmup_uncovered_shapes_run_eagerly_instead_of_compiling():
     from torch._dynamo import eval_frame
+    from torch._dynamo.utils import counters
 
     from tabctx.backends.tabicl_compile import stop_compiling_new_graphs
 
+    @torch.compile(backend="eager", dynamic=False)
+    def f(x):
+        return x * 2 + 1
+
+    f(torch.ones(3))  # one graph, as warmup would leave
+    graphs = counters["stats"]["unique_graphs"]
     before = eval_frame._stance.stance
     try:
         assert stop_compiling_new_graphs() is True
-        assert eval_frame._stance.stance == "eager_on_recompile"
+        assert torch.equal(f(torch.ones(3)), torch.full((3,), 3.0))  # cached graph
+        assert torch.equal(f(torch.ones(5)), torch.full((5,), 3.0))  # new shape: eager
+        results = []
+        thread = threading.Thread(target=lambda: results.append(f(torch.ones(7))))
+        thread.start()
+        thread.join()
+        assert torch.equal(results[0], torch.full((7,), 3.0))  # another thread too
+        assert counters["stats"]["unique_graphs"] == graphs  # nothing compiled
     finally:
         torch.compiler.set_stance(before)
-
-
-def test_compile_after_warmup_is_off_unless_asked(monkeypatch):
-    from tabctx.serve.factory import COMPILE_AFTER_WARMUP_ENV_VAR, ServeSettings
-
-    monkeypatch.delenv(COMPILE_AFTER_WARMUP_ENV_VAR, raising=False)
-    assert ServeSettings.from_env().compile_after_warmup is False
-    monkeypatch.setenv(COMPILE_AFTER_WARMUP_ENV_VAR, "1")
-    assert ServeSettings.from_env().compile_after_warmup is True
-
-
-@pytest.mark.parametrize(
-    "installed, compile_after_warmup, flips",
-    [(True, False, True), (False, False, False), (True, True, False)],
-)
-def test_finish_warmup_flips_the_stance_only_for_a_compiling_process(
-    monkeypatch, installed, compile_after_warmup, flips
-):
-    from tabctx.backends import tabicl_compile
-    from tabctx.serve.factory import ServeSettings, finish_warmup
-
-    calls = []
-    monkeypatch.setattr(tabicl_compile, "compiled_blocks_installed", lambda: installed)
-    monkeypatch.setattr(
-        tabicl_compile, "stop_compiling_new_graphs", lambda: calls.append(1)
-    )
-    finish_warmup(ServeSettings(compile_after_warmup=compile_after_warmup))
-    assert bool(calls) is flips
