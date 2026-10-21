@@ -19,7 +19,9 @@ def main() -> None:
 
     X_train = [[float(i), float(i) * 2] for i in range(20)]
     y_train = ["a" if i % 2 == 0 else "b" for i in range(20)]
-    dataset_id = engine.fit(X_train, y_train, task="classification")
+    dataset_id = engine.fit(
+        X_train, y_train
+    )  # task inferred: text labels -> classification
     print(f"fit -> dataset_id={dataset_id}")
 
     result = engine.predict(dataset_id, [[1.0, 2.0], [3.0, 4.0]], return_proba=True)

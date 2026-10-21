@@ -34,6 +34,17 @@ class TestParseTrainCsv:
         _, y, _ = parse_train_csv(p, "regression")
         assert y == [0.5, 1.5]
 
+    def test_no_task_infers_regression_from_non_integer_targets(self, tmp_path):
+        p = _write(tmp_path, "f0,price\n1,212500.5\n2,180000\n")
+        _, y, _ = parse_train_csv(p, None)
+        assert y == [212500.5, 180000.0]
+
+    def test_no_task_keeps_integer_and_text_targets_as_classes(self, tmp_path):
+        p = _write(tmp_path, "f0,label\n1,0\n2,1\n")
+        assert parse_train_csv(p, None)[1] == ["0", "1"]
+        p = _write(tmp_path, "f0,label\n1,cat\n2,dog\n", name="text.csv")
+        assert parse_train_csv(p, None)[1] == ["cat", "dog"]
+
     def test_missing_target_column_rejected(self, tmp_path):
         p = _write(tmp_path, "f0,f1\n1,2\n")
         with pytest.raises(InvalidInputError, match="nope"):

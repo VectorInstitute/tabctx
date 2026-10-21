@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **`task` is optional and inferred from the labels when omitted** (#60): non-integer numbers mean regression; anything else means classification, as before. Only actual numbers count: text labels are categories even when they look numeric ("250.01"); a CSV target column, which has no types, counts as numbers when every value parses as one. NaN/inf labels are a 422 whatever the task. `FitResponse` reports the task used. An explicit `task` still wins. Engine, multi-GPU router, HTTP API (`/v1/tabctx/fit`, the legacy predict) and client all take `task=None`; the client leaves the field out when unset, so it still works against servers that require it.
+### Fixed
+- **A continuous target sent as classification** got a 500 from TabICL and a 422 from TabPFN about "573 classes" (#60). Classification labels that are non-integer numbers are now rejected up front with a 422 that says to pass `task='regression'` (`labels.validate_labels`); integer-coded classes are unchanged. TabICL's own input errors are now a 422 like TabPFN's, and both backends' rejections of all-numeric classification labels carry the same hint.
 
 ## [0.13.0] - 2026-10-20
 ### Fixed

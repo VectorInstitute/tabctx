@@ -56,6 +56,12 @@ class TabctxBackpressureError(TabctxError):
     that holds the context."""
 
 
+def _without_none(body: dict) -> dict:
+    """Leave out fields the caller didn't set, so the server's defaults
+    apply (and servers that predate a field still accept the request)."""
+    return {k: v for k, v in body.items() if v is not None}
+
+
 @dataclass(frozen=True)
 class PredictResult:
     predictions: list
@@ -95,21 +101,26 @@ class TabctxClient:
         self,
         X: ArrayLike,
         y: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         dataset_id: str | None = None,
         model: str | None = None,
     ) -> str:
         """Encode and cache a training context; returns its dataset_id.
 
-        Supply a stable dataset_id when deploying multi-replica: a
-        server-generated id can't be used to route the fit itself, so
-        the context would land on an arbitrary replica.
+        Omit task to let the server infer it from y (non-integer numbers
+        mean regression). Supply a stable dataset_id when deploying
+        multi-replica: a server-generated id can't be used to route the fit
+        itself, so the context would land on an arbitrary replica.
         """
-        body = {"train_X": X, "train_y": y, "task": task}
-        if dataset_id is not None:
-            body["dataset_id"] = dataset_id
-        if model is not None:
-            body["model"] = model
+        body = _without_none(
+            {
+                "train_X": X,
+                "train_y": y,
+                "task": task,
+                "dataset_id": dataset_id,
+                "model": model,
+            }
+        )
         resp = self._post("/v1/tabctx/fit", body, session_id=dataset_id)
         return resp["dataset_id"]
 
@@ -138,7 +149,7 @@ class TabctxClient:
         self,
         train_upload_id: str,
         dataset_id: str,
-        task: Task = "classification",
+        task: Task | None = None,
         target_column: str | None = None,
         model: str | None = None,
     ) -> str:
@@ -147,13 +158,15 @@ class TabctxClient:
         default: the last column)."""
         resp = self._post(
             "/v1/tabctx/fit",
-            {
-                "train_upload_id": train_upload_id,
-                "target_column": target_column,
-                "task": task,
-                "dataset_id": dataset_id,
-                "model": model,
-            },
+            _without_none(
+                {
+                    "train_upload_id": train_upload_id,
+                    "target_column": target_column,
+                    "task": task,
+                    "dataset_id": dataset_id,
+                    "model": model,
+                }
+            ),
             session_id=dataset_id,
         )
         return resp["dataset_id"]
@@ -188,20 +201,22 @@ class TabctxClient:
         X: ArrayLike,
         y: ArrayLike,
         X_test: ArrayLike,
-        task: Task = "classification",
+        task: Task | None = None,
         return_proba: bool = False,
     ) -> PredictResult:
         """One-shot fit+predict+evict via the legacy endpoint. Prefer
         fit()+predict() when the same training set is queried again."""
         resp = self._post(
             "/v1/tabicl/predict",
-            {
-                "train_X": X,
-                "train_y": y,
-                "test_X": X_test,
-                "task": task,
-                "return_proba": return_proba,
-            },
+            _without_none(
+                {
+                    "train_X": X,
+                    "train_y": y,
+                    "test_X": X_test,
+                    "task": task,
+                    "return_proba": return_proba,
+                }
+            ),
             session_id=None,  # no cached state -> any replica may serve it
         )
         return PredictResult(
