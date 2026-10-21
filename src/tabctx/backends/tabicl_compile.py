@@ -29,7 +29,8 @@ path (tables of 1,024+ rows) is compiled: smaller tables run in fp32 in
 warmup at replica start (~130 s per worker on an A100, workers in
 parallel; Inductor's cache barely shortens it, tracing dominates).
 
-After warmup nothing compiles inside a request (stop_compiling_new_graphs):
+After warmup nothing compiles inside a request (stop_compiling_new_graphs,
+called by serve/factory.finish_warmup once every backend in the process is warm):
 a call no warmed graph fits runs eagerly. Families warmup can't foresee
 remain -- tables of ~20k+ rows hand the blocks differently strided inputs,
 regression predicts of 1,024+ rows take the fp16 path, and calls
@@ -131,6 +132,15 @@ def compile_settings(devices: int) -> dict[str, Any]:
         "accumulated_recompile_limit": max(config.accumulated_recompile_limit, limit),
         "suppress_errors": True,
     }
+
+
+def compiled_blocks_installed() -> bool:
+    """Whether install_compiled_blocks ran in this process."""
+    try:
+        from tabicl._model.layers import MultiheadAttentionBlock
+    except ImportError:
+        return False
+    return bool(getattr(MultiheadAttentionBlock.forward, "_tabctx_compiled", False))
 
 
 def stop_compiling_new_graphs() -> bool:

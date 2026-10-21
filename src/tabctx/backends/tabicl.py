@@ -234,7 +234,6 @@ class TabICLBackend(QuiescedMeasurement):
         cpu_safety_factor: float = 0.6,
         compile_blocks: bool = False,
         fast_preprocessing: bool = False,
-        compile_after_warmup: bool = False,
     ) -> None:
         """kv_cache: passed through to TabICL ("kv", "repr", True, or
         False). tabicl's own default is False, which makes every
@@ -251,9 +250,6 @@ class TabICLBackend(QuiescedMeasurement):
         compile_blocks: torch.compile tabicl's attention blocks (CUDA only;
         see backends/tabicl_compile.py): 1.7-2.2x faster GPU half, ~20%
         lower peak, paid for by a one-time compile in warmup().
-        compile_after_warmup: keep compiling graphs for call shapes warmup
-        didn't cover, inside the requests that hit them (5-25 s each on an
-        A100, ~4x on an A40). Off by default: those calls run eagerly.
 
         fast_preprocessing: fit the ensemble's Yeo-Johnson power transforms
         for all columns at once, on the GPU (backends/yeo_johnson.py)
@@ -302,7 +298,6 @@ class TabICLBackend(QuiescedMeasurement):
         if fast_preprocessing and not self._fast_preprocessing:
             logger.warning("tabicl preprocessing not patchable: scipy power transforms")
         self._compiled = False
-        self._compile_after_warmup = compile_after_warmup
         if compile_blocks and is_cuda(self._device):
             from tabctx.backends.tabicl_compile import install_compiled_blocks
 
@@ -590,8 +585,8 @@ class TabICLBackend(QuiescedMeasurement):
         # (rows, features): with compiled blocks, tabicl's fp16 autocast path
         # (1,024+ rows; the only one compiled), including a 1-feature table
         # (dynamo specializes size-1 dimensions, so they get their own
-        # graphs). Families these don't cover run eagerly after warmup
-        # (stop_compiling_new_graphs below).
+        # graphs). Families these don't cover run eagerly once every backend
+        # in the process has warmed up (serve/factory.finish_warmup).
         shapes = ((32, 4), (1100, 4), (1100, 1)) if self._compiled else ((32, 4),)
         for rows, features in shapes:
             X = rng.normal(size=(rows, features))
@@ -603,14 +598,9 @@ class TabICLBackend(QuiescedMeasurement):
                     for n in (8, 1):  # 1-row predicts: also size-1 graphs
                         self.predict(payload, X[:n], return_proba=proba)
         if self._compiled:
-            from tabctx.backends.tabicl_compile import (
-                stop_compiling_new_graphs,
-                warn_if_not_compiled,
-            )
+            from tabctx.backends.tabicl_compile import warn_if_not_compiled
 
             warn_if_not_compiled()
-            if not self._compile_after_warmup:
-                stop_compiling_new_graphs()
         self._last_context_bytes = None
         self._last_fit_peak_bytes = None
         self._last_fit_resident_bytes = None

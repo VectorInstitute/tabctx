@@ -210,7 +210,7 @@ def _worker_main(
     """Entry point of a worker process: build the device's engine, then
     serve calls until the pipe closes."""
     logging.basicConfig(level=logging.INFO)
-    from tabctx.serve.factory import build_shard
+    from tabctx.serve.factory import build_shard, finish_warmup
 
     if host_guard is not None:
         host_guard.bind(index)  # so the parent can release it if we die
@@ -226,6 +226,8 @@ def _worker_main(
     except BaseException as e:  # noqa: BLE001 -- reported to the parent
         conn.send(_Failure(_portable(e)))
         return
+    if set(settings.backends) != {"fake"}:
+        finish_warmup(settings)  # this process's only shard is warm
     engine = shard.engine
     seq = itertools.count(1)
     seq_lock = threading.Lock()

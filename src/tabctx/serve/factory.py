@@ -587,7 +587,6 @@ def _build_real_backend(
             cpu_safety_factor=0.6 / host_slots,
             compile_blocks=settings.compile_models,
             fast_preprocessing=settings.fast_preprocessing,
-            compile_after_warmup=settings.compile_after_warmup,
         )
     # Weights load at replica start, not inside (and charged to) the first
     # tenant's fit.
@@ -740,6 +739,25 @@ def build_shard(
     )
 
 
+def finish_warmup(settings: ServeSettings) -> None:
+    """Call once every backend in this process has warmed up: from then on,
+    calls no compiled graph fits run eagerly rather than compiling inside a
+    request (tabicl_compile.stop_compiling_new_graphs). Process-wide, so it
+    must wait for the last warmup -- an in-process engine over several
+    devices warms each device in turn, and graphs are per device."""
+    if not settings.compile_models or settings.compile_after_warmup:
+        return
+    from tabctx.backends.tabicl_compile import (
+        compiled_blocks_installed,
+        stop_compiling_new_graphs,
+    )
+
+    # Only a process that compiled something: on a CPU (or with no tabicl)
+    # there is nothing to protect, and the stance would outlive this engine.
+    if compiled_blocks_installed():
+        stop_compiling_new_graphs()
+
+
 def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
     settings = settings or ServeSettings.from_env()
     devices = resolve_devices(settings)
@@ -772,6 +790,8 @@ def build_engine(settings: ServeSettings | None = None) -> BuiltEngine:
         )
         for device in devices
     ]
+    if not fake_only:
+        finish_warmup(settings)
     first = shards[0]
     engine: TabctxEngine | MultiDeviceEngine = (
         MultiDeviceEngine([s.engine for s in shards], list(devices))

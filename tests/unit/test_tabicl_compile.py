@@ -137,3 +137,22 @@ def test_compile_after_warmup_is_off_unless_asked(monkeypatch):
     assert ServeSettings.from_env().compile_after_warmup is False
     monkeypatch.setenv(COMPILE_AFTER_WARMUP_ENV_VAR, "1")
     assert ServeSettings.from_env().compile_after_warmup is True
+
+
+@pytest.mark.parametrize(
+    "installed, compile_after_warmup, flips",
+    [(True, False, True), (False, False, False), (True, True, False)],
+)
+def test_finish_warmup_flips_the_stance_only_for_a_compiling_process(
+    monkeypatch, installed, compile_after_warmup, flips
+):
+    from tabctx.backends import tabicl_compile
+    from tabctx.serve.factory import ServeSettings, finish_warmup
+
+    calls = []
+    monkeypatch.setattr(tabicl_compile, "compiled_blocks_installed", lambda: installed)
+    monkeypatch.setattr(
+        tabicl_compile, "stop_compiling_new_graphs", lambda: calls.append(1)
+    )
+    finish_warmup(ServeSettings(compile_after_warmup=compile_after_warmup))
+    assert bool(calls) is flips
