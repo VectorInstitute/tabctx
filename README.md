@@ -559,7 +559,9 @@ process per GPU have all shipped and been validated on real GPUs (see
 [CHANGELOG.md](CHANGELOG.md)); 0.14.0 infers the task from the labels,
 accepts missing values, and reports where each request's time went
 (`timings_ms`); 0.14.1 stops TabICL compiling graphs inside requests
-(#47). Vector's 4x A40 prod node serves 0.14.0 until it is updated. Open roadmap items are
+(#47); 0.15.0 takes table files (CSV, Parquet) in the request and text
+columns, and adds scikit-learn estimators (#63). Vector's 4x A40 prod
+node serves 0.14.1 until it is updated. Open roadmap items are
 tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.
