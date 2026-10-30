@@ -48,6 +48,15 @@ serve = [
     "pyarrow>=14",
     "python-multipart>=0.0.9",
 ]
+# The Ray-free standalone host (`python -m tabctx.serve`, see
+# serve/standalone.py): [serve] minus ray. Single replica only -- the
+# consistent-hash session-affinity router is Ray's.
+standalone = [
+    "fastapi",
+    "uvicorn[standard]",
+    "pyarrow>=14",
+    "python-multipart>=0.0.9",
+]
 # The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
 # tables as Parquet (without it, gzip CSV).
 client = ["scikit-learn>=1.6", "pyarrow>=14"]
@@ -64,6 +73,9 @@ dev = [
     "ruff",
     "pyarrow>=14",
     "python-multipart>=0.0.9",
+    # The standalone host's unit tests exercise the full HTTP service
+    # in-process (no server, no ray) via httpx's ASGI transport.
+    "fastapi",
 ]
 
 [tool.ruff]

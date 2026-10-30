@@ -1,0 +1,92 @@
+# Build the standalone serving image (Dockerfile at the repo root), smoke
+# test it against the fake backend (CI has no GPU; GPU validation is the
+# deploying platform's rehearsal), and -- on a release tag only -- push it
+# to GHCR as ghcr.io/vectorinstitute/tabctx:<version>. Pull requests that
+# touch the image or what goes into it get the build + smoke test without
+# a push.
+#
+# GHCR authentication is the workflow's own GITHUB_TOKEN (packages: write);
+# no stored secret. ONE-TIME SETUP: after the first push, make the package
+# public (GitHub org -> Packages -> tabctx -> package settings) if pulls
+# without credentials are wanted.
+name: docker image
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - .github/workflows/docker_image.yml
+      - src/**
+      - pyproject.toml
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the image
+        run: docker build -t tabctx-under-test .
+
+      - name: Imports survive packaging
+        # The fake-backend smoke test below never imports torch/tabicl/
+        # tabpfn, so check separately that the real stack is importable
+        # (a missing wheel or broken dependency fails here, on CPU).
+        run: |
+          docker run --rm --entrypoint python tabctx-under-test -c \
+            "import torch, tabicl, tabpfn, tabctx; print('torch', torch.__version__)"
+
+      - name: Smoke test the server (fake backend, no GPU)
+        run: |
+          docker run -d --name tabctx -p 18333:8000 \
+            -e TABCTX_BACKEND=fake -e TABCTX_REQUIRE_TENANT=true \
+            tabctx-under-test
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:18333/readyz > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:18333/readyz
+          curl -sf http://127.0.0.1:18333/livez
+          FIT_BODY='{"train_X":[[0,1],[1,0]],"train_y":["a","b"],"dataset_id":"smoke","task":"classification"}'
+          NO_TENANT=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:18333/v1/tabctx/fit \
+            -H 'content-type: application/json' -d "$FIT_BODY")
+          test "$NO_TENANT" = 401
+          curl -sf -X POST http://127.0.0.1:18333/v1/tabctx/fit \
+            -H 'content-type: application/json' \
+            -H 'x-tabctx-tenant-id: smoke' -d "$FIT_BODY"
+          curl -sf -X POST http://127.0.0.1:18333/v1/tabctx/predict \
+            -H 'content-type: application/json' \
+            -H 'x-tabctx-tenant-id: smoke' \
+            -d '{"dataset_id":"smoke","test_X":[[0.2,0.8]]}'
+
+      - name: Server logs
+        if: always()
+        run: docker logs tabctx || true
+
+      - name: Push to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${GITHUB_REF_NAME#v}"
+          docker tag tabctx-under-test "ghcr.io/${REPO}:${VERSION}"
+          docker tag tabctx-under-test "ghcr.io/${REPO}:latest"
+          docker push "ghcr.io/${REPO}:${VERSION}"
+          docker push "ghcr.io/${REPO}:latest"

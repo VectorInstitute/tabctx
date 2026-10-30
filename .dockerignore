@@ -1,0 +1,8 @@
+# Keep the build context to what the image install actually reads
+# (pyproject.toml, README.md, LICENSE.md, src/). Everything else -- local
+# virtualenvs especially -- would bloat or break reproducible builds.
+*
+!pyproject.toml
+!README.md
+!LICENSE.md
+!src
