@@ -191,6 +191,14 @@ ready-to-run deployment (`fit`/`predict` endpoints, health checks, live
 memory-usage reporting). See `benchmarks/README.md` for how to measure it
 once it's running.
 
+**Or without Ray**: `python -m tabctx.serve` (the `standalone` extra)
+serves the same endpoints from one plain uvicorn process -- for platforms
+that don't run Ray, e.g. a Kubernetes Deployment behind a gateway. One
+replica only (the multi-replica session-affinity router is Ray's); point
+the platform's liveness probe at `GET /livez` and its readiness probe at
+`GET /readyz`. `serve/standalone.py` documents what else the Ray host
+provided and what replaces it.
+
 **Talk to a deployment** as a scikit-learn model (see the Quickstart
 above), or with the bundled client (pure stdlib, sets the
 routing/tenancy headers for you, raises the same tabctx exceptions the
@@ -290,7 +298,9 @@ behind the same API. No client changes and no routing header needed.
 - **The replica must be given the GPUs.** Under Ray Serve that means
   `ray_actor_options.num_gpus: N`, or, for a `num_gpus: 0` actor on a
   GPU pod (as in inference-platform's prod config),
-  `RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1`.
+  `RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES=1`. A standalone host
+  (`python -m tabctx.serve`) simply sees the process's
+  `CUDA_VISIBLE_DEVICES`, nothing extra.
 - **Spill.** Each GPU spills to its own subdirectory (`cuda_0/`, ...);
   `TABCTX_SPILL_CAPACITY_BYTES` is the replica's total, split evenly.
   Changing between one and several GPUs changes the layout, and the
@@ -441,6 +451,8 @@ pip install "tabctx[tabpfn]"     # + TabPFN backend (weights license-gated:
                                  #   ux.priorlabs.ai + export TABPFN_TOKEN)
 pip install "tabctx[serve]"      # + Ray Serve deployment (ray[serve], fastapi,
                                  #   pyarrow and python-multipart for table files)
+pip install "tabctx[standalone]" # + the Ray-free host (python -m tabctx.serve):
+                                 #   [serve] minus ray, single replica only
 pip install "tabctx[client]"     # + scikit-learn estimators (scikit-learn, pyarrow)
 pip install "tabctx[dev]"        # + test dependencies
 ```
