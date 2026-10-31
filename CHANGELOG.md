@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.16.0] - 2026-10-31
 ### Added
 - **`tabctx-mcp`: tabular foundation models as tools for coding agents** (`tabctx/mcp_tools/`, `pip install "tabctx[mcp]"`). There are seven tools: `inspect_table`, `evaluate`, `fit_model`, `predict`, `what_if`, `explain` and `list_models`. They come in four forms, all over one implementation (`tools.TabularTools`):
   - an MCP server (`tabctx-mcp`, stdio), for Claude Code, Codex and Gemini CLI;
