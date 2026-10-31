@@ -19,7 +19,14 @@ sys.path.insert(0, str(UI))
 import gateway  # noqa: E402
 import sessions as sessions_module  # noqa: E402
 
-ALL = {"tabpfn-3.5", "tabicl-v2", "claude-opus-5", "claude-haiku-5-5", "claude-sonnet-5-5", "gpt-5"}
+ALL = {
+    "tabpfn-3.5",
+    "tabicl-v2",
+    "claude-opus-5",
+    "claude-haiku-5-5",
+    "claude-sonnet-5-5",
+    "gpt-5",
+}
 KEY = "vp_abc123.secretpart"
 
 
@@ -83,7 +90,9 @@ def hosted(tmp_path, monkeypatch):
     for name in ("app", "runner"):
         sys.modules.pop(name, None)
     module = importlib.import_module("app")
-    monkeypatch.setattr(module, "project_models", lambda base, key: ALL if key == KEY else set())
+    monkeypatch.setattr(
+        module, "project_models", lambda base, key: ALL if key == KEY else set()
+    )
     monkeypatch.setattr(module, "installed", lambda agent: True)
     started = []
 
@@ -100,7 +109,9 @@ def hosted(tmp_path, monkeypatch):
 def test_signed_out_visitors_can_replay_but_not_run(hosted):
     module, client, started = hosted
     setup = client.get("/api/setup").json()
-    assert setup["hosted"] and setup["signed_in"] is None and not setup["prompt_editable"]
+    assert (
+        setup["hosted"] and setup["signed_in"] is None and not setup["prompt_editable"]
+    )
     assert [a["id"] for a in setup["agents"]] == ["claude", "codex", "pi"]  # no Gemini
     assert not any(a["allowed"] for a in setup["agents"])
     assert {r["agent"] for r in setup["runs"]} >= {"claude", "codex", "pi"}  # showcase
@@ -122,12 +133,17 @@ def test_sign_in_run_and_sign_out(hosted):
     assert setup["signed_in"] == {"key_id": "vp_abc123"} and KEY not in str(setup)
     assert all(a["allowed"] for a in setup["agents"])
 
-    r = client.post("/api/runs", json={"agent": "claude", "prompt": "do something else"})
+    r = client.post(
+        "/api/runs", json={"agent": "claude", "prompt": "do something else"}
+    )
     assert r.status_code == 200
     run = started[-1]
     assert run["prompt"] == (module.DEMO / "PROMPT.md").read_text()  # the task is fixed
     assert run["env"]["TABCTX_API_KEY"] == KEY and run["env"]["VP_API_KEY"] == KEY
-    assert run["env"]["ISOLATE_HOME"] == "1" and run["env"]["CLAUDE_MODEL"] == "claude-opus-5"
+    assert (
+        run["env"]["ISOLATE_HOME"] == "1"
+        and run["env"]["CLAUDE_MODEL"] == "claude-opus-5"
+    )
     assert run["folder"].parent.parent == Path(module.RUNS) / "visitors"
 
     assert client.post("/api/runs", json={"agent": "gemini"}).status_code == 403
@@ -170,3 +186,6 @@ def test_posts_must_be_json_and_pages_carry_security_headers(hosted):
     assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
     assert page.headers["x-content-type-options"] == "nosniff"
     assert client.get("/docs").status_code == 404
+    assert client.head("/").status_code == 200 and client.get("/health").json() == {
+        "ok": True
+    }

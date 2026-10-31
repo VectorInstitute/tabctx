@@ -47,7 +47,11 @@ def main(agents: list[str]) -> None:
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         lines = (run_dir / "transcript.jsonl").read_text().splitlines()
-        kept = [s for s in (sanitize(agent, line, run_dir) for line in lines if line.strip()) if s]
+        kept = [
+            s
+            for s in (sanitize(agent, line, run_dir) for line in lines if line.strip())
+            if s
+        ]
         (out / "transcript.jsonl").write_text("\n".join(kept) + "\n")
         shutil.copy(run_dir / "report.md", out / "report.md")
         (out / "score.json").write_text(json.dumps(score(run_dir), indent=2) + "\n")

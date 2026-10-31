@@ -157,13 +157,14 @@ def agents_for(session: Session | None) -> list[dict]:
 # ---- pages and setup ------------------------------------------------------------
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html")
 
 
-@app.get("/healthz")
-def healthz() -> dict:
+# Not /healthz: Cloud Run's front end keeps paths ending in "z" for itself.
+@app.get("/health")
+def health() -> dict:
     return {"ok": True}
 
 

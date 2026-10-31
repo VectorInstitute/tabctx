@@ -17,7 +17,12 @@ TABULAR = ("tabpfn-3.5", "tabicl-v2")
 # Preference order per agent. Codex stays on gpt-5: for newer OpenAI models
 # Codex adds a tool_search tool, which the gateway refuses (see run.sh).
 _AGENT_MODELS = {
-    "claude": ["claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5"],
+    "claude": [
+        "claude-opus-5-5",
+        "claude-opus-5",
+        "claude-sonnet-5-5",
+        "claude-sonnet-5",
+    ],
     "codex": ["gpt-5"],
     "pi": ["claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5"],
 }
@@ -50,7 +55,9 @@ def project_models(base_url: str, key: str, timeout: float = 15) -> set[str]:
         raise RefusedKey(502, f"the gateway answered {e.code}; try again") from e
     except (urllib.error.URLError, TimeoutError, ValueError) as e:
         raise RefusedKey(502, "could not reach the gateway; try again") from e
-    items = body if isinstance(body, list) else body.get("data") or body.get("models") or []
+    items = (
+        body if isinstance(body, list) else body.get("data") or body.get("models") or []
+    )
     return {
         str(m.get("id") or m.get("model_id") or m.get("name"))
         for m in items
