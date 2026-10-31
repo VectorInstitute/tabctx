@@ -39,8 +39,10 @@ def sanitize(agent: str, line: str, run_dir: Path) -> str | None:
         text = text.replace(path + "/", "").replace(path, ".")
     text = text.replace(str(HERE.parent.parent), "<repo>")
     text = re.sub(r"/(Users|home)/[^/\"\\\\]+", "~", text)
-    # The login as the owner in `ls -l` output ("1 jdoe  staff").
+    # The login as the owner, and on Linux often the group, in `ls -l`
+    # output ("1 jdoe  staff", "1 jdoe jdoe").
     login = re.escape(getpass.getuser())
+    text = re.sub(rf"(\s\d+ ){login}(\s+){login}(\s)", r"\1user\2user\3", text)
     return re.sub(rf"(\s\d+ ){login}(\s+\w+\s)", r"\1user\2", text)
 
 
