@@ -20,10 +20,32 @@ from sklearn.model_selection import train_test_split
 from tabctx.estimators import DEFAULT_MODEL, TabctxClassifier, TabctxRegressor
 from tabctx.labels import infer_task
 from tabctx.mcp_tools.store import ModelInfo, ModelStore, check_name
-from tabctx.mcp_tools.tables import column_kind, profile, read_table, require_columns
+from tabctx.mcp_tools.tables import (
+    column_kind,
+    label_text,
+    plain,
+    profile,
+    read_table,
+    require_columns,
+    rows_matching,
+)
 
 MODELS = ("tabpfn-3.5", "tabicl-v2")
 BASELINE = "gradient-boosting"
+# explain sends the held-out rows once per shuffled column and repeat in
+# one predict; past this many rows it uses fewer held-out rows.
+MAX_EXPLAIN_ROWS = 60_000
+_TABLE_SUFFIXES = {
+    ".csv",
+    ".tsv",
+    ".txt",
+    ".parquet",
+    ".pq",
+    ".gz",
+    ".zst",
+    ".bz2",
+    ".xz",
+}
 # Most HistGradientBoosting accepts as one categorical feature.
 _MAX_CATEGORIES = 255
 
@@ -88,12 +110,18 @@ class TabularTools:
             created=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
         )
         estimator.set_params(client=None)  # the store must not pickle a client
+        replaced = self.store.exists(name)
         self.store.save(info, estimator)
         out = info.as_dict()
         out["fit_seconds"] = round(seconds, 2)
+        notes = []
         skipped = len(frame) - len(X)
         if skipped:
-            out["note"] = f"{skipped} rows without a {target!r} value were left out"
+            notes.append(f"{skipped} rows without a {target!r} value were left out")
+        if replaced:
+            notes.append(f"replaced the earlier model named {name!r}")
+        if notes:
+            out["note"] = "; ".join(notes)
         return out
 
     def predict(
@@ -121,9 +149,11 @@ class TabularTools:
         predicted = _predict(estimator, info, X)
         seconds = time.perf_counter() - start
 
-        out_path = Path(output) if output else _output_path(path, name)
+        out_path = _output_path(path, name, output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        pd.concat([frame, predicted], axis=1).to_csv(out_path, index=False)
+        # Predicting a predictions file again replaces its old columns.
+        kept = frame.drop(columns=[c for c in predicted.columns if c in frame.columns])
+        pd.concat([kept, predicted], axis=1).to_csv(out_path, index=False)
 
         result: dict[str, Any] = {
             "model": name,
@@ -172,7 +202,7 @@ class TabularTools:
         predicted = _predict(estimator, info, X)
         answers = []
         for row, case, (_, p) in zip(rows, cases, predicted.iterrows(), strict=True):
-            answer: dict[str, Any] = {"prediction": _plain(p[_pred_col(info)])}
+            answer: dict[str, Any] = {"prediction": plain(p[_pred_col(info)])}
             if info.task == "classification":
                 answer["probabilities"] = {
                     c: round(float(p[_proba_col(info, c)]), 4) for c in info.classes
@@ -204,31 +234,51 @@ class TabularTools:
         """Hold out part of the table, fit each model on the rest, and
         score it on the held-out rows; with baseline, a scikit-learn
         gradient-boosting model as well, for comparison."""
+        if not models and not baseline:
+            raise ValueError("nothing to evaluate: give models, or baseline=True")
+        if not 0 < test_size < 1:
+            raise ValueError(f"test_size must be between 0 and 1, got {test_size}")
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
         Xtr, Xte, ytr, yte = _split(X, y, task, test_size, seed)
-        results = []
-        for model in models:
-            estimator = _estimator(task, model, self.client)
-            results.append(_fit_and_score(model, estimator, task, Xtr, ytr, Xte, yte))
+        runs = [
+            (m, lambda m=m: (_estimator(task, m, self.client), Xtr, Xte))
+            for m in models
+        ]
         if baseline:
-            Xtr_b, Xte_b = _for_gradient_boosting(Xtr, Xte)
-            results.append(
-                _fit_and_score(
+            runs.append(
+                (
                     BASELINE,
-                    _gradient_boosting(task, seed),
-                    task,
-                    Xtr_b,
-                    ytr,
-                    Xte_b,
-                    yte,
+                    lambda: (
+                        _gradient_boosting(task, seed),
+                        *_for_gradient_boosting(Xtr, Xte),
+                    ),
                 )
             )
-        key, higher = ("roc_auc", True) if task == "classification" else ("r2", True)
-        scored = [r for r in results if r["metrics"].get(key) is not None]
-        if task == "classification" and not scored:
-            key, scored = "accuracy", results
-        best = max(scored, key=lambda r: r["metrics"][key] * (1 if higher else -1))
+        results = []
+        for model, make in runs:
+            # One model failing (tabicl-v2 and more than 10 classes, say)
+            # leaves the others' results.
+            try:
+                estimator, train, test = make()
+                results.append(
+                    _fit_and_score(model, estimator, task, train, ytr, test, yte)
+                )
+            except Exception as e:  # noqa: BLE001 (reported to the agent)
+                results.append({"model": model, "error": f"{type(e).__name__}: {e}"})
+        scored = [r for r in results if "metrics" in r]
+        if not scored:
+            raise ValueError(
+                "every model failed: "
+                + "; ".join(f"{r['model']}: {r['error']}" for r in results)
+            )
+        key = "roc_auc" if task == "classification" else "r2"
+        if not any(r["metrics"].get(key) is not None for r in scored):
+            key = "accuracy" if task == "classification" else key
+        best = max(
+            (r for r in scored if r["metrics"].get(key) is not None),
+            key=lambda r: r["metrics"][key],
+        )
         return {
             "task": task,
             "train_rows": len(Xtr),
@@ -255,9 +305,14 @@ class TabularTools:
         on part of the table, then shuffle one column at a time in the
         held-out rows and measure how much the score drops. All shuffled
         copies go to the server in one predict."""
+        if repeats < 1 or max_rows < 1:
+            raise ValueError("repeats and max_rows must be at least 1")
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
         Xtr, Xte, ytr, yte = _split(X, y, task, test_size, seed)
+        # Wide tables: fewer held-out rows, so one predict stays bounded.
+        copies = 1 + X.shape[1] * repeats
+        max_rows = max(1, min(max_rows, MAX_EXPLAIN_ROWS // copies))
         if len(Xte) > max_rows:
             Xte, yte = Xte.iloc[:max_rows], yte.iloc[:max_rows]
         estimator = _estimator(task, model, self.client).fit(Xtr, ytr)
@@ -331,7 +386,7 @@ def _features_and_labels(
     elif task not in ("classification", "regression"):
         raise ValueError(f"task {task!r}: use 'classification' or 'regression'")
     if task == "classification":
-        y = y.astype(str)
+        y = label_text(y)
     return X, y, task
 
 
@@ -359,17 +414,14 @@ def _base_row(
     if path is None or not where:
         raise ValueError("give base_file and base_where together")
     frame = read_table(path)
-    require_columns(frame, list(where))
-    match = pd.Series(True, index=frame.index)
-    for column, value in where.items():
-        match &= frame[column].astype(str) == str(value)
+    match = rows_matching(frame, where)
     if match.sum() != 1:
         raise ValueError(
             f"base_where {where} matches {int(match.sum())} rows of {path}; it must match one"
         )
     row = frame.loc[match].iloc[0]
     return {
-        f: _plain(row[f]) for f in info.features if f in row.index and pd.notna(row[f])
+        f: plain(row[f]) for f in info.features if f in row.index and pd.notna(row[f])
     }
 
 
@@ -446,7 +498,7 @@ def _top_rows(
     """The top rows of the predictions, as {"ranked_by", "top_rows"}."""
     if top < 0:
         raise ValueError(f"top must be 0 or more, got {top}")
-    require_columns(frame, [*(where or {}), *show])
+    require_columns(frame, list(show))
     if info.task == "classification":
         if rank_by is None:  # the rarer class: churn, fraud, default...
             rank_by = min(
@@ -459,14 +511,10 @@ def _top_rows(
         key = _proba_col(info, rank_by)
     else:
         key = _pred_col(info)
-    match = pd.Series(True, index=frame.index)
-    for column, value in (where or {}).items():
-        match &= frame[column].astype(str) == str(value)
-    ids = [
-        c
-        for c in frame.columns
-        if c not in info.features and c != info.target and _is_id(frame[c])
-    ]
+    match = rows_matching(frame, where)
+    # The id column: one the model doesn't use first, else any.
+    ids = [c for c in frame.columns if c != info.target and _is_id(frame[c])]
+    ids.sort(key=lambda c: c in info.features)
     columns = list(dict.fromkeys([*ids[:1], *show]))
     rows = pd.concat([frame[columns], predicted], axis=1)[match]
     rows = rows.sort_values(key, ascending=False, kind="stable").head(top)
@@ -477,7 +525,10 @@ def _top_rows(
 
 
 def _is_id(col: pd.Series) -> bool:
-    return col.notna().all() and col.nunique() == len(col)
+    """Text (or whole numbers) with a different value in every row."""
+    if pd.api.types.is_float_dtype(col) or pd.api.types.is_bool_dtype(col):
+        return False
+    return bool(col.notna().all()) and col.nunique() == len(col)
 
 
 def _score(task, y_true, predicted, info: ModelInfo) -> dict[str, Any]:
@@ -485,27 +536,47 @@ def _score(task, y_true, predicted, info: ModelInfo) -> dict[str, Any]:
         return _regression_metrics(y_true, predicted[_pred_col(info)].to_numpy())
     proba = predicted[[_proba_col(info, c) for c in info.classes]].to_numpy()
     return _classification_metrics(
-        y_true.astype(str), predicted[_pred_col(info)], proba, info.classes
+        label_text(y_true), predicted[_pred_col(info)], proba, info.classes
     )
 
 
-def _output_path(path: str, name: str) -> Path:
-    src = Path(path)
-    stem = src.name.split(".")[0]
-    return src.with_name(f"{stem}.{name}.predictions.csv")
+def _output_path(path: str, name: str, output: str | None) -> Path:
+    """Where predict writes: output, else <input stem>.<model>.predictions.csv
+    next to the input. Only inside the working directory (the MCP server
+    may run outside the agent's sandbox), and never over the input."""
+    workdir = Path.cwd().resolve()
+    src = Path(path).resolve()
+    if output:
+        out = Path(output).resolve()
+    else:
+        folder = src.parent if src.parent.is_relative_to(workdir) else workdir
+        out = folder / f"{_stem(src)}.{name}.predictions.csv"
+    if not out.is_relative_to(workdir):
+        raise ValueError(
+            f"output {output!r} is outside the working directory {workdir}; "
+            "give a path inside it"
+        )
+    if out == src:
+        raise ValueError("output is the input table; give another path")
+    return out
+
+
+def _stem(path: Path) -> str:
+    """The file name without its table and compression suffixes:
+    sales.2024.csv.gz -> sales.2024."""
+    name = path.name
+    while (suffix := Path(name).suffix.lower()) in _TABLE_SUFFIXES:
+        name = name[: -len(suffix)]
+    return name or path.name
 
 
 def _default_name(path: str, target: str, model: str) -> str:
-    raw = f"{Path(path).name.split('.')[0]}-{target}-{model}"
+    raw = f"{_stem(Path(path))}-{target}-{model}"
     return re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-.")[:100]
 
 
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
-    return [{k: _plain(v) for k, v in row.items()} for row in frame.to_dict("records")]
-
-
-def _plain(v: Any) -> Any:
-    return v.item() if isinstance(v, np.generic) else v
+    return [{k: plain(v) for k, v in row.items()} for row in frame.to_dict("records")]
 
 
 # ---- scoring -------------------------------------------------------------
@@ -550,13 +621,11 @@ def _classification_metrics(y_true, y_pred, proba, classes) -> dict[str, Any]:
             auc = metrics.roc_auc_score(
                 y_true, proba, multi_class="ovr", labels=classes
             )
-        out["roc_auc"] = round(float(auc), 4)
+        out["roc_auc"] = _finite(auc)
     except ValueError:
         pass  # a class missing from y_true
     try:
-        out["log_loss"] = round(
-            float(metrics.log_loss(y_true, proba, labels=classes)), 4
-        )
+        out["log_loss"] = _finite(metrics.log_loss(y_true, proba, labels=classes))
     except ValueError:
         pass
     return out
@@ -566,10 +635,17 @@ def _regression_metrics(y_true, y_pred) -> dict[str, Any]:
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     return {
-        "r2": round(float(metrics.r2_score(y_true, y_pred)), 4),
-        "rmse": round(float(np.sqrt(metrics.mean_squared_error(y_true, y_pred))), 4),
-        "mae": round(float(metrics.mean_absolute_error(y_true, y_pred)), 4),
+        "r2": _finite(metrics.r2_score(y_true, y_pred)),
+        "rmse": _finite(np.sqrt(metrics.mean_squared_error(y_true, y_pred))),
+        "mae": _finite(metrics.mean_absolute_error(y_true, y_pred)),
     }
+
+
+def _finite(value) -> float | None:
+    """A metric rounded for reading, or None where it is undefined
+    (scikit-learn returns NaN for ROC AUC on one class, R2 on one row)."""
+    value = float(value)
+    return round(value, 4) if np.isfinite(value) else None
 
 
 def _importance_score(task, estimator, y_true):

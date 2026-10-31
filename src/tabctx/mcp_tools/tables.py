@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import math
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,8 @@ _EXAMPLES = 3
 # A text column with this share of distinct values (or more) is a
 # likely id: worthless as a feature, and costly to encode.
 _ID_LIKE = 0.95
+# Codes such as "02139" or "007": numbers would lose the zeros.
+_LEADING_ZERO = r"^[+-]?0\d"
 
 
 def read_table(path: str | Path) -> pd.DataFrame:
@@ -30,10 +34,11 @@ def read_table(path: str | Path) -> pd.DataFrame:
         frame = pd.read_parquet(path)
         # A saved pandas index is metadata, not a feature.
         frame = frame.reset_index(drop=True)
-    elif ".tsv" in suffixes:
-        frame = pd.read_csv(path, sep="\t")
     else:
-        frame = pd.read_csv(path)
+        # Read as text, then typed by _clean: pandas would turn "02139"
+        # into 2139 before anything could keep the zero.
+        sep = "\t" if ".tsv" in suffixes else ","
+        frame = pd.read_csv(path, sep=sep, dtype=str)
     return _clean(frame)
 
 
@@ -47,7 +52,12 @@ def _clean(frame: pd.DataFrame) -> pd.DataFrame:
         if blank.any():
             col = col.mask(blank, np.nan)
         numbers = pd.to_numeric(col, errors="coerce")
-        if col.notna().any() and numbers.notna().sum() == col.notna().sum():
+        present = col.dropna().astype(str).str.strip()
+        if (
+            len(present)
+            and numbers.notna().sum() == len(present)
+            and not present.str.match(_LEADING_ZERO).any()
+        ):
             col = numbers
         frame[name] = col
     return frame
@@ -74,9 +84,9 @@ def describe_column(col: pd.Series) -> dict[str, Any]:
     }
     if kind == "numeric" and len(present):
         info.update(
-            min=_plain(present.min()),
+            min=plain(present.min()),
             mean=round(float(present.mean()), 4),
-            max=_plain(present.max()),
+            max=plain(present.max()),
         )
     else:
         top = present.astype(str).value_counts().head(_EXAMPLES)
@@ -97,13 +107,13 @@ def describe_target(col: pd.Series) -> dict[str, Any]:
         "missing": int(col.isna().sum()),
     }
     if task == "classification":
-        counts = present.astype(str).value_counts()
+        counts = label_text(present).value_counts()
         info["classes"] = {str(k): int(v) for k, v in counts.items()}
     else:
         info.update(
-            min=_plain(present.min()),
+            min=plain(present.min()),
             mean=round(float(present.mean()), 4),
-            max=_plain(present.max()),
+            max=plain(present.max()),
         )
     return info
 
@@ -136,6 +146,52 @@ def require_columns(frame: pd.DataFrame, names: list[str]) -> None:
         raise ValueError(f"no column(s) {missing} in the table; it has {shown}")
 
 
-def _plain(v: Any) -> Any:
-    """A numpy scalar as a JSON-friendly Python number."""
-    return v.item() if isinstance(v, np.generic) else v
+def label_text(labels: pd.Series) -> pd.Series:
+    """Class labels as text, the same whichever way the file was read: a
+    0/1 column with blank cells is read as floats, but its classes are
+    still "0" and "1", not "0.0" and "1.0"."""
+    if pd.api.types.is_numeric_dtype(labels) and not pd.api.types.is_bool_dtype(labels):
+        whole = labels.dropna()
+        if len(whole) and (whole == whole.round()).all():
+            return labels.map(lambda v: v if pd.isna(v) else str(int(v)))
+    return labels.map(lambda v: v if pd.isna(v) else str(v))
+
+
+def rows_matching(frame: pd.DataFrame, where: dict[str, Any] | None) -> pd.Series:
+    """A mask of the rows whose columns equal every {column: value}:
+    numerically in numeric columns (1 matches 1.0), as text otherwise."""
+    require_columns(frame, list(where or {}))
+    match = pd.Series(True, index=frame.index)
+    for column, value in (where or {}).items():
+        col = frame[column]
+        if pd.api.types.is_numeric_dtype(col) and not pd.api.types.is_bool_dtype(col):
+            number = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            match &= col == number if pd.notna(number) else False
+        else:
+            match &= col.astype(str) == str(value)
+    return match
+
+
+def plain(v: Any) -> Any:
+    """A value as JSON has it: numpy scalars as Python ones, and missing
+    values (NaN, NaT, None, pd.NA) as None."""
+    if isinstance(v, np.generic):
+        v = v.item()
+    if v is None or (not isinstance(v, (str, bytes, list, dict)) and pd.isna(v)):
+        return None
+    if isinstance(v, pd.Timestamp | dt.datetime | dt.date):
+        return v.isoformat()
+    return v
+
+
+def json_safe(value: Any) -> Any:
+    """value with every nested float NaN or infinity as None, so it is
+    valid JSON (Python's json writes them as bare NaN, which JSON parsers
+    in other languages refuse)."""
+    if isinstance(value, dict):
+        return {k: json_safe(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [json_safe(v) for v in value]
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return plain(value) if isinstance(value, np.generic) else value

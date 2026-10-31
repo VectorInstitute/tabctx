@@ -44,6 +44,14 @@ def files(tmp_path):
     return str(history), str(current)
 
 
+@pytest.fixture(autouse=True)
+def _in_tmp(tmp_path, monkeypatch):
+    """predict writes only inside the working directory; models are
+    signed with a throwaway key."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TABCTX_MCP_KEY_FILE", str(tmp_path / "signing.key"))
+
+
 @pytest.fixture
 def tools(two_replica_service, tmp_path):
     return TabularTools(

@@ -27,6 +27,7 @@ from typing import Any
 
 from mcp.server.mcpserver.exceptions import ToolError
 
+from tabctx.mcp_tools.tables import json_safe
 from tabctx.mcp_tools.tools import MODELS, TabularTools
 
 
@@ -68,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     model_opts(s)
 
     s = table("fit", "fit a model and keep it under a name")
-    s.add_argument("--model", default=MODELS[0], choices=MODELS)
+    s.add_argument("--model", default=MODELS[0], help=f"one of {list(MODELS)}")
     s.add_argument("--name")
     model_opts(s)
 
@@ -91,7 +92,7 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     s = table("explain", "rank columns by permutation importance")
-    s.add_argument("--model", default=MODELS[0], choices=MODELS)
+    s.add_argument("--model", default=MODELS[0], help=f"one of {list(MODELS)}")
     s.add_argument("--top", type=int, default=20)
     model_opts(s)
     return p
@@ -190,7 +191,7 @@ def main(argv: list[str] | None = None, tools: TabularTools | None = None) -> in
     if isinstance(result, str):
         print(result, end="")
     elif result is not None:
-        print(json.dumps(result, indent=2, default=str))
+        print(json.dumps(json_safe(result), indent=2, default=str, allow_nan=False))
     return 0
 
 

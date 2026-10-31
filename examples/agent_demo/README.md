@@ -21,6 +21,33 @@ examples/agent_demo/run.sh claude                  # or codex, gemini, pi
 uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/claude
 ```
 
+## Web UI
+
+```bash
+export TABCTX_API_KEY=vp_...
+uv run --extra mcp --with fastapi --with uvicorn python examples/agent_demo/ui/app.py
+# open http://127.0.0.1:8765
+```
+
+Pick an agent, edit the task if you like, and click **Run agent**. Each
+tabctx call appears as a card as soon as the agent makes it:
+
+- **Inspect:** a map of the table's columns.
+- **Evaluate:** both models against gradient boosting on held-out rows.
+- **Predict:** the predicted split, and a risk table.
+- **Explain:** which columns matter.
+- **What-if:** the probability with and without a change, for one customer.
+
+When the agent finishes, the page shows its score against the real
+outcomes and its report. **Replay last run** plays a finished run back
+without running anything. Hover over any mark for its numbers. The page
+has light and dark themes, and listens on 127.0.0.1 only, since it
+starts agents on this machine.
+
+The UI reads the same `runs/<agent>/transcript.jsonl` files that
+`run.sh` writes. `ui/transcripts.py` turns each agent's format into one
+stream of events.
+
 The task is in [`PROMPT.md`](PROMPT.md). Each run gets its own copy of
 the data in `runs/<agent>/` and leaves `report.md` and
 `transcript.jsonl` there.

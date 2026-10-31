@@ -31,6 +31,12 @@ TOOLS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _in_tmp(tmp_path, monkeypatch):
+    """predict writes only inside the working directory."""
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture
 def tools(tmp_path):
     return TabularTools(ModelStore(tmp_path / "store"), client=FakeDeployment(tmp_path))
@@ -95,6 +101,8 @@ def test_explain_and_evaluate_through_the_server(tools, history):
         (ValueError("no model named 'nope'"), "no model named 'nope'"),
         (DatasetNotFoundError("model 'x' not found"), "model 'x' not found"),
         (ConnectionRefusedError(61, "Connection refused"), "Connection refused"),
+        (RuntimeError("the deployment is draining"), "RuntimeError: the deployment"),
+        (TypeError("unexpected keyword 'x'"), "TypeError: unexpected keyword"),
     ],
 )
 def test_expected_errors_reach_the_agent_with_their_message(

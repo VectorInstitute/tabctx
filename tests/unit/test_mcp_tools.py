@@ -4,6 +4,7 @@ feature (regression: returns it), so in these tables the first column,
 x, decides the answer and the others are noise."""
 
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -14,6 +15,7 @@ pytest.importorskip("pyarrow")
 
 from fake_deployment import FakeDeployment
 
+from tabctx.errors import InvalidInputError
 from tabctx.mcp_tools.store import ModelStore
 from tabctx.mcp_tools.tools import BASELINE, TabularTools
 
@@ -35,6 +37,12 @@ def classification_table(n=80, seed=0):
 @pytest.fixture
 def deployment(tmp_path):
     return FakeDeployment(tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def _in_tmp(tmp_path, monkeypatch):
+    """predict writes only inside the working directory."""
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.fixture
@@ -293,3 +301,159 @@ def test_inspect_table(tools, history):
     counts = pd.read_csv(history)["churn"].value_counts()
     assert out["target"]["task"] == "classification"
     assert out["target"]["classes"] == {k: int(v) for k, v in counts.items()}
+
+
+# ---- regressions from review ------------------------------------------------
+
+
+def test_numeric_labels_with_blank_targets_stay_whole(tools, tmp_path):
+    """Blank target cells make pandas read 0/1 as floats; the classes must
+    still be "0"/"1", and score against a file read as ints."""
+    frame = classification_table()
+    frame["churn"] = (frame["x"] == 1).astype(int)
+    with_blanks = frame.astype({"churn": float})
+    with_blanks.loc[:3, "churn"] = None
+    with_blanks.to_csv(tmp_path / "h.csv", index=False)
+    frame.to_csv(tmp_path / "t.csv", index=False)
+    fit = tools.fit_model(
+        str(tmp_path / "h.csv"), "churn", name="c", drop=["customer_id"]
+    )
+    assert fit["classes"] == ["0", "1"]
+    out = tools.predict("c", str(tmp_path / "t.csv"), rank_by="1")
+    assert out["ranked_by"] == "p_churn=1"
+    assert out["score_against_target"]["accuracy"] == 1.0
+    assert out["score_against_target"]["roc_auc"] == 1.0
+    assert tools.inspect_table(str(tmp_path / "h.csv"), "churn")["target"][
+        "classes"
+    ].keys() == {"0", "1"}
+
+
+def test_evaluate_keeps_the_other_models_when_one_fails(tools, history, deployment):
+    original = deployment.fit_file
+
+    def fail_tabicl(file, target=None, dataset_id=None, model=None, task=None):
+        if model == "tabicl-v2":
+            raise InvalidInputError("tabicl-v2 takes at most 10 classes")
+        return original(file, target, dataset_id, model, task)
+
+    deployment.fit_file = fail_tabicl
+    out = tools.evaluate(history, "churn", drop=["customer_id"])
+    by_model = {r["model"]: r for r in out["results"]}
+    assert "at most 10 classes" in by_model["tabicl-v2"]["error"]
+    assert "metrics" in by_model["tabpfn-3.5"] and "metrics" in by_model[BASELINE]
+    assert out["best"] != "tabicl-v2"
+
+    with pytest.raises(ValueError, match="every model failed"):
+        tools.evaluate(history, "churn", models=["tabicl-v2"], baseline=False)
+    with pytest.raises(ValueError, match="nothing to evaluate"):
+        tools.evaluate(history, "churn", models=[], baseline=False)
+
+
+def test_metrics_follow_the_class_order_the_server_returns(tmp_path, history):
+    """Probabilities are mapped by class, not by position: reversing the
+    server's class order must not flip ROC AUC or log loss."""
+    deployment = FakeDeployment(tmp_path, classes_order=["1", "0"])
+    tools = TabularTools(ModelStore(tmp_path / "s"), client=deployment)
+    out = tools.evaluate(
+        history, "churn", models=["tabpfn-3.5"], baseline=False, drop=["customer_id"]
+    )
+    metrics = out["results"][0]["metrics"]
+    assert metrics["roc_auc"] == 1.0 and metrics["accuracy"] == 1.0
+    assert metrics["log_loss"] < 1e-6
+
+
+def test_output_paths(tools, history, tmp_path):
+    tools.fit_model(history, "churn", name="m", drop=["customer_id"])
+    frame = classification_table(10, seed=2).drop(columns="churn")
+    for name in ("cur.2024.csv", "cur.2025.csv.gz"):
+        frame.to_csv(tmp_path / name, index=False)
+    a = tools.predict("m", str(tmp_path / "cur.2024.csv"))["output"]
+    b = tools.predict("m", str(tmp_path / "cur.2025.csv.gz"))["output"]
+    assert Path(a).name == "cur.2024.m.predictions.csv"
+    assert Path(b).name == "cur.2025.m.predictions.csv"
+
+    again = tools.predict("m", a, output=str(tmp_path / "again.csv"))
+    columns = list(pd.read_csv(again["output"]).columns)
+    assert columns.count("predicted_churn") == 1 and not any(
+        c.endswith(".1") for c in columns
+    )
+
+    with pytest.raises(ValueError, match="is the input"):
+        tools.predict("m", a, output=a)
+    with pytest.raises(ValueError, match="outside the working directory"):
+        tools.predict("m", a, output="/tmp/elsewhere.csv")
+
+
+def test_where_matches_numbers_and_codes(tools, tmp_path):
+    frame = classification_table()
+    frame["zip"] = [f"0{2100 + i % 3}" for i in range(len(frame))]
+    frame.to_csv(tmp_path / "h.csv", index=False)
+    assert (
+        tools.inspect_table(str(tmp_path / "h.csv"))["features"][-1]["kind"] == "text"
+    )
+    tools.fit_model(str(tmp_path / "h.csv"), "churn", name="c", drop=["customer_id"])
+    path = str(tmp_path / "h.csv")
+    on_x = tools.predict("c", path, where={"x": 1}, top=1000)
+    assert on_x["rows_matching_where"] == int((frame["x"] == 1).sum()) > 0
+    on_zip = tools.predict("c", path, where={"zip": "02100"}, top=1000)
+    assert on_zip["rows_matching_where"] == int((frame["zip"] == "02100").sum()) > 0
+    out = tools.what_if(
+        "c",
+        [{}],
+        base_file=path,
+        base_where={"customer_id": "c3", "x": float(frame.x[3])},
+    )
+    assert out["base_row"]["zip"] == frame["zip"][3]
+
+
+def test_missing_values_come_back_as_null(tools, history, tmp_path, capsys):
+    tools.fit_model(history, "churn", name="c", drop=["customer_id"])
+    out = tools.predict("c", history, top=80, show=["plan"])
+    plans = [r["plan"] for r in out["top_rows"]]
+    assert None in plans and not any(isinstance(p, float) for p in plans)
+    from tabctx.mcp_tools import cli
+
+    assert (
+        cli.main(["predict", "c", history, "--top", "80", "--show", "plan"], tools) == 0
+    )
+    json.loads(
+        capsys.readouterr().out,
+        parse_constant=lambda c: pytest.fail(f"bare {c} in JSON"),
+    )
+
+
+def test_one_class_in_the_held_out_rows_gives_no_roc_auc(tools, tmp_path):
+    from tabctx.mcp_tools.tools import _classification_metrics
+
+    m = _classification_metrics(
+        ["a", "a"], ["a", "a"], [[0.9, 0.1], [0.8, 0.2]], ["a", "b"]
+    )
+    assert m["roc_auc"] is None and m["accuracy"] == 1.0
+
+
+def test_explain_bounds_the_rows_it_sends_for_wide_tables(
+    tools, tmp_path, monkeypatch, deployment
+):
+    import tabctx.mcp_tools.tools as module
+
+    monkeypatch.setattr(module, "MAX_EXPLAIN_ROWS", 140)
+    rng = np.random.default_rng(0)
+    frame = pd.DataFrame({f"c{i}": rng.normal(size=200) for i in range(6)})
+    frame["y"] = np.where(frame.c0 > 0, "a", "b")
+    frame.to_csv(tmp_path / "w.csv", index=False)
+    out = tools.explain(str(tmp_path / "w.csv"), "y", repeats=1)
+    assert out["rows_predicted"] <= 140 and out["held_out_rows"] == 140 // 7
+
+
+def test_the_id_column_is_shown_even_when_it_was_a_feature(tools, history):
+    tools.fit_model(history, "churn", name="c")  # customer_id not dropped
+    out = tools.predict("c", history, top=2)
+    assert "customer_id" in out["top_rows"][0]
+
+
+def test_fitting_a_name_again_says_it_replaced_it(tools, history):
+    assert "note" not in tools.fit_model(
+        history, "churn", name="c", drop=["customer_id"]
+    )
+    again = tools.fit_model(history, "churn", name="c", drop=["customer_id"])
+    assert "replaced the earlier model named 'c'" in again["note"]

@@ -21,6 +21,10 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
 AGENT=${1:?usage: run.sh claude|codex|gemini|pi}
+case $AGENT in
+claude | codex | gemini | pi) ;;
+*) echo "unknown agent '$AGENT': use claude, codex, gemini or pi" >&2; exit 2 ;;
+esac
 : "${TABCTX_API_KEY:?set TABCTX_API_KEY to your Vector gateway key (vp_...)}"
 export TABCTX_BASE_URL=${TABCTX_BASE_URL:-https://proxy.vectorinstitute.ai}
 export VP_API_KEY=${VP_API_KEY:-$TABCTX_API_KEY}
@@ -38,7 +42,7 @@ cp "$HERE"/workspace/customers_history.csv "$HERE"/workspace/customers_current.c
 export TABCTX_MCP_HOME=$RUN/.tabctx-mcp
 # python with pandas, and the tabctx-mcp command, for the agent's shell.
 export PATH="$REPO/.venv/bin:$PATH"
-PROMPT=$(cat "$HERE/PROMPT.md")
+PROMPT=$(cat "${PROMPT_FILE:-$HERE/PROMPT.md}")  # the UI passes an edited prompt
 cd "$RUN"
 
 case $AGENT in
@@ -115,10 +119,6 @@ EOF
   # No bash: file tools and the tabctx tools only.
   "$PI" -p --provider vector --model "${PI_MODEL:-claude-sonnet-5-5}" \
     --tools "$tools" --mode json --no-session "$PROMPT" </dev/null >transcript.jsonl
-  ;;
-*)
-  echo "unknown agent $AGENT: use claude, codex, gemini or pi" >&2
-  exit 2
   ;;
 esac
 

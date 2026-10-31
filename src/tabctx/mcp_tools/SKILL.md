@@ -49,5 +49,7 @@ tabctx-mcp models
 - `tabicl-v2` takes at most 10 classes. `tabpfn-3.5` takes up to 160.
 - Text columns and missing values are fine as they are. Numbers stored as
   text are converted when the table is read.
+- `predict` writes its CSV only inside the working directory.
+- A model fitted under an existing name replaces it.
 - The server needs `TABCTX_BASE_URL` and `TABCTX_API_KEY` in the
   environment.

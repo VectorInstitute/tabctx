@@ -54,3 +54,56 @@ def test_root_from_environment(tmp_path, monkeypatch):
     assert ModelStore().root == tmp_path / "env"
     monkeypatch.delenv(HOME_ENV)
     assert str(ModelStore().root) == ".tabctx-mcp"
+
+
+def test_a_planted_model_is_neither_listed_nor_loaded(tmp_path):
+    """A repository could ship .tabctx-mcp/x.pkl: unpickling it would run
+    its code, so the store only loads pickles signed with the user's key."""
+    import json
+    import pickle
+
+    store = ModelStore(tmp_path)
+    store.save(info("mine"), 1)
+    (tmp_path / "x.pkl").write_bytes(pickle.dumps({"planted": True}))
+    (tmp_path / "x.json").write_text(
+        json.dumps({**info("x").as_dict(), "signature": "0" * 64})
+    )
+    assert [i.name for i in store.list()] == ["mine"]
+    with pytest.raises(ValueError, match="not saved by your tabctx-mcp"):
+        store.load("x")
+
+
+def test_a_changed_pickle_is_refused(tmp_path):
+    store = ModelStore(tmp_path)
+    store.save(info(), {"a": 1})
+    path = tmp_path / "m.pkl"
+    path.write_bytes(path.read_bytes() + b"\x00")
+    with pytest.raises(ValueError, match="signature"):
+        store.load("m")
+
+
+def test_another_users_key_cannot_load_it(tmp_path):
+    ModelStore(tmp_path / "s", key_file=tmp_path / "k1").save(info(), 1)
+    other = ModelStore(tmp_path / "s", key_file=tmp_path / "k2")
+    assert other.list() == []
+    with pytest.raises(ValueError, match="signature"):
+        other.load("m")
+
+
+def test_the_key_is_private_and_reused(tmp_path):
+    key = tmp_path / "cfg" / "signing.key"
+    store = ModelStore(tmp_path / "s", key_file=key)
+    store.save(info(), 1)
+    assert oct(key.stat().st_mode & 0o777) == "0o600"
+    assert ModelStore(tmp_path / "s", key_file=key).load("m")[1] == 1
+
+
+def test_records_from_a_newer_version_still_load(tmp_path):
+    import json
+
+    store = ModelStore(tmp_path)
+    store.save(info(), 1)
+    record = json.loads((tmp_path / "m.json").read_text())
+    record["added_later"] = True
+    (tmp_path / "m.json").write_text(json.dumps(record))
+    assert store.load("m")[0] == info()

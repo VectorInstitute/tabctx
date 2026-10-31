@@ -11,14 +11,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from tabctx.errors import TabctxError
+from tabctx.mcp_tools.tables import json_safe
 from tabctx.mcp_tools.tools import MODELS, TabularTools
-
-# Failures the agent can act on: bad arguments or tables (ValueError),
-# the deployment's answers (TabctxError: a 422, a 404, backpressure), and
-# files or the network (OSError). Their messages go back to the agent;
-# the SDK would replace any other exception's with "Error executing tool".
-_REPORTED = (ValueError, TabctxError, OSError)
 
 INSTRUCTIONS = """\
 Tabular foundation models (TabPFN, TabICL) on a GPU server. They learn
@@ -184,10 +178,17 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
 def _run(
     method: Callable[..., dict[str, Any]], *args: Any, **kwargs: Any
 ) -> dict[str, Any]:
+    """Call a tool, its result as valid JSON. Any failure goes back to
+    the agent as a tool error with its message: the SDK would replace an
+    exception's message with "Error executing tool <name>", and the agent
+    needs it to correct the call (a ValueError's message is written for
+    the agent; others get their type, as TabctxError's 422 detail does)."""
     try:
-        return method(*args, **kwargs)
-    except _REPORTED as e:
-        raise ToolError(str(e) or type(e).__name__) from e
+        return json_safe(method(*args, **kwargs))
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        raise ToolError(f"{type(e).__name__}: {e}") from e
 
 
 def _tool(server: MCPServer) -> Callable:
@@ -219,7 +220,3 @@ def call_tool(
         raise ToolError(f"no tool named {name!r}")
     result = asyncio.run(server.call_tool(name, arguments))
     return result[1] if isinstance(result, tuple) else result.structured_content
-
-
-def main() -> None:
-    build_server().run("stdio")

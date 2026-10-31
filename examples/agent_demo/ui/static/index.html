@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tabctx agent demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="17" height="17"><rect x="3" y="4" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M3 9.5h18M9.5 9.5V20" stroke="currentColor" stroke-width="1.9"/></svg>
+      </span>
+      <span class="brand-name">tabctx</span>
+      <span class="brand-sep"></span>
+      <span class="brand-sub">Agent demo</span>
+    </div>
+    <div class="top-right">
+      <span class="pill" id="gateway"></span>
+      <button class="pill icon-btn" id="theme" type="button" aria-label="Switch light or dark theme" title="Switch theme">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel" aria-labelledby="h-data">
+        <h2 id="h-data">Data</h2>
+        <div id="dataset" class="dataset"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-agent">
+        <h2 id="h-agent">Agent</h2>
+        <div id="agents" class="agents" role="radiogroup" aria-labelledby="h-agent"></div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-task">
+        <div class="panel-head">
+          <h2 id="h-task">Task</h2>
+          <button class="link" id="reset-prompt" type="button">Reset</button>
+        </div>
+        <textarea id="prompt" spellcheck="false" rows="6" aria-labelledby="h-task"></textarea>
+      </section>
+
+      <div class="actions">
+        <button id="run" class="btn primary" type="button">
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 5l12 7-12 7z" fill="currentColor"/></svg>
+          Run agent
+        </button>
+        <button id="replay" class="btn" type="button" disabled>Replay last run</button>
+      </div>
+      <p id="notice" class="notice" role="alert" hidden></p>
+    </aside>
+
+    <section class="stage" id="stage" aria-live="polite">
+      <div class="empty" id="empty">
+        <h1>A coding agent that can predict from a table.</h1>
+        <p class="lede">It calls tabular foundation models as tools. There's no training and no tuning, and every prediction is checked against what really happened.</p>
+        <div class="flow" aria-label="How it works">
+          <div class="node">
+            <div class="node-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg></div>
+            <div class="node-title">Two CSVs</div>
+            <div class="node-sub">past · current</div>
+          </div>
+          <svg class="arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h15M14 7l5 5-5 5"/></svg>
+          <div class="node">
+            <div class="node-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l3 2-3 2M12 15h5"/></svg></div>
+            <div class="node-title">Coding agent</div>
+            <div class="node-sub">plans · calls tools</div>
+          </div>
+          <svg class="arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h15M14 7l5 5-5 5"/></svg>
+          <div class="node hub">
+            <div class="node-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9.5h18M9.5 9.5V20"/></svg></div>
+            <div class="node-title">tabctx on a GPU</div>
+            <div class="models"><span>TabPFN</span><span>TabICL</span></div>
+          </div>
+          <svg class="arrow" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 12h15M14 7l5 5-5 5"/></svg>
+          <div class="node">
+            <div class="node-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 19V9M12 19V5M19 19v-7"/></svg></div>
+            <div class="node-title">Scored answer</div>
+            <div class="node-sub">vs real outcomes</div>
+          </div>
+        </div>
+        <div class="empty-foot">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+          The agent never sees the current customers' outcomes.
+        </div>
+      </div>
+
+      <div class="run" id="run-view" hidden>
+        <div class="run-head">
+          <div>
+            <div class="run-title" id="run-title"></div>
+            <div class="run-meta" id="run-meta"></div>
+          </div>
+          <div class="status" id="status" role="status"></div>
+        </div>
+        <div class="steps" id="steps" aria-label="Progress"></div>
+        <div class="timeline" id="timeline"></div>
+        <div class="outcome" id="outcome" hidden>
+          <h3 class="section-title">Scored against what the customers did</h3>
+          <div class="scores" id="scores"></div>
+          <details class="report-card" id="report-card">
+            <summary>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>
+              The agent's report
+              <svg class="chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            </summary>
+            <article class="report" id="report"></article>
+          </details>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="tip" id="tip" role="tooltip"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

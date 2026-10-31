@@ -20,11 +20,25 @@ interface ToolSpec {
   input_schema: Record<string, unknown>;
 }
 
-function parse(stdout: string, what: string): any {
+interface ExecResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  killed?: boolean;
+}
+
+// The command's JSON; a timeout, a crash or stray output as an error that
+// says which (with stderr), not just "no JSON".
+function parse(result: ExecResult, what: string): any {
+  if (result.killed) {
+    throw new Error(`${what}: ${BIN} was stopped (timeout or cancelled) ${result.stderr.slice(-500)}`);
+  }
   try {
-    return JSON.parse(stdout);
+    return JSON.parse(result.stdout);
   } catch {
-    throw new Error(`${what}: ${BIN} printed no JSON: ${stdout.slice(0, 500)}`);
+    throw new Error(
+      `${what}: ${BIN} exited ${result.code} without JSON: ${(result.stderr || result.stdout).slice(-500)}`,
+    );
   }
 }
 
@@ -33,7 +47,7 @@ export default async function (pi: ExtensionAPI) {
   if (listed.code !== 0) {
     throw new Error(`tabctx: '${BIN} tools' failed: ${listed.stderr || listed.stdout}`);
   }
-  const specs: ToolSpec[] = parse(listed.stdout, "tools").tools;
+  const specs: ToolSpec[] = parse(listed, "tools").tools;
 
   for (const spec of specs) {
     pi.registerTool({
@@ -46,7 +60,7 @@ export default async function (pi: ExtensionAPI) {
           signal,
           timeout: TIMEOUT_MS,
         });
-        const out = parse(result.stdout, spec.name);
+        const out = parse(result, spec.name);
         if (result.code !== 0 || out.error) {
           throw new Error(out.error ?? result.stderr);
         }
