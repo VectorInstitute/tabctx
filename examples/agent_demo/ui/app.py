@@ -28,7 +28,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from runner import AGENTS, DEMO, Run, Runner, available, outcome, past_runs  # noqa: E402
+from runner import (  # noqa: E402
+    AGENTS,
+    DEMO,
+    Run,
+    Runner,
+    available,
+    outcome,
+    past_runs,
+)
 from transcripts import PARSERS  # noqa: E402
 
 STATIC = Path(__file__).resolve().parent / "static"
