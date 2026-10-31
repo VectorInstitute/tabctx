@@ -26,6 +26,9 @@ dependencies = [
     "numpy>=1.24",
 ]
 
+[project.scripts]
+tabctx-mcp = "tabctx.mcp_tools.cli:main"
+
 [project.urls]
 Repository = "https://github.com/VectorInstitute/tabctx"
 Changelog = "https://github.com/VectorInstitute/tabctx/blob/main/CHANGELOG.md"
@@ -51,6 +54,8 @@ serve = [
 # The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
 # tables as Parquet (without it, gzip CSV).
 client = ["scikit-learn>=1.6", "pyarrow>=14"]
+# tabctx-mcp: the models as tools for coding agents (MCP server and CLI).
+mcp = ["tabctx[client]", "pandas>=2.0", "mcp>=2.3"]
 dev = ["pytest>=7.0", "pytest-cov", "httpx"]
 
 [dependency-groups]
