@@ -328,3 +328,44 @@ class TestPandasIndex:
             {b"pandas": b"not json"}
         )
         assert read_table(write(tmp_path, parquet(table))).names == ["x"]
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [b"[1]", b'"x"', b'{"index_columns": 5}', b'{"index_columns": "x"}', b"null"],
+    )
+    def test_metadata_of_another_shape_is_ignored(self, tmp_path, metadata):
+        """JSON pandas didn't write: no 500, and no real column dropped (a
+        string index_columns must not drop the column named "x")."""
+        table = pa.table({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        table = table.replace_schema_metadata({b"pandas": metadata})
+        assert read_table(write(tmp_path, parquet(table))).names == ["x", "y"]
+
+    def test_names_are_compared_stripped(self, tmp_path, frame):
+        indexed = frame.set_index("label").rename_axis(" label ")
+        path = self.path(tmp_path, indexed)
+        features, labels = read_training_table(path, "label", None)
+        assert features.names == ["x", "band"] and labels == ["yes", "no", "yes"]
+
+    def test_errors_say_the_index_was_left_out(self, tmp_path, frame):
+        """Labels saved as the index, with no target named: the index isn't
+        read, which the error says, with what to do."""
+        path = self.path(tmp_path, frame[["label"]].assign(x=1.0).set_index("label"))
+        with pytest.raises(
+            InvalidInputError, match=r"pandas index \['label'\].*reset_index"
+        ):
+            read_training_table(path, None, None)
+        only_index = self.path(tmp_path, frame.set_index("x")[[]])
+        with pytest.raises(
+            InvalidInputError, match=r"no columns.*pandas index \['x'\]"
+        ):
+            read_table(only_index)
+
+    def test_a_repeated_name_is_a_clear_error(self, tmp_path):
+        """Repeated names are refused before the index is dropped (newer
+        pyarrow refuses them while reading): a 422 naming the column."""
+        table = pa.table([[1, 2], [3, 4], [5.0, 6.0]], names=["i", "i", "x"])
+        table = table.replace_schema_metadata({b"pandas": b'{"index_columns": ["i"]}'})
+        with pytest.raises(
+            InvalidInputError, match=r"(repeats column name\(s\) \['i'\]|Name\(i\))"
+        ):
+            read_table(write(tmp_path, parquet(table)))

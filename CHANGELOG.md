@@ -40,6 +40,12 @@
 
   Columns the file's pandas metadata lists as its index are now dropped when the file is read (`serve/files.py`), the way pandas reads them back as the index. One named as the `target` is kept. Found through the gateway, fitting a file uploaded with `/v1/tabctx/upload`.
 
+  Other changes and limits:
+  - **Behaviour change:** a meaningful named index, such as `customer_id` or a `date` DatetimeIndex, used to be a feature and no longer is, matching pandas. To use it, save the frame after `reset_index()`, or name it as the target.
+  - When the index removal leaves too few columns, the error now says the index was removed.
+  - Pandas metadata that isn't in the shape pandas writes is ignored.
+  - **Still open:** `DataFrame.to_csv()` writes the index as an unnamed first column. CSV files have no metadata to recognize it by, so write CSVs with `index=False`.
+
 ## [0.15.0] - 2026-10-21
 ### Added
 - **scikit-learn estimators** (#63): `TabctxClassifier` and `TabctxRegressor` (`tabctx/estimators.py`, `from tabctx import ...`; `pip install "tabctx[client]"` adds scikit-learn and pyarrow). They take DataFrames, numpy arrays or lists of rows with text columns, dates and missing values as they are; labels are checked as scikit-learn checks them and come back exactly as given (sent as class indices); `predict_proba` follows `classes_`; clone, pipelines and model selection work. Test columns match the training columns by name when both have names, else by position (with a warning); a column that was text at fit stays text at predict, whatever its new values look like. Each table is one Parquet file (`tabctx/table_files.py`, float32 numbers, timestamps and durations as such); predicts over `max_request_bytes` (default 29 MiB, under the Vector gateway's 30 MiB) are split until each part fits, and a training table over it is refused before sending. The context id comes from the table, labels, model and task; a predict that finds its context gone (the server's "no cached context") fits it again from the kept training file and retries once, with the model it was fit with.

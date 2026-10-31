@@ -246,3 +246,11 @@ def test_a_pandas_parquet_files_index_is_not_a_column(two_replica_service):
     )
     assert pred.status_code == 200, pred.text
     assert sorted(pred.json()["classes"]) == ["no", "yes"]
+
+    # A predict file from the other split carries its own (different) index.
+    test = pd.DataFrame({"plan": ["gold", "basic"], "age": [31, 44]}, index=[12, 10])
+    buf = io.BytesIO()
+    test.to_parquet(buf)
+    pred = predict_file(url, ds, buf.getvalue())
+    assert pred.status_code == 200, pred.text
+    assert pred.json()["n_test"] == 2
