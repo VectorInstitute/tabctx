@@ -1,0 +1,13 @@
+# Build context for examples/agent_demo/Dockerfile (the only image built
+# from this repository): the source and the demo, nothing local.
+*
+!pyproject.toml
+!README.md
+!LICENSE.md
+!src/
+!examples/agent_demo/
+examples/agent_demo/workspace/
+examples/agent_demo/answers/
+examples/agent_demo/runs/
+**/__pycache__/
+**/.DS_Store

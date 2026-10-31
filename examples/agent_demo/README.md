@@ -48,6 +48,35 @@ The UI reads the same `runs/<agent>/transcript.jsonl` files that
 `run.sh` writes. `ui/transcripts.py` turns each agent's format into one
 stream of events.
 
+## Hosted demo (share a link)
+
+`deploy.sh` builds [`Dockerfile`](Dockerfile) with Cloud Build and deploys it
+to Cloud Run (project `coderd`, `us-central1`, service `tabctx-agent-demo`).
+The image holds the page, Claude Code, Codex and pi, and `tabctx-mcp`, and
+nothing secret.
+
+- **Anyone with the link** can replay the showcase runs in
+  [`showcase/`](showcase/). These are three real runs, copied by
+  `make_showcase.py` with session details and local paths removed.
+- **To run an agent**, a visitor signs in with their own gateway key. The
+  app checks the key's project models (`/admin/me/models`) and gives each
+  agent the best model that project can use. Agents the project can't run
+  stay off.
+- **Every agent's model calls go through the gateway with that key**, so
+  they are billed to the visitor's project. The tabular calls are free.
+- **The task is fixed.** Gemini CLI isn't offered, because it can't use
+  the gateway.
+- **The key stays in server memory**, linked to an HttpOnly, Secure,
+  SameSite=Strict session cookie. It is never written to disk or logs.
+  Sessions end on sign-out, after 4 hours idle, or when the instance
+  stops.
+- **Each run is isolated.** It runs as a Unix user of its own, with its
+  own HOME and a folder only that user can read. One visitor's agent can't
+  read another's files or process environment, which holds that visitor's
+  key. Nobody's agent can read the answers.
+- **Limits:** 3 runs at once, one per visitor, each stopped after 15
+  minutes. Sign-in attempts are rate-limited.
+
 The task is in [`PROMPT.md`](PROMPT.md). Each run gets its own copy of
 the data in `runs/<agent>/` and leaves `report.md` and
 `transcript.jsonl` there.

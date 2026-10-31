@@ -50,6 +50,8 @@ serve = [
     "jinja2",
     "pyarrow>=14",
     "python-multipart>=0.0.9",
+    # the agent demo's web app (examples/agent_demo/ui), in the unit tests
+    "fastapi",
 ]
 # The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
 # tables as Parquet (without it, gzip CSV).

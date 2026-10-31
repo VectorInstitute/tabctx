@@ -102,23 +102,78 @@ function initTooltips() {
 async function init() {
   initTheme();
   initTooltips();
-  const setup = await (await fetch("/api/setup")).json();
-  state.setup = setup;
-  renderGateway(setup);
+  const setup = await loadSetup();
   renderDataset(setup.dataset);
   $("#prompt").value = setup.prompt;
+  $("#prompt").readOnly = !setup.prompt_editable;
+  $("#reset-prompt").hidden = !setup.prompt_editable;
+  $("#h-task").textContent = setup.prompt_editable ? "Task" : "Task (fixed)";
   state.agent = setup.running || setup.runs.at(-1)?.agent || setup.agents.find((a) => a.available)?.id;
   renderAgents();
   $("#reset-prompt").onclick = () => ($("#prompt").value = setup.prompt);
   $("#run").onclick = start;
   $("#replay").onclick = () => watch(state.agent, true);
+  $("#login").onsubmit = signIn;
+  $("#logout").onclick = signOut;
   if (setup.running) watch(setup.running, false);
+}
+
+async function loadSetup() {
+  const setup = await (await fetch("/api/setup")).json();
+  state.setup = setup;
+  renderGateway(setup);
+  renderAccount(setup);
+  return setup;
+}
+
+function renderAccount(setup) {
+  $("#account").hidden = !setup.hosted;
+  const signed = Boolean(setup.signed_in);
+  $("#login").hidden = signed;
+  $("#account .fine").hidden = signed;
+  $("#account .signed").hidden = !signed;
+  $("#h-account").textContent = signed ? "Signed in" : "Your gateway key";
+  if (signed) $("#key-id").textContent = setup.signed_in.key_id;
+}
+
+async function signIn(e) {
+  e.preventDefault();
+  notice("");
+  const key = $("#key").value.trim();
+  if (!key) return;
+  const button = $("#login button");
+  button.disabled = true;
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  button.disabled = false;
+  $("#key").value = "";
+  if (!res.ok) {
+    notice((await res.json()).detail || "Could not sign in");
+    return;
+  }
+  await loadSetup();
+  renderAgents();
+}
+
+async function signOut() {
+  await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  await loadSetup();
+  renderAgents();
 }
 
 function renderGateway(setup) {
   const host = setup.gateway.replace(/^https?:\/\//, "");
   $("#gateway").innerHTML = `<span class="dot ${setup.key_set ? "" : "off"}"></span>${esc(host)}`;
-  $("#gateway").dataset.tip = setup.key_set ? "Gateway key set" : "No TABCTX_API_KEY: runs will fail";
+  $("#gateway").dataset.tip = setup.hosted
+    ? setup.key_set
+      ? "Signed in: runs use your key"
+      : "Sign in with your gateway key to run an agent"
+    : setup.key_set
+      ? "Gateway key set"
+      : "No TABCTX_API_KEY: runs will fail";
 }
 
 function renderDataset(d) {
@@ -142,16 +197,20 @@ function renderDataset(d) {
 
 function renderAgents() {
   const scores = Object.fromEntries(state.setup.runs.map((r) => [r.agent, r.score]));
+  const hosted = state.setup.hosted;
   $("#agents").innerHTML = state.setup.agents
     .map((a) => {
       const s = scores[a.id];
+      const replayable = a.id in scores;
       const badge = !a.available
         ? '<span class="agent-badge na">not installed</span>'
-        : s
+        : hosted && state.setup.signed_in && !a.allowed
+          ? '<span class="agent-badge na" data-tip="Your key\'s project has no model for this agent">no access</span>'
+          : s
           ? `<span class="agent-badge" data-tip="ROC AUC of its last run, on the real outcomes">${fmt(s.roc_auc, 3)}</span>`
           : "";
       const tools = a.tools.split(" · ")[0];
-      return `<button class="agent" role="radio" type="button" data-id="${a.id}" aria-checked="${a.id === state.agent}" ${a.available ? "" : "disabled"}>
+      return `<button class="agent" role="radio" type="button" data-id="${a.id}" aria-checked="${a.id === state.agent}" ${a.available || replayable ? "" : "disabled"}>
         <div class="agent-top"><span class="agent-name">${esc(a.label)}</span>${badge}</div>
         <div class="agent-llm" data-tip="${esc(a.llm)}">${esc(a.llm)}</div>
         <div class="agent-tools" data-tip="${esc(a.tools)}">${esc(tools)}${a.tools.includes("no shell") || a.tools.includes("no bash") ? " · no shell" : ""}</div>
@@ -160,6 +219,10 @@ function renderAgents() {
     .join("");
   document.querySelectorAll(".agent").forEach((b) => (b.onclick = () => selectAgent(b.dataset.id)));
   $("#replay").disabled = !(state.agent in scores) || isBusy();
+  const agent = state.setup.agents.find((a) => a.id === state.agent);
+  const signedOut = hosted && !state.setup.signed_in;
+  $("#run").disabled = isBusy() || signedOut || !agent?.allowed;
+  $("#run-label").textContent = signedOut ? "Sign in to run" : "Run agent";
 }
 
 function selectAgent(id) {
@@ -179,7 +242,7 @@ async function start() {
   });
   if (!res.ok) {
     notice((await res.json()).detail || "Could not start the agent");
-    $("#run").disabled = false;
+    renderAgents();
     return;
   }
   watch(state.agent, false);
@@ -306,8 +369,7 @@ function finish(outcome, info) {
     );
   }
   renderOutcome(outcome);
-  $("#run").disabled = false;
-  refreshRuns();
+  refreshRuns(); // re-enables Run as the viewer's access allows
 }
 
 async function refreshRuns() {

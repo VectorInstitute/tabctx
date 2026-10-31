@@ -31,6 +31,19 @@
 
   <main class="layout">
     <aside class="sidebar">
+      <section class="panel account" id="account" hidden aria-labelledby="h-account">
+        <h2 id="h-account">Your gateway key</h2>
+        <form id="login" autocomplete="off">
+          <input id="key" type="password" placeholder="vp_…" spellcheck="false" autocomplete="off" aria-labelledby="h-account" />
+          <button class="btn primary" type="submit">Sign in</button>
+        </form>
+        <p class="fine">Runs use your key: the agent's model calls are billed to your project; the tabular calls are free. The key stays in this server's memory for your session only.</p>
+        <div class="signed" hidden>
+          <span class="dot"></span><span id="key-id" class="mono"></span>
+          <button class="link" id="logout" type="button">Sign out</button>
+        </div>
+      </section>
+
       <section class="panel" aria-labelledby="h-data">
         <h2 id="h-data">Data</h2>
         <div id="dataset" class="dataset"></div>
@@ -52,7 +65,7 @@
       <div class="actions">
         <button id="run" class="btn primary" type="button">
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M7 5l12 7-12 7z" fill="currentColor"/></svg>
-          Run agent
+          <span id="run-label">Run agent</span>
         </button>
         <button id="replay" class="btn" type="button" disabled>Replay last run</button>
       </div>
