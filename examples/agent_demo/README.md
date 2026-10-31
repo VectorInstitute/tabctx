@@ -16,14 +16,20 @@ claims, churn): only the data and the prompt change.
 Data: the public Diabetes 130-US Hospitals table (UCI; OpenML #4541),
 101,766 hospital stays of diabetic patients, 1999-2008. `prepare_data.py`
 prepares it as in most work on it (Strack et al., 2014) and takes 30,000
-past stays with their outcome (11.6% readmitted within 30 days), and one
+past stays with their outcome (11.0% readmitted within 30 days), and one
 stay each for 2,000 other patients, who are the "current" patients and
-appear nowhere in the history. 33 features: demographics, admission and
-discharge, prior visits, diagnoses, lab tests, diabetes medication.
+appear nowhere in the history (11.0% of them were readmitted). Current
+patients are picked with a chance in proportion to their number of
+stays, as the history's stays are; picking them uniformly would make
+the current set healthier than the history. 33 features: demographics,
+admission and discharge, prior visits, diagnoses, lab tests, diabetes
+medication.
 
-`task.py` names the files and columns. A different dataset means
-changing `task.py`, `prepare_data.py` and `PROMPT.md`; the runner,
-scoring and web page read the rest from `task.py`.
+`task.py` names the files and columns, the outcome's labels and the
+task's steps (the page's step icons; keep them in line with
+`PROMPT.md`). A different dataset means changing `task.py`,
+`prepare_data.py` and `PROMPT.md`; the runner, scoring and web page read
+the rest from `task.py`.
 
 ```bash
 uv sync --extra mcp
@@ -115,9 +121,9 @@ The agent's LLM:
 
 | Agent (LLM) | tabctx calls | Wall time | Model chosen | ROC AUC on real outcomes | Readmitted among its top 10 / top 100 |
 |---|---|---|---|---|---|
-| Claude Code 2.1 (Opus 5.5, own login) | 11 | 188 s | tabpfn-3.5 | 0.692 | 60% / 32% |
-| Codex 0.137 (gpt-5, via gateway) | 10 | 3 min | tabpfn-3.5 | 0.692 | 60% / 32% |
-| pi 0.73 (Sonnet 5.5, via gateway) | 11 | 162 s | tabpfn-3.5 | 0.692 | 60% / 32% |
+| Claude Code 2.1 (Opus 5.5, own login) | 10 | 160 s | tabpfn-3.5 | 0.674 | 80% / 36% |
+| Codex 0.137 (gpt-5, via gateway) | 9 | 188 s | tabpfn-3.5 | 0.674 | 80% / 36% |
+| pi 0.73 (Sonnet 5.5, via gateway) | 10 | 134 s | tabpfn-3.5 | 0.674 | 80% / 36% |
 | Gemini CLI 0.38 | not run | | | | |
 
 Gemini CLI wasn't run because its free-tier Google login is no longer
@@ -125,32 +131,29 @@ accepted ("This client is no longer supported for Gemini Code Assist
 for individuals"). `run.sh gemini` needs `GEMINI_API_KEY` or Vertex AI
 auth.
 
-9.6% of the current patients were readmitted within 30 days, so a random
-top 10 would hold about 1, and the agents' top 100 held 3.3 times the
-base rate. Readmission is hard to predict from administrative data:
+11.0% of the current patients were readmitted within 30 days, so a
+random top 10 would hold about 1, and the agents' top 100 held 3.3 times
+the base rate. Readmission is hard to predict from administrative data:
 published risk scores (LACE, HOSPITAL) reach an AUC of about 0.65-0.72.
 
-In `evaluate`, on 7,500 held-out past stays, ROC AUC was 0.677 for
-tabpfn-3.5, 0.668 for tabicl-v2 and 0.670 for gradient boosting; log
-loss 0.336, 0.341 and 0.339. Fitting 30,000 rows took 20 to 29 s.
+In `evaluate`, on 7,500 held-out past stays, ROC AUC was 0.697 for
+tabpfn-3.5, 0.690 for tabicl-v2 and 0.683 for gradient boosting; log
+loss 0.321, 0.325 and 0.325. Fitting 30,000 rows took 20 to 23 s.
 Predicting 2,000 took about 1.5 s, and `explain` (50,000 rows in one
 predict) about 30 s.
 
 All three agents used every tool, dropped `patient_id` (which
 `inspect_table` flags as an id), picked tabpfn-3.5 and got the same
-ranking. In `explain`, where the patient is discharged to mattered most
-(AUC drop 0.062), then the number of inpatient stays in the past year
-(0.052), then the primary diagnosis (0.013). The three riskiest patients
-going home were all aged 20-30, with diabetes as the primary diagnosis
-and 7 to 12 earlier stays. For them, no care change the agents tried
-(home health service, insulin or metformin changes, a nursing facility)
-moved the predicted risk by more than about 4 points, and home health
-slightly raised it. All three reports explain why: the model learned
-associations from past records, where sicker patients were the ones
-sent to home health, not the effect of the change. Each recommends a
-transitional-care follow-up program targeted by risk score, tested with
-a comparison group.
+ranking. In `explain`, the number of inpatient stays in the past year
+mattered most (AUC drop 0.056), then where the patient is discharged to
+(0.039), emergency visits (0.018) and the primary diagnosis (0.014).
+For the three riskiest patients going home, discharge with home health
+service lowered predicted risk by 2 to 10 points; insulin, metformin and
+A1C changes moved it by about 1 point or less. All three reports say
+these are associations the model learned from past records, not proven
+effects, and recommend a transitional-care program targeted by risk
+score, measured against a comparison group.
 
-The first Codex run stopped after predicting, with a progress message
-and no report (gpt-5 in `codex exec` sometimes ends its turn early).
-The showcase holds the second run, which finished.
+In an earlier run of this task, Codex stopped after predicting, with a
+progress message and no report (gpt-5 in `codex exec` sometimes ends its
+turn early). Running it again finished.

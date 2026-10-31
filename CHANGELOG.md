@@ -2,12 +2,13 @@
 
 ## [Unreleased]
 ### Changed
-- **The agent demo is now about hospital readmission, not telecom churn.** It uses the public Diabetes 130-US Hospitals table (UCI; OpenML #4541): 30,000 past stays and 2,000 current patients who appear nowhere in the history. The agent ranks the current patients by their risk of coming back within 30 days, finds the drivers, and tests care changes with what-if predictions. Admission and discharge codes are named, and diagnosis codes grouped, so tables and what-if rows read as "Home health service", not "6". Claude Code, Codex and pi all reached ROC AUC 0.692 on the real outcomes, with 6 of their top 10 and 32% of their top 100 readmitted (base rate 9.6%). `examples/agent_demo/task.py` now holds the files and columns, which the runner, scoring and page read.
+- **The agent demo is now about hospital readmission, not telecom churn.** It uses the public Diabetes 130-US Hospitals table (UCI; OpenML #4541): 30,000 past stays and 2,000 current patients who appear nowhere in the history, picked in proportion to their number of stays so both sides have the same mix. The agent ranks the current patients by their risk of coming back within 30 days, finds the drivers, and tests care changes with what-if predictions. Admission and discharge codes are named, and diagnosis codes grouped, so tables and what-if rows read as "Home health service", not "6". Claude Code, Codex and pi all reached ROC AUC 0.674 on the real outcomes, with 8 of their top 10 and 36% of their top 100 readmitted (base rate 11.0%). `examples/agent_demo/task.py` now holds the files, columns, outcome labels and task steps, which the runner, scoring and page read.
 - **Demo page: less text.** The key note became a tooltip, agent cards show icon chips instead of two lines of text, the task shows as five step icons with the prompt folded, a failed tool call shows one line, and the hero lost its paragraph and footer. The predict card shows the expected split (mean probability), which says something even when almost no row crosses 50%.
 
 ### Fixed
 - `examples/agent_demo/run.sh claude` failed on macOS's bash 3.2 without `CLAUDE_MODEL` set (an empty array is "unbound" under `set -u`).
 - `make_showcase.py` masks the login name, which `ls -l` output in a transcript shows.
+- Demo page tooltips escape untrusted values (column names, class labels, what-if values, tool errors) a second time, since the tooltip renders its attribute as HTML.
 
 ## [0.16.0] - 2026-10-31
 ### Added

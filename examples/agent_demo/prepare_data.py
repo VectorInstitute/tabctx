@@ -157,16 +157,23 @@ def load() -> pd.DataFrame:
 
 
 def split(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """CURRENT_ROWS stays of patients set aside, one per patient, and
-    HISTORY_ROWS stays of everyone else. Both are drawn by stay, so
-    patients who come back often weigh the same on both sides."""
-    patients = frame["patient_nbr"].drop_duplicates().sample(frac=1, random_state=SEED)
-    aside = frame["patient_nbr"].isin(set(patients.iloc[: 3 * CURRENT_ROWS]))
+    """One stay each of CURRENT_ROWS patients, and HISTORY_ROWS stays of
+    everyone else.
+
+    The history is a sample of stays, so a patient with many stays (the
+    ones most often readmitted) shows up more. Current patients are
+    picked the same way, with a chance in proportion to their number of
+    stays, so both sides have the same mix; picking patients uniformly
+    gives a current set that is readmitted less often than the history.
+    """
+    stays = frame["patient_nbr"].value_counts()
+    chosen = stays.sample(n=CURRENT_ROWS, weights=stays, random_state=SEED).index
+    aside = frame["patient_nbr"].isin(chosen)
     current = (
         frame[aside]
+        .groupby("patient_nbr")
+        .sample(n=1, random_state=SEED)
         .sample(frac=1, random_state=SEED)
-        .drop_duplicates("patient_nbr")
-        .head(CURRENT_ROWS)
     )
     history = frame[~aside].sample(n=HISTORY_ROWS, random_state=SEED)
     return history.drop(columns="patient_nbr"), current.drop(columns="patient_nbr")

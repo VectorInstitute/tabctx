@@ -32,7 +32,7 @@ def score(run_dir: Path) -> dict:
     if len(merged) != len(truth):
         raise SystemExit(f"{files[-1]} covers {len(merged)} of {len(truth)} rows")
     positive = merged[task.TARGET] == task.POSITIVE
-    ranked = merged.sort_values(task.PROBA, ascending=False)
+    ranked = merged.sort_values(task.PROBA, ascending=False, kind="stable")
     out = {
         "file": files[-1].name,
         "rows": len(merged),

@@ -211,6 +211,7 @@ def dataset() -> dict | None:
         "features": len(current.columns) - 1,  # without the id
         "target": task.TARGET,
         "positive": task.POSITIVE,
+        "negative": task.NEGATIVE,
         "positive_rate": round(
             float((history[task.TARGET] == task.POSITIVE).mean()), 3
         ),

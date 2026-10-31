@@ -1,80 +1,102 @@
-# 30-day readmission risk: diabetic patients being discharged
+# 30-day readmission risk: current discharges
 
 ## 1. How accurate is the model?
 
-Held out 25% of `patients_history.csv` (7,500 of 30,000 stays). `patient_id` was dropped.
+I held out 25% of `patients_history.csv` (7,500 of 30,000 stays) and scored each model on it. `patient_id` was dropped. The readmission rate is 11%.
 
-| Model | ROC AUC | Accuracy | Log loss |
+| Model | ROC AUC | Log loss | Accuracy |
 |---|---|---|---|
-| **tabpfn-3.5** (chosen) | **0.677** | 0.884 | 0.336 |
-| tabicl-v2 | 0.668 | 0.884 | 0.341 |
-| sklearn gradient boosting (baseline) | 0.670 | 0.884 | 0.339 |
+| **tabpfn-3.5** (chosen) | **0.697** | **0.3206** | 0.890 |
+| tabicl-v2 | 0.690 | 0.3252 | 0.889 |
+| sklearn gradient boosting (baseline) | 0.683 | 0.3254 | 0.890 |
 
-- TabPFN is the best tabctx model. It beats gradient boosting by a small margin (+0.007 AUC, slightly better log loss). That gap is small, so I would call it roughly a tie with a slight edge.
-- **Readmission is only weakly predictable from this data.** AUC 0.68 is modest.
-- The 0.884 accuracy is almost meaningless. About 88% of stays are not readmitted (3,478 of 30,000 were), so always answering "No" scores the same.
-- Use the output as a **ranking and prioritisation** tool, not a yes/no call. The model flags only 4 of 2,000 current patients as "Yes" at a 50% cutoff.
-- The highest predicted probability is 54%. Mean predicted risk for the current cohort is 10.8%, against 11.6% in the history.
+- **Choice:** TabPFN-3.5 is best on AUC and log loss. Its lead over gradient boosting is small (+0.015 AUC), but it is consistent across both metrics.
+- **Ranking ability is modest.** An AUC of about 0.70 means the model ranks a readmitted patient above a non-readmitted one about 70% of the time. That is useful for prioritising, but it is far from certain for any one patient.
+- **Ignore the accuracy figure.** Always answering "No" would score about 89%. The model flags only 3 of 2,000 current patients as "Yes" at the 50% threshold. Use the probabilities and rank patients by them.
+- **Probabilities are low overall.** The mean predicted risk is 11.2%. Only 3 patients are above 50%, and the highest is 59.8%.
+
+The final model, `tabpfn_readmit`, was refit on all 30,000 history rows.
 
 ## 2. Predictions
 
-All 2,000 current patients were scored with the TabPFN model fitted on all 30,000 historical stays.
-File: `patients_current.pfn.predictions.csv`. It has `predicted_readmitted_30d`, `p_readmitted_30d=No` and `p_readmitted_30d=Yes`.
-`home_top_scratch.csv` is a scratch by-product of the what-if selection step. Ignore it.
+Predictions for all 2,000 current patients are in `predictions.csv`. The columns are `predicted_readmitted_30d`, `p_readmitted_30d=No` and `p_readmitted_30d=Yes`.
 
 ### 10 highest-risk patients
 
-| # | patient_id | P(readmit 30d) | Discharge disposition | Prior inpatient stays |
+| Rank | patient_id | P(readmit 30d) | Discharge | Prior inpatient stays |
 |---|---|---|---|---|
-| 1 | P069294 | 0.541 | Short-term hospital | 2 |
-| 2 | P062554 | 0.539 | Short-term hospital | 0 |
-| 3 | P035606 | 0.532 | Home | 12 |
-| 4 | P050933 | 0.513 | Short-term hospital | 1 |
-| 5 | P013753 | 0.498 | Short-term hospital | 0 |
-| 6 | P093095 | 0.462 | Rehab facility | 0 |
-| 7 | P017056 | 0.453 | Rehab facility | 1 |
-| 8 | P015152 | 0.435 | Short-term hospital | 0 |
-| 9 | P063677 | 0.431 | Home | 7 |
-| 10 | P086418 | 0.410 | Home | 7 |
+| 1 | P025920 | 0.598 | Home | 13 |
+| 2 | P056552 | 0.525 | Short-term hospital | 1 |
+| 3 | P061311 | 0.518 | Home | 11 |
+| 4 | P063665 | 0.493 | Short-term hospital | 3 |
+| 5 | P041248 | 0.491 | Left against advice | 9 |
+| 6 | P036811 | 0.490 | Short-term hospital | 1 |
+| 7 | P032656 | 0.482 | Home | 4 |
+| 8 | P098757 | 0.473 | Short-term hospital | 3 |
+| 9 | P080920 | 0.442 | Rehab facility | 0 |
+| 10 | P051471 | 0.438 | Rehab facility | 2 |
 
-## 3. What drives readmission
+## 3. Main drivers
 
-Permutation importance (drop in held-out AUC when a column is shuffled):
+These come from permutation importance. The score is the drop in held-out AUC when a column is shuffled. The test used only 500 held-out rows, so small values are noisy.
 
-1. **`discharge_disposition`** (0.062). This is the largest driver. Transfers to another hospital or a rehab facility rank high. Most of the top 10 above are in these groups.
-2. **`number_inpatient`** (0.052), the count of prior inpatient stays. More prior stays means higher risk.
-3. `diag_1`, the primary diagnosis (0.013).
-4. `medical_specialty` (0.009), `number_emergency` (0.009), `diabetesMed` (0.007), `max_glu_serum` (0.005).
-5. Everything else is at or near zero, including the individual diabetes drugs and `change`. Age, length of stay and lab counts add almost nothing.
+| Factor | AUC drop |
+|---|---|
+| `number_inpatient` (prior inpatient stays) | 0.056 |
+| `discharge_disposition` | 0.039 |
+| `number_emergency` (prior ER visits) | 0.018 |
+| `diag_1` (primary diagnosis group) | 0.014 |
+| `num_procedures` | 0.007 |
+| `payer_code`, `medical_specialty`, `time_in_hospital` | about 0.004–0.006 |
 
-In short, risk is driven mainly by where the patient goes next and by how often they have been admitted before. It is driven very little by the diabetes regimen.
+- **Prior utilisation dominates.** Patients with many earlier inpatient stays or ER visits are the most likely to come back.
+- **Discharge destination is the second-largest factor.** It is also the only large driver a care team can change at discharge.
+- **Diabetes medications and lab results add little.** Individual drugs, `A1Cresult`, `change` and `diabetesMed` are all at or near zero, meaning the model barely uses them.
+- **Limit of this method.** Permutation importance shows what the model relies on. It does not show what causes readmission.
 
-## 4. What-if tests (highest-risk patients discharged Home)
+## 4. What-if analysis (top 3 patients discharged Home)
 
-The three are P035606, P063677 and P086418. All are aged 20-30, have a primary diagnosis of Diabetes, and have 7 to 12 prior inpatient stays.
-Each row changes one thing and holds the rest fixed.
+The three highest-risk patients with `discharge_disposition` = Home are P025920, P061311 and P032656. I changed one thing at a time and re-predicted. Values are P(readmit) with the change from baseline in percentage points.
 
-| Scenario | P035606 | P063677 | P086418 |
+| Scenario | P025920 | P061311 | P032656 |
 |---|---|---|---|
-| Baseline (Home) | 0.532 | 0.431 | 0.410 |
-| Home health service | 0.540 (+0.9 pt) | 0.434 (+0.3 pt) | 0.425 (+1.5 pt) |
-| Insulin held "Steady", no med change (P035606: insulin Up, changed) | 0.527 (-0.5 pt) | 0.454 (+2.3 pt) | 0.431 (+2.1 pt) |
-| Insulin "Down" (P035606: insulin No, diabetesMed No, changed) | 0.510 (-2.2 pt) | 0.439 (+0.7 pt) | 0.417 (+0.7 pt) |
-| Home health + insulin steady/no change (P035606: home health + insulin up) | 0.536 (+0.4 pt) | 0.455 (+2.4 pt) | 0.441 (+3.2 pt) |
+| Baseline (Home) | 59.8% | 51.8% | 48.2% |
+| Home health service | 58.0% (−1.8) | 49.4% (−2.4) | 37.9% (−10.3) |
+| Skilled nursing facility | 54.4% (−5.4) | 46.6% (−5.2) | 38.3% (−9.9) |
+| Medication change* | 60.4% (+0.6) | 51.8% (0.0) | 50.1% (+1.9) |
+| A1C recorded as "Norm" | 59.5% (−0.3) | 51.4% (−0.4) | 45.8% (−2.4) |
 
-**Reading these results:**
-- Almost every change moves predicted risk by 2 points or less, and most of them move it **up**. The model finds no lever that clearly helps.
-- The changes are small and inconsistent in direction across the three patients. They are within the noise of a model with AUC 0.68.
-- **These are associations the model learned, not causal effects.** The model learned from past data that Home health service patients were readmitted at similar or higher rates. That is most likely because sicker patients are the ones sent to home health. Swapping that label on a patient does not make the patient healthier, and it says nothing about what home health would do.
-- The same applies to medication changes. In the history, sicker patients get their regimens changed. The model also did not see the intervention itself, such as nurse calls, only the disposition label.
-- These three patients are unusual: aged 20-30 with 7 to 12 prior inpatient stays. The history has very few comparable patients, so the model is extrapolating and the numbers for them are less reliable.
-- Treat the what-ifs as hypotheses to test, not as expected savings.
+\*The medication change differs by patient:
+- P025920: insulin "Down" → "Steady", `change` = "No".
+- P061311: insulin "Up" → "Steady", `change` = "No".
+- P032656: starting insulin "Steady" (`change` = Ch, `diabetesMed` = Yes) in a patient with no diabetes medication now.
+
+**Findings**
+- **Discharge destination moves risk the most.** Moving to home health or a skilled nursing facility lowers predicted risk for all three patients. The effect is small for the two patients with many prior stays (about 2–5 points). It is larger for P032656 (about 10 points).
+- **Medication and A1C changes do nothing useful.** The effects are within about ±2 points, which is probably noise given how little the model uses these columns. I would not build a program around them.
+- **Even after the best change, none of the three drops below about 38%.** Their risk comes mainly from their history, which no discharge-day action alters.
+
+**These are associations the model learned, not proven effects.**
+- The model learned that, in past data, patients discharged to home health or a skilled nursing facility were readmitted at different rates from similar patients sent home.
+- Those placements were not randomly assigned. Clinicians chose them based on factors the data may not capture, such as frailty, home support and clinical judgment.
+- Changing a row's destination in the model does not show that sending a real patient there would lower their risk.
+- Skilled nursing facility and home health also differ in cost, capacity and eligibility.
+- The medication what-ifs are weaker still, since the model barely uses those columns.
+- A pilot or randomised comparison is needed before claiming any benefit.
 
 ## 5. Recommended follow-up program
 
-**Transitional-care follow-up for patients with frequent prior inpatient stays or a transfer-type discharge.** It would be a nurse call within 48 hours, a follow-up visit within 7 days, and medication reconciliation. Patients would be enrolled by ranking on the model's probability, with `number_inpatient` and `discharge_disposition` as the practical screening rules.
+**Program: a transition-of-care bundle for high-prior-utilisation patients.**
+- **Who:** patients in the top 10% by predicted risk (about 200 of 2,000). They are mostly patients with several prior inpatient or ER encounters.
+- **What:** a home health referral where eligible, a nurse call within 48 hours, and a primary-care visit within 7 days.
+- **Where it should start:** with patients discharged Home who have high risk. For them the model shows a possible benefit from a home health referral.
 
-- **Why this program:** the two strongest, most stable signals are prior inpatient use and discharge destination. The what-ifs do not support changing diabetes drugs or switching disposition labels.
-- **Expected impact (an assumption, not a result from this data):** the model cannot estimate the effect of the program. Impact per patient enrolled is the patient's baseline risk times the program's relative effect. Even the highest-risk patients here sit at about 40-54%. If a program cut readmissions by a relative 10-20%, which is an assumption, then enrolling the top 10 (average risk about 0.48) would avoid roughly 0.5 to 1 readmission among them. Enrolling 100 patients at an average 25% risk would avoid roughly 2.5 to 5.
-- **Limits on targeting:** with AUC 0.68, targeting is only moderately better than random. Expect many enrolled patients not to be readmitted, and many readmissions among patients who were not enrolled.
-- **Measure it properly:** randomise or stagger enrolment among eligible high-risk patients, for example by week or unit. Compare readmission rates, then refit the model on the new data.
+**Expected impact (illustrative only):**
+- The what-if results show a drop in predicted risk of about 2–10 points per patient from a home health referral. The two highest-risk patients are at the low end, about 2 points.
+- The expected drop therefore depends on who is enrolled. Take roughly 200 patients, an average drop of about 2–5 points, and a modest average of about 4 points as the middle case. That prevents about 8 readmissions, with a plausible range of 4–20.
+- This is an association-based estimate with wide uncertainty. Risk reductions may be smaller in practice.
+- **Pilot design:** randomise eligible high-risk patients to the bundle or usual care, and track actual 30-day readmissions. This pilot is needed before any expected impact is relied on.
+
+## Caveats
+- AUC is about 0.70, so individual predictions are uncertain.
+- The model was trained on past stays, and the current patients may differ slightly. For example, some patients have rare categories, such as an age of 20–30 with 13 prior inpatient stays. Those predictions deserve a manual check.

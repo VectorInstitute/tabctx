@@ -40,7 +40,8 @@ SERVER=${TABCTX_MCP_BIN:-$REPO/.venv/bin/tabctx-mcp}
 [[ -x $SERVER ]] || { echo "no $SERVER: run 'uv sync --extra mcp' in $REPO" >&2; exit 1; }
 export TABCTX_MCP_BIN=$SERVER
 WORKSPACE=${DEMO_WORKSPACE:-$HERE/workspace}
-read -r -a FILES <<<"$(cd "$HERE" && python3 task.py files)"  # history, current
+files=$(cd "$HERE" && python3 task.py files) || { echo "python3 task.py failed" >&2; exit 1; }
+read -r -a FILES <<<"$files"  # history, current
 [[ -f $WORKSPACE/${FILES[0]} ]] || {
   echo "no demo data in $WORKSPACE: run prepare_data.py first" >&2; exit 1; }
 

@@ -67,6 +67,20 @@ def test_split_keeps_current_patients_out_of_the_history(monkeypatch):
     assert "patient_nbr" not in history.columns and "patient_nbr" not in current.columns
 
 
+def test_split_picks_patients_by_their_number_of_stays(monkeypatch):
+    """Like the history, which samples stays: frequent patients (most often
+    readmitted) are as common among current patients as in the history."""
+    monkeypatch.setattr(prepare_data, "CURRENT_ROWS", 300)
+    monkeypatch.setattr(prepare_data, "HISTORY_ROWS", 1000)
+    frequent = stays(patients=200, per_patient=10)  # 2,000 stays
+    rare = stays(patients=2000, per_patient=1)  # 2,000 stays
+    rare["patient_nbr"] += 1000
+    rare[task.ID] = "R" + rare[task.ID]
+    _, current = prepare_data.split(pd.concat([frequent, rare]))
+    share = current[task.ID].str.startswith("S").mean()
+    assert 0.3 < share < 0.7  # uniform over patients would give about 0.09
+
+
 def test_score(tmp_path, monkeypatch):
     answers = tmp_path / "answers"
     answers.mkdir()

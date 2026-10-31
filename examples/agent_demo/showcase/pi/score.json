@@ -1,8 +1,8 @@
 {
-  "file": "home_top_scratch.csv",
+  "file": "predictions.csv",
   "rows": 2000,
-  "roc_auc": 0.6918,
-  "base_rate": 0.096,
-  "positive_in_top_10": 0.6,
-  "positive_in_top_100": 0.32
+  "roc_auc": 0.6737,
+  "base_rate": 0.11,
+  "positive_in_top_10": 0.8,
+  "positive_in_top_100": 0.36
 }

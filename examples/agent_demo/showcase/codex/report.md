@@ -1,91 +1,89 @@
-# 30‑Day Readmission Risk — Discharge Cohort (run: Oct 31, 2026)
+# 30‑Day Readmission Risk: Diabetic Patients Being Discharged Today (analysis date: 2026‑10‑31)
 
-This report summarizes model performance, current‑patient risk predictions, key drivers, and “what‑if” simulations to inform care‑transition planning.
+This report summarizes model accuracy, the highest‑risk current patients, main drivers of risk, targeted what‑if scenarios for the three highest‑risk Home discharges, and a pragmatic follow‑up program. Predictions are saved to `patients_current.readmit_tabpfn.predictions.csv` for downstream tracking against actual outcomes.
 
 ## 1) Model selection and accuracy
 
-We evaluated two tabular foundation models against a gradient‑boosting baseline on `patients_history.csv` (n=30,000), holding out 25% for testing and dropping the identifier `patient_id`.
+We compared two tabular foundation models to a gradient‑boosting baseline on a 7,500‑row holdout from `patients_history.csv` (30,000 rows total), dropping the identifier `patient_id` from features.
 
-- tabpfn‑3.5 — Accuracy 0.884, ROC AUC 0.677, Log loss 0.336
-- tabicl‑v2 — Accuracy 0.884, ROC AUC 0.668, Log loss 0.341
-- Gradient boosting (baseline) — Accuracy 0.884, ROC AUC 0.670, Log loss 0.339
+- tabpfn‑3.5: Accuracy 0.890; ROC AUC 0.697; log loss 0.3206
+- tabicl‑v2: Accuracy 0.889; ROC AUC 0.690; log loss 0.3252
+- Gradient boosting: Accuracy 0.890; ROC AUC 0.682; log loss 0.3254
 
-Chosen model: tabpfn‑3.5 (best ROC AUC).
+Decision: Use `tabpfn‑3.5` (best ROC AUC = 0.697). AUC is the primary metric here due to class imbalance (3,308 Yes vs 26,692 No in history) and our goal of ranking high‑risk patients.
 
-## 2) Predictions for current discharges
+We then fit `tabpfn‑3.5` on all 30,000 historical rows (dropping `patient_id`) and predicted for all 2,000 current discharges.
 
-We fitted the chosen model on all history rows and predicted every patient in `patients_current.csv` (n=2,000). Output file (keep for scoring): `predictions_current.csv`.
+## 2) Top 10 highest‑risk current patients (probability of readmission ≤ 30 days)
 
-- Mean predicted probability of readmission (Yes): 0.1083
-- Predicted class counts: Yes=4, No=1996
+Sorted by predicted probability `p_readmitted_30d=Yes`:
 
-Top 10 highest‑risk patients (by P[Yes]):
+1. P025920 — 0.5978
+2. P056552 — 0.5246
+3. P061311 — 0.5181
+4. P063665 — 0.4928
+5. P041248 — 0.4908
+6. P036811 — 0.4903
+7. P032656 — 0.4816
+8. P098757 — 0.4725
+9. P080920 — 0.4421
+10. P051471 — 0.4377
 
-1. P069294 — 0.5405
-2. P062554 — 0.5388
-3. P035606 — 0.5319
-4. P050933 — 0.5125
-5. P013753 — 0.4978
-6. P093095 — 0.4616
-7. P017056 — 0.4529
-8. P015152 — 0.4353
-9. P063677 — 0.4310
-10. P086418 — 0.4095
+File: `patients_current.readmit_tabpfn.predictions.csv` (added columns: `predicted_readmitted_30d`, `p_readmitted_30d=No`, `p_readmitted_30d=Yes`).
 
-## 3) Main drivers of readmission risk
+## 3) What drives readmission risk (permutation importance)
 
-Permutation importance on held‑out rows (higher = stronger driver):
+Top drivers learned from history (higher score means stronger contribution to model discrimination):
 
-- Discharge disposition (largest effect)
-- Number of prior inpatient visits
-- Primary diagnosis group (diag_1)
-- Medical specialty on the encounter
-- Number of prior emergency visits
-- Any diabetes medication (`diabetesMed`)
-- Max glucose serum result availability/value
-- Race (small), payer code (small), time in hospital (small)
+- Number of prior inpatient stays (`number_inpatient`) — strongest driver
+- Discharge disposition (`discharge_disposition`) — e.g., Home vs facility
+- Prior emergency visits (`number_emergency`)
+- Primary diagnosis group (`diag_1`)
+- Number of procedures this stay (`num_procedures`)
+- Payer code (`payer_code`)
+- Discharging specialty (`medical_specialty`)
+- Length of stay (`time_in_hospital`)
+- Gender (`gender`)
+- Tertiary diagnosis group (`diag_3`)
+- Any diabetes medication this stay (`diabetesMed`)
+- Secondary diagnosis group (`diag_2`)
 
-Interpretation: the model’s strongest signals combine where patients are discharged to, recent utilization intensity (inpatient/emergency), clinical category of the index stay, and whether active diabetes meds are on board.
+Interpretation: Recent utilization (inpatient/emergency), disposition at discharge, and overall acuity/procedural burden are the dominant signals, with some contribution from diabetes pharmacotherapy being present vs absent.
 
-## 4) What‑if simulations for highest‑risk Home discharges
+## 4) What‑if scenarios for top 3 high‑risk Home discharges
 
-We took the three highest‑risk current patients with `discharge_disposition = Home` and tested practical changes a care team might consider. Numbers below are model‑estimated probabilities; they reflect associations the model learned, not proven causal effects.
+These tests modify specific discharge plans/meds for each patient and re‑score risk with the model. They are associations the model has learned, not proven causal effects.
 
-Patient P035606 (baseline Home): 0.5318
-- Change to Skilled nursing facility: 0.5152  (–0.0166)
-- Change to Home health service: 0.5404  (+0.0086)
-- Start metformin (set `metformin = Steady`): 0.5237  (–0.0081)
+Patient P025920 (baseline 0.5977; predicted Yes)
+- Change discharge to Home health service → 0.5797 (−0.0180)
+- Set insulin regimen to Steady → 0.5959 (−0.0018)
+- Add/continue metformin (Steady) → 0.5910 (−0.0067)
 
-Patient P063677 (baseline Home): 0.4309
-- Change to Skilled nursing facility: 0.3870  (–0.0439)
-- Change to Home health service: 0.4337  (+0.0028)
-- Start metformin (`metformin = Steady`): 0.4284  (–0.0025)
+Patient P061311 (baseline 0.5181; predicted Yes)
+- Change discharge to Home health service → 0.4938 (−0.0243); flips to No
+- Add/continue metformin (Steady) → 0.5059 (−0.0122)
+- Set insulin regimen to Steady → 0.5183 (+0.0002; negligible)
 
-Patient P086418 (baseline Home): 0.4095
-- Change to Skilled nursing facility: 0.3974  (–0.0121)
-- Change to Home health service: 0.4248  (+0.0153)
-- Start metformin (`metformin = Steady`): 0.4038  (–0.0057)
+Patient P032656 (baseline 0.4816; predicted No but near threshold)
+- Change discharge to Home health service → 0.3786 (−0.1030)
+- Set insulin regimen to Steady → 0.4756 (−0.0060)
+- Add/continue metformin (Steady) → 0.4743 (−0.0073)
 
 Notes
-- For these three patients, “Skilled nursing facility” consistently reduced modeled risk; “Home health service” tended to increase it. This does not mean HH services cause readmissions—only that in the training data, patients going to HH looked more like higher‑risk cases after accounting for other variables.
-- Medication adjustments showed small risk shifts; effect sizes vary by clinical context.
+- “Home health service” consistently lowers predicted risk for these three patients, with the largest drop (−10.3 pp) in P032656.
+- Diabetes med optimization (metformin/insulin) shows small but favorable risk shifts on average in these cases.
+- These are model‑based associations only. They do not establish causal benefit and should be interpreted alongside clinical judgment and resource constraints.
 
 ## 5) Recommended follow‑up program and expected impact
 
-Program: High‑risk Home‑discharge pathway
-- Targeting rule: patients discharged Home with predicted P[readmit] ≥ 0.40.
-- Actions:
-  - SNF evaluation by case management as the default alternative disposition when clinically appropriate.
-  - Diabetes regimen optimization before discharge (e.g., initiate metformin if appropriate, clarify insulin plan).
-- Expected impact (association‑based, not causal):
-  - Across our three example patients, switching to SNF changed modeled risk by an average –0.024 (–2.4 percentage points). Metformin initiation averaged –0.005 (–0.5 pp).
-  - If applied to 30 flagged patients per month with 1/3 placed to SNF and 1/3 receiving med optimization, the model implies ≈ 30 × (0.333×0.024 + 0.333×0.005) ≈ 0.30 fewer 30‑day readmissions per month. Real‑world impact will differ and requires monitoring.
+Program: Targeted Home‑Health Referral + Med Review for top‑decile Home discharges.
 
-Operationalization & monitoring
-- Use `predictions_current.csv` to identify candidates and to track calibration against actual outcomes.
-- Build a weekly review: confirm disposition choices, document reasons when SNF not appropriate, and track readmissions for continuous recalibration.
-- Equity check: monitor performance and interventions across race/age groups to avoid unintended disparities.
+- Who: Current discharges to Home with highest predicted risk (e.g., top 10%).
+- Actions: (a) Refer to Home health service at discharge; (b) Pharmacotherapy review to ensure an active, stable diabetes regimen (e.g., metformin where appropriate, insulin plan stabilized/continued rather than “Down” or “No” without a plan).
+- Expected impact (associational): In our three test cases, switching to Home health service reduced predicted risk by −1.8 pp, −2.4 pp, and −10.3 pp (avg ≈ −4.8 pp). Medication adjustments yielded smaller average reductions (~−0.7 to −1.2 pp). Actual effects will vary and require monitoring; these are not causal estimates.
 
-Cautions
-- What‑if results reflect patterns in retrospective data; they are not treatment recommendations.
-- Always apply clinical judgment and shared decision‑making with patients and families.
+## 6) Operational artifacts
+
+- Trained model: tabpfn‑3.5 (fit on all history; `patient_id` dropped)
+- Predictions CSV for current patients: `patients_current.readmit_tabpfn.predictions.csv`
+- Next steps: (a) Share the top‑risk Home discharges with care‑transition nurses for same‑day action; (b) Track actual 30‑day readmissions to calibrate thresholds; (c) Re‑fit weekly as new outcomes accrue.

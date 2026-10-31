@@ -16,7 +16,7 @@
   --accent-soft: rgba(79, 70, 229, 0.08);
   --accent-line: rgba(79, 70, 229, 0.35);
   --s1: #2a78d6; /* slot 1, blue: class No, model bars */
-  --s2: #eb6834; /* slot 2, orange: class Yes, churn risk */
+  --s2: #eb6834; /* slot 2, orange: the positive class (risk) */
   --neutral: #a9a69e; /* baseline, de-emphasized */
   --track: #ecebe6;
   --good: #0f7b3e;
@@ -157,7 +157,7 @@ textarea[readonly] { color: var(--text-2); cursor: default; }
 .chip-sm { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; font: 500 10.5px var(--mono); color: var(--text-2); background: var(--surface); border: 1px solid var(--border); }
 
 /* task: the prompt's steps as icons; the prompt itself folded */
-.task { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+.task { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
 .task-step { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); cursor: default; }
 .task-step .tool-icon { width: 34px; height: 34px; border-radius: 10px; }
 .prompt-box { margin-top: 12px; }
