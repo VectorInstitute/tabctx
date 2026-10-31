@@ -609,7 +609,10 @@ process per GPU have all shipped and been validated on real GPUs (see
 from the labels, accepts missing values, and reports where each
 request's time went (`timings_ms`); 0.14.1 stops TabICL compiling graphs
 inside requests (#47); 0.15.0 takes table files (CSV, Parquet) in the
-request and text columns, and adds scikit-learn estimators (#63). Open roadmap items are
+request and text columns, and adds scikit-learn estimators (#63); 0.16.0
+adds `tabctx-mcp`, the models as tools for coding agents (an MCP server, a
+JSON CLI and a pi extension), and stops reading a Parquet file's pandas
+index as data (#84, #85). Open roadmap items are
 tracked as GitHub issues labelled `roadmap`. **Read
 [ROADMAP.md](ROADMAP.md) before starting new work** -- it ranks what's
 next and why.
