@@ -253,3 +253,78 @@ def test_times_keep_subsecond_resolution_through_the_schema(tmp_path):
     test = read_table(write(tmp_path, "t\n2020-01-01 10:00:03\n", name="test"))
     assert schema.encode(test.columns).tolist() == [[2.5]]
     assert TableSchema.from_json(schema.to_json()) == schema
+
+
+class TestPandasIndex:
+    """DataFrame.to_parquet() saves any index but the default 0..n-1 range
+    as columns, listed in the file's pandas metadata; pandas reads them
+    back as the index, and so must the server: they are not data."""
+
+    @pytest.fixture
+    def frame(self):
+        pd = pytest.importorskip("pandas")
+        return pd.DataFrame(
+            {
+                "x": [1.5, 2.0, 3.0],
+                "band": ["gold", "basic", "gold"],
+                "label": ["yes", "no", "yes"],
+            },
+            index=[7, 3, 5],  # e.g. after train_test_split
+        )
+
+    def path(self, tmp_path, frame, **kwargs):
+        buf = io.BytesIO()
+        frame.to_parquet(buf, **kwargs)
+        return write(tmp_path, buf.getvalue())
+
+    def test_a_saved_index_is_not_a_feature(self, tmp_path, frame):
+        path = self.path(tmp_path, frame)
+        assert (
+            "__index_level_0__" in pq.read_table(path).column_names
+        )  # the bug's cause
+        table = read_table(path)
+        assert table.names == ["x", "band", "label"]
+        assert table.columns[0].tolist() == [1.5, 2.0, 3.0]
+
+    def test_nor_the_default_target(self, tmp_path, frame):
+        """The default target is the last column, where pandas puts the
+        index: the labels must be the data's last column, not row numbers."""
+        features, labels = read_training_table(self.path(tmp_path, frame), None, None)
+        assert features.names == ["x", "band"]
+        assert labels == ["yes", "no", "yes"]
+
+    def test_named_and_multi_level_indexes(self, tmp_path, frame):
+        named = frame.rename_axis("customer_id")
+        assert read_table(self.path(tmp_path, named)).names == ["x", "band", "label"]
+        multi = frame.set_index("band", append=True)
+        assert read_table(self.path(tmp_path, multi)).names == ["x", "label"]
+
+    def test_a_named_index_can_be_the_target(self, tmp_path, frame):
+        indexed = frame.set_index("label")
+        features, labels = read_training_table(
+            self.path(tmp_path, indexed), "label", None
+        )
+        assert features.names == ["x", "band"] and labels == ["yes", "no", "yes"]
+
+    def test_files_without_a_saved_index_are_unchanged(self, tmp_path, frame):
+        default = frame.reset_index(drop=True)  # RangeIndex: metadata only
+        assert read_table(self.path(tmp_path, default)).names == ["x", "band", "label"]
+        assert read_table(self.path(tmp_path, frame, index=False)).names == [
+            "x",
+            "band",
+            "label",
+        ]
+
+    def test_only_columns_the_metadata_lists_are_dropped(self, tmp_path):
+        """A column that merely has an index-like name is data."""
+        table = pa.table({"__index_level_0__": [1, 2], "x": [3.0, 4.0]})
+        assert read_table(write(tmp_path, parquet(table))).names == [
+            "__index_level_0__",
+            "x",
+        ]
+
+    def test_unreadable_pandas_metadata_is_ignored(self, tmp_path):
+        table = pa.table({"x": [1.0, 2.0]}).replace_schema_metadata(
+            {b"pandas": b"not json"}
+        )
+        assert read_table(write(tmp_path, parquet(table))).names == ["x"]

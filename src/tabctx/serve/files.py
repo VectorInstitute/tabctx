@@ -283,6 +283,28 @@ def _read(path: Path, text_columns: Collection[str], raw_text: Collection[str] =
     return names, arrow
 
 
+def _without_pandas_index(table, keep: Collection[str]):
+    """table without the pandas index that DataFrame.to_parquet() saves
+    with the data (as __index_level_0__, or under the index's name, for
+    any index but the default 0..n-1 range). The file's pandas metadata
+    lists those columns, and pandas reads them back as the index, not as
+    data; read as features they would be a row number the model learns
+    from, and the last column, where the default target is looked for.
+    keep: column names to keep even so (the requested target)."""
+    try:
+        metadata = table.schema.pandas_metadata or {}
+    except ValueError:  # metadata that isn't JSON: not written by pandas
+        return table
+    index = metadata.get("index_columns") or []
+    # A RangeIndex is described by a dict and not stored as a column.
+    dropped = [
+        name
+        for name in index
+        if isinstance(name, str) and name in table.column_names and name not in keep
+    ]
+    return table.drop_columns(dropped) if dropped else table
+
+
 def _open_csv(path: Path):
     """The file as a stream of CSV bytes, decompressed if it's gzip or zstd."""
     import pyarrow as pa
@@ -316,7 +338,7 @@ def _read_arrow(path: Path, text_columns: Collection[str], raw_text: Collection[
     import pyarrow.parquet as pq
 
     if _is_parquet(path):
-        return pq.read_table(path)
+        return _without_pandas_index(pq.read_table(path), keep=raw_text)
     # Arrow matches column_types by the header's own (unstripped) spelling.
     wanted = set(text_columns) | set(raw_text)
     convert = csv.ConvertOptions(

@@ -32,6 +32,14 @@
 - CI's unit and integration jobs install the `mcp` extra (which pulls in `client`), so the estimator tests, which were skipped there before, now run.
 - `benchmarks/bench_upload_formats.py`: the same tables through a gateway as JSON and as Parquet, interleaved, splitting each fit's time between the hop to tabctx and tabctx's own work. On prod (0.15.0, 12 fits each of 5,000 x 500 and 10,000 x 100 TabICL): Parquet bodies were 8.5 MiB vs 14.0 MiB, the hop's median 1.2 s vs 2.7 s, its worst 42 s vs 113 s, and 1 fit in 12 took over 10 s vs 3 in 12; tabctx's own work was the same. Baselines `prod-bench-0.15.0.json` and `upload-formats-0.15.0.json`.
 
+### Fixed
+- **A Parquet file's pandas index was read as data.** `DataFrame.to_parquet()` saves any index except the default 0..n-1 range as extra columns: `__index_level_0__` (after `train_test_split`, say), or the index's name. The server read those columns as features, so:
+  - the model learned from row numbers;
+  - predicting with JSON rows, or a file without the index, got a 422 ("the table has 20 columns; the training table had 21");
+  - with no `target` given, the index, which comes last, was used as the labels.
+
+  Columns the file's pandas metadata lists as its index are now dropped when the file is read (`serve/files.py`), the way pandas reads them back as the index. One named as the `target` is kept. Found through the gateway, fitting a file uploaded with `/v1/tabctx/upload`.
+
 ## [0.15.0] - 2026-10-21
 ### Added
 - **scikit-learn estimators** (#63): `TabctxClassifier` and `TabctxRegressor` (`tabctx/estimators.py`, `from tabctx import ...`; `pip install "tabctx[client]"` adds scikit-learn and pyarrow). They take DataFrames, numpy arrays or lists of rows with text columns, dates and missing values as they are; labels are checked as scikit-learn checks them and come back exactly as given (sent as class indices); `predict_proba` follows `classes_`; clone, pipelines and model selection work. Test columns match the training columns by name when both have names, else by position (with a warning); a column that was text at fit stays text at predict, whatever its new values look like. Each table is one Parquet file (`tabctx/table_files.py`, float32 numbers, timestamps and durations as such); predicts over `max_request_bytes` (default 29 MiB, under the Vector gateway's 30 MiB) are split until each part fits, and a training table over it is refused before sending. The context id comes from the table, labels, model and task; a predict that finds its context gone (the server's "no cached context") fits it again from the kept training file and retries once, with the model it was fit with.

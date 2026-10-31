@@ -216,3 +216,33 @@ def test_validation_errors_keep_fastapis_shape(two_replica_service):
     )
     assert resp.status_code == 422
     assert resp.json()["detail"][0]["loc"] == ["body", "task"]
+
+
+def test_a_pandas_parquet_files_index_is_not_a_column(two_replica_service):
+    """A DataFrame from train_test_split, saved with to_parquet(), carries
+    its shuffled index as a column; fitting it and predicting JSON rows
+    without that column used to be a 422 ("the table has 2 columns; the
+    training table had 3"), and with no target the index was the labels."""
+    pd = pytest.importorskip("pandas")
+    url, ds = two_replica_service, "file-pandas-index"
+    frame = pd.DataFrame(
+        {
+            "age": [20 + i for i in range(10)],
+            "plan": ["gold" if i % 2 else "basic" for i in range(10)],
+            "churned": ["yes" if i < 7 else "no" for i in range(10)],
+        },
+        index=[9, 2, 7, 0, 5, 3, 8, 1, 6, 4],
+    )
+    buf = io.BytesIO()
+    frame.to_parquet(buf)
+    fit = fit_file(url, ds, buf.getvalue())  # no target: the last column
+    assert fit.status_code == 200, fit.text
+    assert fit.json()["n_features"] == 2 and fit.json()["task"] == "classification"
+    pred = post(
+        url,
+        "/v1/tabctx/predict",
+        ds,
+        json={"dataset_id": ds, "test_X": [[30, "gold"]], "return_proba": True},
+    )
+    assert pred.status_code == 200, pred.text
+    assert sorted(pred.json()["classes"]) == ["no", "yes"]
