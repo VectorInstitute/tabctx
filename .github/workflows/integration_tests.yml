@@ -44,9 +44,9 @@ jobs:
         with:
           python-version-file: ".python-version"
 
-      - name: Install the project (serve extra)
+      - name: Install the project (serve and mcp extras)
         run: |
-          uv venv && uv pip install -e ".[serve,dev]"
+          uv venv && uv pip install -e ".[serve,dev,mcp]"
 
       - name: Run integration tests with coverage
         # Invoked via the venv's python, NOT `uv run`: under `uv run`,

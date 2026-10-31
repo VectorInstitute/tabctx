@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 ### Added
+- **`tabctx-mcp`: tabular foundation models as tools for coding agents** (`tabctx/mcp_tools/`, `pip install "tabctx[mcp]"`). There are seven tools: `inspect_table`, `evaluate`, `fit_model`, `predict`, `what_if`, `explain` and `list_models`. They come in four forms, all over one implementation (`tools.TabularTools`):
+  - an MCP server (`tabctx-mcp`, stdio), for Claude Code, Codex and Gemini CLI;
+  - shell commands that print JSON (`tabctx-mcp fit ...`);
+  - `tabctx-mcp tools` and `tabctx-mcp call`, which expose and call the MCP tools without MCP;
+  - a pi extension (`tabctx-mcp pi-extension`) that registers them as native pi tools, with no shell involved.
+
+  How the tools behave:
+  - Fitted models are saved by name in `.tabctx-mcp/` (or `$TABCTX_MCP_HOME`), and fit the server again if it dropped their context.
+  - `evaluate` scores both models against scikit-learn gradient boosting on held-out rows.
+  - `predict` writes the table with prediction and probability columns, and returns the top-ranked rows (`rank_by`, `where`, `show`), with the id column found automatically.
+  - `what_if` can start from a real row (`base_file`, `base_where`) and change only some columns.
+  - `explain` is permutation importance, with all shuffled copies sent in one predict.
+  - Tables are CSV, TSV or Parquet. Blank cells are missing, and numbers stored as text become numbers.
+  - Errors reach the agent as MCP tool errors with their message: bad arguments, the deployment's 4xx answers, and file or network failures.
+  - `tabctx-mcp skill` prints a guide for agents (SKILL.md).
+
+  Further behaviour:
+  - Saved models are signed with HMAC under a per-user key (`~/.config/tabctx-mcp/signing.key`, mode 0600). A model planted in a project's `.tabctx-mcp/` is neither listed nor unpickled.
+  - `evaluate` keeps the other models' results when one fails.
+  - `predict` writes only inside the working directory, and never over its input.
+  - Class labels stay `"0"`/`"1"` when blank target cells make pandas read them as floats.
+  - Zero-padded codes such as `"02139"` stay text, and `where` filters match numbers numerically.
+  - Results are valid JSON: NaN becomes null.
+  - `explain` caps its batched predict at 60,000 rows.
+
+  `examples/agent_demo/` runs a churn task with Claude Code, Codex and pi through the prod gateway. All three reached ROC AUC 0.866-0.867 on the real outcomes, and 9 of each one's 10 top-ranked customers churned.
+- `examples/agent_demo/ui/`: a local web page that runs or replays an agent on the churn task. Each tabctx call appears as a chart card: column map, model comparison, predicted split and risk table, importance, what-if deltas. The scores against the real outcomes come last. The UI is FastAPI with Server-Sent Events and plain HTML, CSS and JS.
+- CI's unit and integration jobs install the `mcp` extra (which pulls in `client`), so the estimator tests, which were skipped there before, now run.
 - `benchmarks/bench_upload_formats.py`: the same tables through a gateway as JSON and as Parquet, interleaved, splitting each fit's time between the hop to tabctx and tabctx's own work. On prod (0.15.0, 12 fits each of 5,000 x 500 and 10,000 x 100 TabICL): Parquet bodies were 8.5 MiB vs 14.0 MiB, the hop's median 1.2 s vs 2.7 s, its worst 42 s vs 113 s, and 1 fit in 12 took over 10 s vs 3 in 12; tabctx's own work was the same. Baselines `prod-bench-0.15.0.json` and `upload-formats-0.15.0.json`.
 
 ## [0.15.0] - 2026-10-21

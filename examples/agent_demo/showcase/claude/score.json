@@ -1,0 +1,8 @@
+{
+  "file": "mtm_top3_tmp.csv",
+  "customers": 1500,
+  "roc_auc": 0.8667,
+  "base_rate": 0.265,
+  "churned_in_top_10": "90%",
+  "churned_in_top_100": "86%"
+}
