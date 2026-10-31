@@ -340,10 +340,11 @@ class TestPandasIndex:
         table = table.replace_schema_metadata({b"pandas": metadata})
         assert read_table(write(tmp_path, parquet(table))).names == ["x", "y"]
 
-    def test_names_are_compared_stripped(self, tmp_path, frame):
+    @pytest.mark.parametrize("target", ["label", " label "])
+    def test_names_are_compared_stripped(self, tmp_path, frame, target):
         indexed = frame.set_index("label").rename_axis(" label ")
         path = self.path(tmp_path, indexed)
-        features, labels = read_training_table(path, "label", None)
+        features, labels = read_training_table(path, target, None)
         assert features.names == ["x", "band"] and labels == ["yes", "no", "yes"]
 
     def test_errors_say_the_index_was_left_out(self, tmp_path, frame):
@@ -357,8 +358,9 @@ class TestPandasIndex:
         only_index = self.path(tmp_path, frame.set_index("x")[[]])
         with pytest.raises(
             InvalidInputError, match=r"no columns.*pandas index \['x'\]"
-        ):
+        ) as e:
             read_table(only_index)
+        assert "target" not in str(e.value)  # a predict file has none
 
     def test_a_repeated_name_is_a_clear_error(self, tmp_path):
         """Repeated names are refused before the index is dropped (newer

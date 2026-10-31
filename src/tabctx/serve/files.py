@@ -90,22 +90,24 @@ def read_training_table(
         # Known before reading, so the label column is read as text.
         header = _csv_header(path)
         target = header[-1].strip() if header else None
-    names, arrow, index = _read(path, (), raw_text=(target,) if target else ())
+    if target is not None:
+        target = target.strip()  # column names are compared stripped
+    names, arrow, dropped = _read(path, (), raw_text=(target,) if target else ())
     target = names[-1] if target is None else target
     if target not in names:
         raise InvalidInputError(
             f"target column {target!r} is not in the table's columns {names[:20]}"
-            + _index_hint(index)
+            + _index_hint(dropped, as_target=True)
         )
     if len(names) < 2:
         raise InvalidInputError(
             "the training table needs at least one feature column besides the target"
-            + _index_hint(index)
+            + _index_hint(dropped, as_target=True)
         )
-    index = names.index(target)
-    labels = _labels(arrow.column(index), task, pa)
-    arrow = arrow.remove_column(index)
-    del names[index]
+    position = names.index(target)
+    labels = _labels(arrow.column(position), task, pa)
+    arrow = arrow.remove_column(position)
+    del names[position]
     keep = _kept_text(path, names, ())
     return Table(names, list(_features(arrow, names, keep))), labels
 
@@ -320,12 +322,15 @@ def _without_pandas_index(table, names: list[str], keep: Collection[str]):
     return table, [names[i] for i in sorted(drop)]
 
 
-def _index_hint(index: list[str]) -> str:
+def _index_hint(index: list[str], as_target: bool = False) -> str:
+    """Why an error may be about the pandas index left out, and the fix;
+    as_target: the error is about the training target, which may be it."""
     if not index:
         return ""
+    target = ", or name it as the target" if as_target else ""
     return (
         f" (the file's pandas index {index} is not read as data; to use it, "
-        "save the frame after reset_index(), or name it as the target)"
+        f"save the frame after reset_index(){target})"
     )
 
 
