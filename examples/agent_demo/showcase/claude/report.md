@@ -1,91 +1,98 @@
-# Churn risk report: current customers (2026-10-31)
+# 30-day readmission risk: diabetic discharges
 
-## 1. How well can churn be predicted?
+**Data:** 30,000 past stays (11.0% readmitted within 30 days) and 2,000 patients being discharged now.
+**Model:** TabPFN-3.5 (tabctx), fitted on all 30,000 past stays. `patient_id` was dropped. No other column looked like it leaks the outcome.
+**Predictions file:** `patients_current_predictions.csv` (columns `predicted_readmitted_30d`, `p_readmitted_30d=Yes`).
 
-I held out 25% of `customers_history.csv` (5,543 past customers, 26.5% churned). Each model was fit on the other 4,157 rows and scored on the 1,386 held-out rows. `customer_id` was dropped. No other column looked like it leaked the outcome.
+## 1. How accurate is it?
 
-| Model | Accuracy | ROC AUC | Log loss |
+The models were trained on 22,500 past stays and tested on the other 7,500:
+
+| Model | ROC AUC | Log loss | Accuracy |
 |---|---|---|---|
-| **tabpfn-3.5 (chosen)** | 0.797 | 0.841 | **0.421** |
-| tabicl-v2 | 0.799 | **0.841** | 0.423 |
-| Gradient boosting (scikit-learn) | 0.777 | 0.820 | 0.459 |
+| **TabPFN-3.5** (chosen) | **0.697** | **0.321** | 0.890 |
+| TabICL-v2 | 0.690 | 0.325 | 0.889 |
+| Gradient boosting (scikit-learn baseline) | 0.683 | 0.325 | 0.890 |
 
-- Both tabctx models beat gradient boosting: about +0.02 ROC AUC and +2 points of accuracy.
-- The two tabctx models tie on ranking (AUC 0.8409 vs 0.8410). I chose **TabPFN-3.5** because it has the lower log loss, so its probabilities are better calibrated, and this report acts on those probabilities.
-- What this means in practice: if you pick one customer who churned and one who stayed, the model gives the churner the higher risk about 84% of the time.
+- TabPFN-3.5 ranks patients best, but only slightly better than gradient boosting (+0.014 AUC).
+- An AUC of about 0.70 is **moderate**. The model is useful for deciding who to contact first. It cannot say for sure who will come back.
+- Accuracy tells us little here. Predicting "No" for everyone already scores about 89%.
+- The model rarely gives a probability above 50%. Only 3 of the 2,000 current patients are labelled "Yes". **Use the probability to rank patients, not the Yes/No label.**
+- The average predicted risk for current patients is 11.2%, close to the past rate of 11.0%.
 
-The final model was refit on all 5,543 labelled customers.
+## 2. Ten highest-risk current patients
 
-## 2. Churn risk of current customers
+| Rank | Patient | P(readmit ≤30d) | Discharge to | Prior inpatient stays | Prior ED visits |
+|---|---|---|---|---|---|
+| 1 | P025920 | 0.598 | Home | 13 | 4 |
+| 2 | P056552 | 0.525 | Short-term hospital | 1 | 0 |
+| 3 | P061311 | 0.518 | Home | 11 | 3 |
+| 4 | P063665 | 0.493 | Short-term hospital | 3 | 0 |
+| 5 | P041248 | 0.491 | Left against advice | 9 | 2 |
+| 6 | P036811 | 0.490 | Short-term hospital | 1 | 0 |
+| 7 | P032656 | 0.482 | Home | 4 | 0 |
+| 8 | P098757 | 0.473 | Short-term hospital | 3 | 2 |
+| 9 | P080920 | 0.442 | Rehab facility | 0 | 0 |
+| 10 | P051471 | 0.438 | Rehab facility | 2 | 0 |
 
-Predictions for all 1,500 current customers are in **`customers_current.churn.predictions.csv`**. It has the columns `predicted_Churn`, `p_Churn=No` and `p_Churn=Yes`.
+## 3. What drives readmission
 
-- 301 customers (20%) are predicted to churn, meaning their probability is above 0.5.
-- The mean predicted churn probability is 26.2%. That matches the historical rate, so about 390 departures are expected.
+Method: shuffle one column at a time on held-out rows and measure how much AUC falls (permutation importance).
 
-### Top 10 highest-risk customers
-
-| # | customer_id | P(churn) | Contract | Tenure (months) | Internet | Monthly $ | Payment |
-|---|---|---|---|---|---|---|---|
-| 1 | C03380 | 0.944 | Month-to-month | 1 | Fiber optic | 95.10 | Electronic check |
-| 2 | C04800 | 0.943 | Month-to-month | 1 | Fiber optic | 94.00 | Electronic check |
-| 3 | C02577 | 0.933 | Month-to-month | 1 | Fiber optic | 94.60 | Electronic check |
-| 4 | C06240 | 0.922 | Month-to-month | 1 | Fiber optic | 93.30 | Electronic check |
-| 5 | C00585 | 0.920 | Month-to-month | 1 | Fiber optic | 85.70 | Electronic check |
-| 6 | C02745 | 0.920 | Month-to-month | 1 | Fiber optic | 86.05 | Electronic check |
-| 7 | C05783 | 0.911 | Month-to-month | 1 | Fiber optic | 89.30 | Electronic check |
-| 8 | C04459 | 0.898 | Month-to-month | 1 | Fiber optic | 100.25 | Credit card (automatic) |
-| 9 | C05307 | 0.889 | Month-to-month | 1 | Fiber optic | 90.10 | Electronic check |
-| 10 | C00915 | 0.886 | Month-to-month | 1 | Fiber optic | 73.55 | Electronic check |
-
-All ten fit the same profile: they are in their **first month**, on a **month-to-month** contract, have **fiber-optic** internet, and pay a high monthly bill. Nine of the ten pay by electronic check.
-
-## 3. What drives churn
-
-To measure each column's importance, I shuffled it and measured how much the ROC AUC drops on 500 held-out rows (baseline AUC 0.854):
-
-| Column | AUC drop when shuffled |
+| Factor | AUC drop when shuffled |
 |---|---|
-| **Contract** | **0.075** |
-| InternetService | 0.021 |
-| tenure | 0.020 |
-| MonthlyCharges | 0.016 |
-| TotalCharges | 0.015 |
-| PaperlessBilling | 0.004 |
-| PaymentMethod | 0.003 |
-| everything else | ≈ 0 (not used) |
+| `number_inpatient` (inpatient stays in the past year) | 0.056 |
+| `discharge_disposition` (where the patient goes) | 0.039 |
+| `number_emergency` (ED visits in the past year) | 0.018 |
+| `diag_1` (primary diagnosis group) | 0.014 |
+| `num_procedures`, `payer_code`, `medical_specialty`, `time_in_hospital` | 0.004–0.007 each |
 
-- **Contract type is by far the strongest driver.** Its effect is more than three times that of any other factor.
-- After contract, risk comes from fiber-optic service, short tenure, and high monthly and total charges. Customers who are new and pay a lot are the most likely to leave.
-- Demographics (gender, senior citizen, partner, dependents) and the add-on services add almost nothing once those factors are known.
-- Caveat: tenure, MonthlyCharges and TotalCharges are correlated, so they partly share importance. Shuffling one of them understates how much that group matters together.
+- **Past use of the hospital is the strongest signal by far.** Frequent recent inpatient stays and ED visits mark high risk.
+- **Where the patient is discharged to comes next.** Transfers to another hospital and leaving against advice stand out in the top-10 list.
+- **Diabetes medications and lab results (A1C, glucose) matter very little** to this model. Each moves AUC by 0.003 or less.
 
-## 4. What if: a one-year contract for the top three month-to-month customers
+## 4. What-if: the three highest-risk patients discharged home
 
-The three highest-risk customers are all month-to-month. For each one, I changed only `Contract` and left everything else as it is.
+Each row changes one thing (or two) and keeps the rest of the patient's record the same.
 
-| customer_id | Month-to-month (now) | → One year | Change | (→ Two year, for reference) |
+| Patient | Profile | Scenario | P(readmit) | Change |
 |---|---|---|---|---|
-| C03380 | 0.944 | 0.757 | **−18.7 pts** | 0.610 |
-| C04800 | 0.943 | 0.757 | **−18.6 pts** | 0.637 |
-| C02577 | 0.933 | 0.718 | **−21.5 pts** | 0.564 |
+| **P025920** | 20s, 13 inpatient stays and 4 ED visits in the past year, glucose >300, insulin reduced | As is (Home) | 0.598 | — |
+| | | Home health service | 0.580 | −0.018 |
+| | | Insulin kept steady instead of reduced | 0.596 | −0.002 |
+| | | Add metformin (steady) | 0.591 | −0.007 |
+| | | Home health + steady insulin | 0.575 | −0.022 |
+| **P061311** | 20s, 11 inpatient stays, 3 ED visits, 3 outpatient visits, primary diagnosis diabetes, insulin increased | As is (Home) | 0.518 | — |
+| | | Home health service | 0.494 | −0.024 |
+| | | Insulin steady instead of increased | 0.518 | 0.000 |
+| | | Add metformin (steady) | 0.506 | −0.012 |
+| | | Home health + steady insulin | 0.497 | −0.021 |
+| **P032656** | 60s, 4 inpatient stays, neoplasm diagnoses, no diabetes medication | As is (Home) | 0.482 | — |
+| | | Home health service | 0.379 | **−0.103** |
+| | | Start metformin | 0.492 | +0.010 |
+| | | Start insulin | 0.501 | +0.019 |
+| | | Home health + metformin | 0.380 | −0.102 |
 
-- For each of them, a one-year contract lowers predicted risk by about **19–22 percentage points**, which is roughly a 20% relative reduction.
-- A two-year contract lowers it by about 30–37 points.
-- Even so, all three stay above 50% risk. Their tenure of one month, fiber service and roughly $95 bills still weigh heavily, so a contract alone is not enough for these customers.
+**What this shows:**
+- **Home health service** lowered predicted risk for all three patients. The drop was small for the two young patients with very frequent admissions (about 2 points) and large for P032656 (about 10 points).
+- **Changing diabetes medication** barely moved the predictions (no more than 1–2 points). For P032656, starting a medication slightly *raised* predicted risk. That most likely reflects who usually gets started on medication (sicker patients), not harm from the drug.
+- **P025920 and P061311 stay high-risk (about 50–58%) whatever we change.** Their risk comes from their history of very frequent admissions, which a discharge decision cannot change.
 
-Caveat: these are model what-ifs based on patterns in past data, not causal estimates. Customers who chose longer contracts may differ from those who didn't in ways the data doesn't capture. The real effect of *moving* someone to a contract is probably smaller than these numbers, so an A/B test should confirm it.
+> **Important caveat: these are associations, not proven effects.** The model learned how readmission rates differ between past patients who were discharged home and those discharged with home health service, or between patients on different medications. Those groups also differed in ways the data does not record (who was chosen for home health, how sick they were, their social support, whether they took their medication). A what-if answers: "patients who looked like this but had X were readmitted at rate Y." It does not answer: "if we give this patient X, their risk becomes Y." Only a controlled pilot or trial can show the causal effect.
 
-## 5. Recommended retention action
+## 5. Recommended follow-up program
 
-**Offer new (tenure ≤ 3 months) month-to-month fiber customers a discounted one-year contract, and add an incentive to switch from electronic check to automatic payment.**
+**Home health / transitional-care referral for high-risk patients being discharged home.**
 
-- **Who:** the high-risk month-to-month group. 816 current customers are month-to-month, and they make up the entire top-10 list. Start with those whose predicted risk is above 0.7.
-- **Expected impact:** the model predicts about 19–22 points less churn risk for each customer who converts. As a rough example: if 100 high-risk customers (average risk about 0.9) are targeted and 30% accept, about 30 × 0.2 ≈ **6 fewer departures per 100 contacted**, before discounting for the causal caveat above.
-- **Why a contract offer:** contract type is the strongest and most actionable driver. Tenure and internet type can't be changed directly, but contract terms can be offered.
-- **Pair it with:** a first-months price concession for fiber. High monthly charges are the next driver, and the what-if shows these customers stay above 50% risk with a contract change alone.
-- **Measure it:** run the offer as a randomized test on a holdout group to measure the true lift.
+- **Who:** every current patient being discharged to "Home" whose predicted risk is in the top decile. Flag especially those with ≥3 inpatient stays or ≥2 ED visits in the past year.
+- **What:** home health service at discharge, a follow-up phone call within 48–72 hours, and medication reconciliation.
+- **Super-utilizers** (10+ admissions a year, like P025920 and P061311) need more than this: an intensive case-management pathway. The model expects a home health referral alone to lower their risk only slightly.
+- **Expected impact (model-based, not proven):**
+  - For the three patients tested, predicted risk dropped by 2 to 10 percentage points, about 5 points on average.
+  - Applied to about 120 high-risk home discharges (the top 10% of the 1,231 going home), whose current predicted risk is roughly 20–60%, that is on the order of **3–6 fewer readmissions per 2,000 discharges**.
+  - Treat this as an upper-end planning figure. Selection bias probably makes the real effect smaller.
+- **How to know if it works:** roll the program out as a randomized or stepped-wedge pilot (some eligible patients referred, some not). Compare actual 30-day readmission rates between the groups. Do not compare model predictions before and after.
 
-## Files
-- `customers_current.churn.predictions.csv`: the scored predictions for all current customers. This is the file to evaluate.
-- `mtm_top3_tmp.csv`: an extra copy of the same predictions, written while filtering to month-to-month customers. It is identical and can be deleted.
+## Notes
+- The extra file `patients_current_predictions_home.csv` contains the same predictions. It came from a second run ranked among home discharges only. `patients_current_predictions.csv` is the main output.
+- Rankings come from a model with AUC of about 0.70. Use them together with clinical judgment.

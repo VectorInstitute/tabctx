@@ -1,17 +1,35 @@
-# Churn demo: a coding agent with tabular foundation models
+# Readmission demo: a coding agent with tabular foundation models
 
-A coding agent gets two CSVs and a business question. The question needs
-a prediction from a table, which an agent can't make on its own. With
-`tabctx-mcp` it can: it checks how accurate the models are against
-gradient boosting, fits TabPFN or TabICL in seconds, ranks today's
-customers by churn risk, finds what drives churn, tests a retention
-offer on the riskiest customers with what-if predictions, and writes a
-report. The agent never sees the real outcomes. `score.py` grades its
-predictions against them afterwards.
+A coding agent gets two CSVs and a hospital's question: which patients
+being discharged now are most likely to be back within 30 days, and what
+could lower that? The answer needs a prediction from a table, which an
+agent can't make on its own. With `tabctx-mcp` it can: it checks how
+accurate the models are against gradient boosting, fits TabPFN or TabICL
+in seconds, ranks today's patients by risk, finds what drives
+readmission, tests care changes on the riskiest patients with what-if
+predictions, and writes a report. The agent never sees the real
+outcomes. `score.py` grades its predictions against them afterwards.
 
-Data: the public Telco customer churn table (IBM, OpenML #42178). 5,543
-past customers with their outcome (27% churned) and 1,500 current
-customers.
+The same steps fit any risk question on a table (credit default, fraud,
+claims, churn): only the data and the prompt change.
+
+Data: the public Diabetes 130-US Hospitals table (UCI; OpenML #4541),
+101,766 hospital stays of diabetic patients, 1999-2008. `prepare_data.py`
+prepares it as in most work on it (Strack et al., 2014) and takes 30,000
+past stays with their outcome (11.0% readmitted within 30 days), and one
+stay each for 2,000 other patients, who are the "current" patients and
+appear nowhere in the history (11.0% of them were readmitted). Current
+patients are picked with a chance in proportion to their number of
+stays, as the history's stays are; picking them uniformly would make
+the current set healthier than the history. 33 features: demographics,
+admission and discharge, prior visits, diagnoses, lab tests, diabetes
+medication.
+
+`task.py` names the files and columns, the outcome's labels and the
+task's steps (the page's step icons; keep them in line with
+`PROMPT.md`). A different dataset means changing `task.py`,
+`prepare_data.py` and `PROMPT.md`; the runner, scoring and web page read
+the rest from `task.py`.
 
 ```bash
 uv sync --extra mcp
@@ -36,7 +54,7 @@ tabctx call appears as a card as soon as the agent makes it:
 - **Evaluate:** both models against gradient boosting on held-out rows.
 - **Predict:** the predicted split, and a risk table.
 - **Explain:** which columns matter.
-- **What-if:** the probability with and without a change, for one customer.
+- **What-if:** the probability with and without a change, for one patient.
 
 When the agent finishes, the page shows its score against the real
 outcomes and its report. **Replay last run** plays a finished run back
@@ -101,11 +119,11 @@ The agent's LLM:
 
 ## Results (2026-10-31, prod gateway)
 
-| Agent (LLM) | tabctx calls | Wall time | Model chosen | ROC AUC on real outcomes | Churned among its top 10 / top 100 |
+| Agent (LLM) | tabctx calls | Wall time | Model chosen | ROC AUC on real outcomes | Readmitted among its top 10 / top 100 |
 |---|---|---|---|---|---|
-| Claude Code 2.1 (Opus 5.5, own login) | 11 | 76 s | tabpfn-3.5 | 0.867 | 90% / 86% |
-| Codex 0.137 (gpt-5, via gateway) | 9 | 100 s | tabicl-v2 | 0.866 | 90% / 87% |
-| pi 0.73 (Sonnet 5.5, via gateway) | 11 | 72 s | tabicl-v2 | 0.866 | 90% / 87% |
+| Claude Code 2.1 (Opus 5.5, own login) | 10 | 160 s | tabpfn-3.5 | 0.674 | 80% / 36% |
+| Codex 0.137 (gpt-5, via gateway) | 9 | 188 s | tabpfn-3.5 | 0.674 | 80% / 36% |
+| pi 0.73 (Sonnet 5.5, via gateway) | 10 | 134 s | tabpfn-3.5 | 0.674 | 80% / 36% |
 | Gemini CLI 0.38 | not run | | | | |
 
 Gemini CLI wasn't run because its free-tier Google login is no longer
@@ -113,21 +131,29 @@ accepted ("This client is no longer supported for Gemini Code Assist
 for individuals"). `run.sh gemini` needs `GEMINI_API_KEY` or Vertex AI
 auth.
 
-27% of the current customers churned, so a random top 10 would hold
-about 3 churners.
+11.0% of the current patients were readmitted within 30 days, so a
+random top 10 would hold about 1, and the agents' top 100 held 3.3 times
+the base rate. Readmission is hard to predict from administrative data:
+published risk scores (LACE, HOSPITAL) reach an AUC of about 0.65-0.72.
 
-In `evaluate`, on 1,386 held-out past customers, both models beat
-scikit-learn's gradient boosting. ROC AUC was 0.841 for tabpfn-3.5,
-0.841 for tabicl-v2 and 0.820 for gradient boosting; log loss was 0.420,
-0.423 and 0.459. Fitting all 5,543 rows took about 2.5 s. Predicting
-1,500 rows took 0.8 s.
+In `evaluate`, on 7,500 held-out past stays, ROC AUC was 0.697 for
+tabpfn-3.5, 0.690 for tabicl-v2 and 0.683 for gradient boosting; log
+loss 0.321, 0.325 and 0.325. Fitting 30,000 rows took 20 to 23 s.
+Predicting 2,000 took about 1.5 s, and `explain` (50,000 rows in one
+predict) about 30 s.
 
-All three agents used every tool, and all three dropped `customer_id`,
-which `inspect_table` flags as an id. In `explain`, the contract type
-mattered most for all three, with an AUC drop of 0.075 to 0.092. The
-columns after it came in a different order (internet service, tenure,
-charges). All three found the same three riskiest month-to-month
-customers: C03380, C04800 and C02577. For them, a one-year contract
-lowered predicted churn by 17 to 22 points, for example from 0.94 to
-0.76. That checks the offer against the model; it does not prove cause
-and effect, and the reports say so.
+All three agents used every tool, dropped `patient_id` (which
+`inspect_table` flags as an id), picked tabpfn-3.5 and got the same
+ranking. In `explain`, the number of inpatient stays in the past year
+mattered most (AUC drop 0.056), then where the patient is discharged to
+(0.039), emergency visits (0.018) and the primary diagnosis (0.014).
+For the three riskiest patients going home, discharge with home health
+service lowered predicted risk by 2 to 10 points; insulin, metformin and
+A1C changes moved it by about 1 point or less. All three reports say
+these are associations the model learned from past records, not proven
+effects, and recommend a transitional-care program targeted by risk
+score, measured against a comparison group.
+
+In an earlier run of this task, Codex stopped after predicting, with a
+progress message and no report (gpt-5 in `codex exec` sometimes ends its
+turn early). Running it again finished.

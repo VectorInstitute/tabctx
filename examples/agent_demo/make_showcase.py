@@ -1,6 +1,6 @@
 """Copy finished runs into showcase/, the runs anyone can replay in the
 hosted demo: the transcript (without the session details an agent CLI
-logs at start, and with local paths made relative), the report, and the
+logs at start, with local paths made relative and the login name masked), the report, and the
 score against the real outcomes (so the predictions file isn't needed).
 
     uv run --extra mcp python examples/agent_demo/make_showcase.py claude codex pi
@@ -8,6 +8,7 @@ score against the real outcomes (so the predictions file isn't needed).
 
 from __future__ import annotations
 
+import getpass
 import json
 import re
 import shutil
@@ -37,7 +38,12 @@ def sanitize(agent: str, line: str, run_dir: Path) -> str | None:
     for path in sorted({str(run_dir), str(run_dir.resolve())}, key=len, reverse=True):
         text = text.replace(path + "/", "").replace(path, ".")
     text = text.replace(str(HERE.parent.parent), "<repo>")
-    return re.sub(r"/(Users|home)/[^/\"\\\\]+", "~", text)
+    text = re.sub(r"/(Users|home)/[^/\"\\\\]+", "~", text)
+    # The login as the owner, and on Linux often the group, in `ls -l`
+    # output ("1 jdoe  staff", "1 jdoe jdoe").
+    login = re.escape(getpass.getuser())
+    text = re.sub(rf"(\s\d+ ){login}(\s+){login}(\s)", r"\1user\2user\3", text)
+    return re.sub(rf"(\s\d+ ){login}(\s+\w+\s)", r"\1user\2", text)
 
 
 def main(agents: list[str]) -> None:

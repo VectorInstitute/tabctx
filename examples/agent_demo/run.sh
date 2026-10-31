@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the churn demo with a coding agent that has the tabctx tools.
+# Run the readmission demo with a coding agent that has the tabctx tools.
 #
 #   uv sync --extra mcp                                # once: installs tabctx-mcp
 #   uv run --extra mcp python examples/agent_demo/prepare_data.py
@@ -40,13 +40,15 @@ SERVER=${TABCTX_MCP_BIN:-$REPO/.venv/bin/tabctx-mcp}
 [[ -x $SERVER ]] || { echo "no $SERVER: run 'uv sync --extra mcp' in $REPO" >&2; exit 1; }
 export TABCTX_MCP_BIN=$SERVER
 WORKSPACE=${DEMO_WORKSPACE:-$HERE/workspace}
-[[ -f $WORKSPACE/customers_history.csv ]] || {
+files=$(cd "$HERE" && python3 task.py files) || { echo "python3 task.py failed" >&2; exit 1; }
+read -r -a FILES <<<"$files"  # history, current
+[[ -f $WORKSPACE/${FILES[0]} ]] || {
   echo "no demo data in $WORKSPACE: run prepare_data.py first" >&2; exit 1; }
 
 RUN=${RUN_DIR:-$HERE/runs/$AGENT}
 rm -rf "$RUN"
 mkdir -p "$RUN"
-cp "$WORKSPACE"/customers_history.csv "$WORKSPACE"/customers_current.csv "$RUN"/
+for f in "${FILES[@]}"; do cp "$WORKSPACE/$f" "$RUN"/; done
 export TABCTX_MCP_HOME=$RUN/.tabctx-mcp
 if [[ ${ISOLATE_HOME:-0} == 1 ]]; then
   export HOME=$RUN/.home XDG_CONFIG_HOME=$RUN/.home/.config
@@ -66,7 +68,8 @@ claude)
   config=$(printf '{"mcpServers": {"tabctx": {"command": "%s"}}}' "$SERVER")
   model=()
   [[ -n ${CLAUDE_MODEL:-} ]] && model=(--model "$CLAUDE_MODEL")
-  claude -p "$PROMPT" "${model[@]}" --mcp-config "$config" --strict-mcp-config \
+  # ${a[@]+...}: an empty array is "unbound" to macOS's bash 3.2 under set -u.
+  claude -p "$PROMPT" ${model[@]+"${model[@]}"} --mcp-config "$config" --strict-mcp-config \
     --tools Read,Write,Edit,Glob,Grep --allowedTools mcp__tabctx Read Write Edit Glob Grep \
     --output-format stream-json --verbose >transcript.jsonl
   ;;

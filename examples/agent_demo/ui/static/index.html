@@ -32,12 +32,16 @@
   <main class="layout">
     <aside class="sidebar">
       <section class="panel account" id="account" hidden aria-labelledby="h-account">
-        <h2 id="h-account">Your gateway key</h2>
+        <div class="panel-head">
+          <h2 id="h-account">Gateway key</h2>
+          <span class="info" tabindex="0" aria-label="About your key" data-tip="The agent's model calls are billed to your project; tabular calls are free.<br>Your key stays in server memory for this session only.">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+          </span>
+        </div>
         <form id="login" autocomplete="off">
           <input id="key" type="password" placeholder="vp_…" spellcheck="false" autocomplete="off" aria-labelledby="h-account" />
           <button class="btn primary" type="submit">Sign in</button>
         </form>
-        <p class="fine">Runs use your key: the agent's model calls are billed to your project; the tabular calls are free. The key stays in this server's memory for your session only.</p>
         <div class="signed" hidden>
           <span class="dot"></span><span id="key-id" class="mono"></span>
           <button class="link" id="logout" type="button">Sign out</button>
@@ -59,7 +63,11 @@
           <h2 id="h-task">Task</h2>
           <button class="link" id="reset-prompt" type="button">Reset</button>
         </div>
-        <textarea id="prompt" spellcheck="false" rows="6" aria-labelledby="h-task"></textarea>
+        <div class="task" id="task-flow"></div>
+        <details class="prompt-box" id="prompt-box">
+          <summary>Prompt</summary>
+          <textarea id="prompt" spellcheck="false" rows="8" aria-labelledby="h-task"></textarea>
+        </details>
       </section>
 
       <div class="actions">
@@ -75,7 +83,6 @@
     <section class="stage" id="stage" aria-live="polite">
       <div class="empty" id="empty">
         <h1>A coding agent that can predict from a table.</h1>
-        <p class="lede">It calls tabular foundation models as tools. There's no training and no tuning, and every prediction is checked against what really happened.</p>
         <div class="flow" aria-label="How it works">
           <div class="node">
             <div class="node-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg></div>
@@ -101,10 +108,6 @@
             <div class="node-sub">vs real outcomes</div>
           </div>
         </div>
-        <div class="empty-foot">
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
-          The agent never sees the current customers' outcomes.
-        </div>
       </div>
 
       <div class="run" id="run-view" hidden>
@@ -118,7 +121,7 @@
         <div class="steps" id="steps" aria-label="Progress"></div>
         <div class="timeline" id="timeline"></div>
         <div class="outcome" id="outcome" hidden>
-          <h3 class="section-title">Scored against what the customers did</h3>
+          <h3 class="section-title">Scored on real outcomes</h3>
           <div class="scores" id="scores"></div>
           <details class="report-card" id="report-card">
             <summary>

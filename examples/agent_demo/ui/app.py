@@ -1,6 +1,6 @@
 """The demo's web page: pick an agent, run it (or replay a finished run),
 and watch its tabctx tool calls arrive live, then its report and its
-score against what the customers actually did.
+score against what actually happened.
 
 Locally (agents use your own logins and $TABCTX_API_KEY):
 
@@ -33,7 +33,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# ui/ (this file's modules) and examples/agent_demo/ (task.py, score.py).
+sys.path[:0] = [
+    str(Path(__file__).resolve().parent),
+    str(Path(__file__).resolve().parents[1]),
+]
+import task  # noqa: E402
 from gateway import (  # noqa: E402
     TABULAR,
     RefusedKey,
@@ -194,16 +199,23 @@ def setup(request: Request) -> dict:
 @cache
 def dataset() -> dict | None:
     try:
-        history = pd.read_csv(WORKSPACE / "customers_history.csv")
-        current = pd.read_csv(WORKSPACE / "customers_current.csv")
+        history = pd.read_csv(WORKSPACE / task.HISTORY)
+        current = pd.read_csv(WORKSPACE / task.CURRENT)
     except FileNotFoundError:
         return None
     return {
+        **task.LABELS,
+        "history_file": task.HISTORY,
         "history_rows": len(history),
         "current_rows": len(current),
-        "features": len(current.columns) - 1,  # without customer_id
-        "churn_rate": round(float((history["Churn"] == "Yes").mean()), 3),
-        "columns": [c for c in current.columns if c != "customer_id"],
+        "features": len(current.columns) - 1,  # without the id
+        "target": task.TARGET,
+        "positive": task.POSITIVE,
+        "negative": task.NEGATIVE,
+        "positive_rate": round(
+            float((history[task.TARGET] == task.POSITIVE).mean()), 3
+        ),
+        "columns": [c for c in current.columns if c != task.ID],
     }
 
 
