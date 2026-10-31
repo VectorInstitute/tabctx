@@ -104,10 +104,10 @@ async function init() {
   initTooltips();
   const setup = await loadSetup();
   renderDataset(setup.dataset);
+  renderTask(setup.dataset);
   $("#prompt").value = setup.prompt;
   $("#prompt").readOnly = !setup.prompt_editable;
   $("#reset-prompt").hidden = !setup.prompt_editable;
-  $("#h-task").textContent = setup.prompt_editable ? "Task" : "Task (fixed)";
   state.agent = setup.running || setup.runs.at(-1)?.agent || setup.agents.find((a) => a.available)?.id;
   renderAgents();
   $("#reset-prompt").onclick = () => ($("#prompt").value = setup.prompt);
@@ -130,9 +130,8 @@ function renderAccount(setup) {
   $("#account").hidden = !setup.hosted;
   const signed = Boolean(setup.signed_in);
   $("#login").hidden = signed;
-  $("#account .fine").hidden = signed;
   $("#account .signed").hidden = !signed;
-  $("#h-account").textContent = signed ? "Signed in" : "Your gateway key";
+  $("#h-account").textContent = signed ? "Signed in" : "Gateway key";
   if (signed) $("#key-id").textContent = setup.signed_in.key_id;
 }
 
@@ -181,18 +180,34 @@ function renderDataset(d) {
     $("#dataset").innerHTML = `<p class="muted">Run <code>prepare_data.py</code> first.</p>`;
     return;
   }
-  const yes = d.churn_rate;
+  const yes = d.positive_rate;
+  const classes = ["No", d.positive];
   $("#dataset").innerHTML = `
     <div class="ds">
-      <div class="v">${fmt(d.history_rows)}</div><div class="k">past customers</div>
-      <div class="split">${segBar([["No", 1 - yes], ["Yes", yes]], ["No", "Yes"], 8)}</div>
-      <div class="f" data-tip="customers_history.csv, with the outcome">customers_history.csv</div>
+      <div class="v">${fmt(d.history_rows)}</div><div class="k">${esc(d.history)}</div>
+      <div class="split">${segBar([["No", 1 - yes], [d.positive, yes]], classes, 8)}</div>
+      <div class="f" data-tip="${esc(d.history_file)}: ${pct(yes, 1)} ${esc(d.outcome)} within 30 days">${pct(yes, 1)} ${esc(d.outcome)}</div>
     </div>
     <div class="ds">
-      <div class="v">${fmt(d.current_rows)}</div><div class="k">current customers</div>
-      <div class="locked" data-tip="Their outcome is kept away from the agent and used only for scoring">${svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 12)} outcome hidden</div>
+      <div class="v">${fmt(d.current_rows)}</div><div class="k">${esc(d.current)}</div>
+      <div class="locked" data-tip="Kept from the agent; used only for scoring">${svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 12)} outcome hidden</div>
       <div class="f" data-tip="${esc(d.columns.join(", "))}">${d.features} columns</div>
     </div>`;
+}
+
+// The task as five icons (the prompt's steps); the full prompt is folded away.
+function renderTask(d) {
+  const steps = [
+    [ICONS.evaluate, "Compare", "Benchmark both models against gradient boosting"],
+    [ICONS.predict, "Rank", `Predict every ${d ? esc(d.entity.replace(/s$/, "")) : "row"}'s risk`],
+    [ICONS.explain, "Drivers", "Find what drives the outcome"],
+    [ICONS.what_if, "What-if", "Test changes on the highest-risk cases"],
+    ['<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>', "Report", "Write report.md"],
+  ];
+  $("#task-flow").innerHTML = steps
+    .map(([icon, label, tip]) => `<div class="task-step" data-tip="${tip}"><span class="tool-icon">${svg(icon)}</span>${label}</div>`)
+    .join("");
+  $("#prompt-box").open = Boolean(state.setup.prompt_editable);
 }
 
 function renderAgents() {
@@ -206,14 +221,17 @@ function renderAgents() {
         ? '<span class="agent-badge na">not installed</span>'
         : hosted && state.setup.signed_in && !a.allowed
           ? '<span class="agent-badge na" data-tip="Your key\'s project has no model for this agent">no access</span>'
-          : s
+          : s?.roc_auc != null
           ? `<span class="agent-badge" data-tip="ROC AUC of its last run, on the real outcomes">${fmt(s.roc_auc, 3)}</span>`
           : "";
       const tools = a.tools.split(" · ")[0];
-      return `<button class="agent" role="radio" type="button" data-id="${a.id}" aria-checked="${a.id === state.agent}" ${a.available || replayable ? "" : "disabled"}>
+      const noShell = a.tools.includes("no shell") || a.tools.includes("no bash");
+      const shell = noShell
+        ? `<span class="chip-sm" data-tip="No shell: files and tabctx tools only">${svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 11)}</span>`
+        : `<span class="chip-sm" data-tip="${esc(a.tools)}">${svg('<path d="M5 8l4 4-4 4M11 16h7"/>', 11)}</span>`;
+      return `<button class="agent" role="radio" type="button" data-id="${a.id}" aria-checked="${a.id === state.agent}" ${a.available || replayable ? "" : "disabled"} data-tip="${esc(a.llm)}<br>${esc(a.tools)}">
         <div class="agent-top"><span class="agent-name">${esc(a.label)}</span>${badge}</div>
-        <div class="agent-llm" data-tip="${esc(a.llm)}">${esc(a.llm)}</div>
-        <div class="agent-tools" data-tip="${esc(a.tools)}">${esc(tools)}${a.tools.includes("no shell") || a.tools.includes("no bash") ? " · no shell" : ""}</div>
+        <div class="agent-tools"><span class="chip-sm">${esc(tools.replace(" extension", ""))}</span>${shell}</div>
       </button>`;
     })
     .join("");
@@ -348,7 +366,7 @@ function handle(ev, info) {
     if (failed) call.el.classList.add("error");
     call.el.innerHTML =
       cardHead(call.tool, describeCall(call.tool, call.args), right) +
-      `<div class="card-body">${failed ? `<div class="error-text">${esc(ev.text || "error")}</div>` : renderResult(call.tool, ev.result, call.args)}</div>`;
+      `<div class="card-body">${failed ? errorLine(ev.text) : renderResult(call.tool, ev.result, call.args)}</div>`;
     scrollDown();
     return "slow";
   }
@@ -385,8 +403,8 @@ function setStatus(kind, text) {
 }
 
 function updateMeta(info, final = false) {
-  const pills = [info.llm, `${state.counts.tabctx} tabctx calls`];
-  if (state.counts.other) pills.push(`${state.counts.other} other tool${state.counts.other > 1 ? "s" : ""}`);
+  const model = info.llm.replace(/\s*(via|\().*$/, "");
+  const pills = [...(model ? [model] : []), `${state.counts.tabctx} tabctx calls`];
   const secs = state.stats?.seconds ?? (state.started && !state.replaying ? (Date.now() - state.started) / 1000 : null);
   if (secs != null && !(final && state.replaying)) pills.push(`${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`);
   if (final && state.stats?.cost_usd) pills.push(`$${fmt(state.stats.cost_usd, 2)}`);
@@ -402,6 +420,13 @@ const scrollDown = () => {
 };
 
 // ---- building blocks ---------------------------------------------------------
+
+// A tool error's first clause (the rest, e.g. a column list, on hover).
+function errorLine(text) {
+  const full = String(text || "error").replace(/^Error executing tool \w+:\s*/, "");
+  const short = full.split(/;\s|\n/)[0];
+  return `<div class="error-text" ${short !== full ? `data-tip="${esc(full)}"` : ""}>${esc(short)}${short !== full ? " …" : ""}</div>`;
+}
 
 function cardHead(tool, sub, right = "") {
   return `<div class="card-head"><span class="tool-icon">${svg(ICONS[tool] || ICONS.list_models)}</span>
@@ -420,7 +445,7 @@ function describeCall(tool, a = {}) {
     case "predict":
       return `${file(a.path)}${a.where ? ` · ${esc(Object.entries(a.where).map(([k, v]) => `${k} = ${v}`).join(", "))}` : ""}`;
     case "what_if":
-      return a.base_where ? `customer <code>${esc(Object.values(a.base_where).join(", "))}</code>` : `${(a.rows || []).length} cases`;
+      return a.base_where ? `<code>${esc(Object.values(a.base_where).join(", "))}</code>` : `${(a.rows || []).length} cases`;
     case "explain":
       return `${esc(a.model || "tabpfn-3.5")} · permutation importance`;
     default:
@@ -516,9 +541,12 @@ function predictCard(r) {
   let split = "";
   let classes = [];
   if (counts) {
-    classes = Object.keys(r.summary.mean_probability || counts);
-    const parts = classes.map((c) => [c, (counts[c] || 0) / r.rows]);
-    split = `<div style="flex:1;min-width:240px"><div class="split-label">predicted</div>${segBar(parts, classes)}${legend(parts, classes)}</div>`;
+    // The mean probability, not the 50% calls: for a rare outcome almost
+    // no row crosses 50%, and "0% Yes" would say nothing.
+    const mean = r.summary.mean_probability;
+    classes = Object.keys(mean || counts);
+    const parts = classes.map((c) => [c, mean ? mean[c] : (counts[c] || 0) / r.rows]);
+    split = `<div style="flex:1;min-width:240px"><div class="split-label">${mean ? "expected" : "predicted"}</div>${segBar(parts, classes)}${legend(parts, classes)}</div>`;
   }
   const head = `<div class="row">${fig(fmt(r.rows), "rows")}${fig(`${fmt(r.predict_seconds, 1)} s`, "to predict")}${split}</div>`;
   const cols = r.top_rows.length ? Object.keys(r.top_rows[0]).filter((k) => !k.startsWith("p_") && !k.startsWith("predicted_")) : [];
@@ -555,7 +583,7 @@ function whatIfCard(r, args) {
   const results = r.results;
   if (!results.length) return "";
   const probs = results[0].probabilities;
-  const who = ""; // the card's header names the customer
+  const who = ""; // the card's header names the row
   if (!probs) {
     return `${who}<div class="bars">${results.map((x, i) => `<div class="bar-row"><div class="label">${caseLabel(x, args, i)}</div><div></div><div class="val">${fmt(x.prediction, 2)}</div></div>`).join("")}</div>`;
   }
@@ -578,9 +606,10 @@ function whatIfCard(r, args) {
 function caseLabel(x, args, i) {
   const changes = x.changes ?? args?.rows?.[i];
   if (!changes || !Object.keys(changes).length) return '<span class="muted">as it is</span>';
-  return Object.entries(changes)
-    .map(([k, v]) => `<span data-tip="${esc(k)} = ${esc(v)}">${esc(v)}</span>`)
-    .join(" + ");
+  // The new values on one line, the columns they go in under them.
+  const entries = Object.entries(changes);
+  const tip = esc(entries.map(([k, v]) => `${k} = ${v}`).join("<br>"));
+  return `<span data-tip="${tip}">${esc(entries.map(([, v]) => v).join(" + "))}<span class="faint">${esc(entries.map(([k]) => k).join(" + "))}</span></span>`;
 }
 
 // ---- outcome ---------------------------------------------------------------------
@@ -592,17 +621,18 @@ function renderOutcome(o) {
     $("#scores").innerHTML = `<div class="score" style="grid-column:1/-1"><div class="k">Not scored</div><div class="faint">${esc(s.error || "no predictions file")}</div></div>`;
   } else {
     const rate = s.base_rate;
-    const top10 = parseFloat(s.churned_in_top_10) / 100;
-    const top100 = parseFloat(s.churned_in_top_100) / 100;
+    const what = state.setup.dataset?.outcome || "positive";
+    const top10 = s.positive_in_top_10;
+    const top100 = s.positive_in_top_100;
     const hits = Math.round(top10 * 10);
     const auc = `<div class="score"><div class="v">${fmt(s.roc_auc, 3)}</div><div class="k">ROC AUC</div>
-      <div class="viz"><div class="ref-lane" data-tip="0.5 is a coin flip, 1.0 ranks every churner first">${`<div class="bar" style="width:${clamp01((s.roc_auc - 0.5) / 0.5) * 100}%"></div>`}</div>
+      <div class="viz"><div class="ref-lane" data-tip="0.5 is a coin flip; 1.0 ranks every ${esc(what)} case first"><div class="bar" style="width:${clamp01((s.roc_auc - 0.5) / 0.5) * 100}%"></div></div>
       <div class="scale"><span>0.5 chance</span><span>1.0</span></div></div></div>`;
-    const ten = `<div class="score"><div class="v">${hits}<span class="faint" style="font-size:24px"> / 10</span></div><div class="k">top-10 risks churned</div>
-      <div class="viz"><div class="dots" data-tip="Its 10 highest-risk customers: ${hits} churned. A random 10 would hold about ${fmt(rate * 10)}.">${Array.from({ length: 10 }, (_, i) => `<i class="${i < hits ? "hit" : ""}"></i>`).join("")}</div>
+    const ten = `<div class="score"><div class="v">${hits}<span class="faint" style="font-size:24px"> / 10</span></div><div class="k">top-10 risks ${esc(what)}</div>
+      <div class="viz"><div class="dots" data-tip="${hits} of its 10 highest risks were ${esc(what)}; a random 10 would hold about ${fmt(rate * 10)}">${Array.from({ length: 10 }, (_, i) => `<i class="${i < hits ? "hit" : ""}"></i>`).join("")}</div>
       <div class="scale"><span>random ≈ ${fmt(rate * 10)}</span><span></span></div></div></div>`;
-    const hundred = `<div class="score"><div class="v">${pct(top100)}</div><div class="k">of its top 100 churned</div>
-      <div class="viz"><div class="ref-lane" data-tip="${pct(top100)} of its top 100 churned, against ${pct(rate)} of all customers"><div class="bar yes" style="width:${top100 * 100}%"></div><div class="mark" style="left:${rate * 100}%"></div></div>
+    const hundred = `<div class="score"><div class="v">${pct(top100)}</div><div class="k">of top 100 ${esc(what)}</div>
+      <div class="viz"><div class="ref-lane" data-tip="${pct(top100)} of its top 100, against ${pct(rate)} of all"><div class="bar yes" style="width:${top100 * 100}%"></div><div class="mark" style="left:${rate * 100}%"></div></div>
       <div class="scale"><span>base rate ${pct(rate)} ▲</span><span>${fmt(top100 / rate, 1)}×</span></div></div></div>`;
     $("#scores").innerHTML = auc + ten + hundred;
   }

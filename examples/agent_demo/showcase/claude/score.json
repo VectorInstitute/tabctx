@@ -1,8 +1,8 @@
 {
-  "file": "mtm_top3_tmp.csv",
-  "customers": 1500,
-  "roc_auc": 0.8667,
-  "base_rate": 0.265,
-  "churned_in_top_10": "90%",
-  "churned_in_top_100": "86%"
+  "file": "home_ranking.csv",
+  "rows": 2000,
+  "roc_auc": 0.6918,
+  "base_rate": 0.096,
+  "positive_in_top_10": 0.6,
+  "positive_in_top_100": 0.32
 }

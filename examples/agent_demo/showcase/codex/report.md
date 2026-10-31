@@ -1,56 +1,91 @@
-# Churn Prediction Report (Oct 31, 2026)
+# 30‑Day Readmission Risk — Discharge Cohort (run: Oct 31, 2026)
 
-Files produced
-- Predictions for all current customers: `customers_current.churn_tabicl.predictions.csv` (columns: `predicted_Churn`, `p_Churn=Yes`, `p_Churn=No`).
+This report summarizes model performance, current‑patient risk predictions, key drivers, and “what‑if” simulations to inform care‑transition planning.
 
 ## 1) Model selection and accuracy
-- Data: `customers_history.csv` (5,543 rows; target `Churn`). Dropped id column `customer_id`.
-- Compared tabular foundation models vs a standard gradient-boosting baseline on a 75/25 split (1,386 test rows).
-- Best by ROC AUC: tabICL v2.
-  - tabICL v2: Accuracy 0.799, ROC AUC 0.841, Log loss 0.423.
-  - TabPFN 3.5: Accuracy 0.797, ROC AUC 0.841, Log loss 0.421.
-  - Gradient boosting: Accuracy 0.777, ROC AUC 0.820, Log loss 0.459.
-- Choice: tabICL v2 (slightly better AUC/accuracy and faster inference here).
 
-## 2) Ten highest-risk current customers
-(From `p_Churn=Yes`; highest first)
-- C04800 — 0.9616
-- C03380 — 0.9593
-- C02577 — 0.9513
-- C06240 — 0.9462
-- C00585 — 0.9397
-- C02745 — 0.9360
-- C04459 — 0.9328
-- C05783 — 0.9232
-- C02246 — 0.9125
-- C05307 — 0.9079
+We evaluated two tabular foundation models against a gradient‑boosting baseline on `patients_history.csv` (n=30,000), holding out 25% for testing and dropping the identifier `patient_id`.
 
-## 3) What drives churn (permutation importance)
-Score drop in ROC AUC when shuffling a column (higher = more important):
-- Contract — 0.081
-- TotalCharges — 0.034
-- InternetService — 0.016
-- MonthlyCharges — 0.014
-- tenure — 0.013
-- PaymentMethod — 0.003
-- OnlineSecurity — 0.002
-- TechSupport — 0.001
-- PaperlessBilling — 0.001
-- StreamingMovies — 0.001
-Interpretation: month-to-month contracts, high monthly charges with low total charges/tenure, fiber internet, electronic check payments, and lack of security/support features are associated with higher churn risk.
+- tabpfn‑3.5 — Accuracy 0.884, ROC AUC 0.677, Log loss 0.336
+- tabicl‑v2 — Accuracy 0.884, ROC AUC 0.668, Log loss 0.341
+- Gradient boosting (baseline) — Accuracy 0.884, ROC AUC 0.670, Log loss 0.339
 
-## 4) Contract what-if: Top 3 month-to-month customers
-Change tested: set `Contract = One year` for each customer.
-- C04800: 0.9615 → 0.7962 (−0.1653)
-- C03380: 0.9592 → 0.7862 (−0.1730)
-- C02577: 0.9512 → 0.7515 (−0.1997)
-Average absolute reduction ≈ 0.179 (≈18 percentage points).
+Chosen model: tabpfn‑3.5 (best ROC AUC).
 
-## 5) Recommended retention action and expected impact
-- Action: Offer a 12‑month price‑lock with a modest monthly discount, switch to automatic bank transfer, and bundle OnlineSecurity/TechSupport for new fiber customers on month‑to‑month with high monthly charges and tenure ≤ 3 months.
-- Expected impact: For high‑risk customers who accept, anticipate ~15–20 percentage‑point absolute risk reduction (based on the 3 what‑ifs above).
-- Program sizing example: Target the top 300 highest‑risk month‑to‑month customers. If 30% accept, expected avoided churn ≈ 300 × 0.30 × 0.18 ≈ 16–17 customers over the next period.
+## 2) Predictions for current discharges
+
+We fitted the chosen model on all history rows and predicted every patient in `patients_current.csv` (n=2,000). Output file (keep for scoring): `predictions_current.csv`.
+
+- Mean predicted probability of readmission (Yes): 0.1083
+- Predicted class counts: Yes=4, No=1996
+
+Top 10 highest‑risk patients (by P[Yes]):
+
+1. P069294 — 0.5405
+2. P062554 — 0.5388
+3. P035606 — 0.5319
+4. P050933 — 0.5125
+5. P013753 — 0.4978
+6. P093095 — 0.4616
+7. P017056 — 0.4529
+8. P015152 — 0.4353
+9. P063677 — 0.4310
+10. P086418 — 0.4095
+
+## 3) Main drivers of readmission risk
+
+Permutation importance on held‑out rows (higher = stronger driver):
+
+- Discharge disposition (largest effect)
+- Number of prior inpatient visits
+- Primary diagnosis group (diag_1)
+- Medical specialty on the encounter
+- Number of prior emergency visits
+- Any diabetes medication (`diabetesMed`)
+- Max glucose serum result availability/value
+- Race (small), payer code (small), time in hospital (small)
+
+Interpretation: the model’s strongest signals combine where patients are discharged to, recent utilization intensity (inpatient/emergency), clinical category of the index stay, and whether active diabetes meds are on board.
+
+## 4) What‑if simulations for highest‑risk Home discharges
+
+We took the three highest‑risk current patients with `discharge_disposition = Home` and tested practical changes a care team might consider. Numbers below are model‑estimated probabilities; they reflect associations the model learned, not proven causal effects.
+
+Patient P035606 (baseline Home): 0.5318
+- Change to Skilled nursing facility: 0.5152  (–0.0166)
+- Change to Home health service: 0.5404  (+0.0086)
+- Start metformin (set `metformin = Steady`): 0.5237  (–0.0081)
+
+Patient P063677 (baseline Home): 0.4309
+- Change to Skilled nursing facility: 0.3870  (–0.0439)
+- Change to Home health service: 0.4337  (+0.0028)
+- Start metformin (`metformin = Steady`): 0.4284  (–0.0025)
+
+Patient P086418 (baseline Home): 0.4095
+- Change to Skilled nursing facility: 0.3974  (–0.0121)
+- Change to Home health service: 0.4248  (+0.0153)
+- Start metformin (`metformin = Steady`): 0.4038  (–0.0057)
 
 Notes
-- All metrics are out-of-sample on the holdout split. Feature importance is from permutation importance on held‑out rows; near‑zero values indicate weak or no effect in the model.
-- The predictions CSV will be used for scoring once actual churn outcomes are known.
+- For these three patients, “Skilled nursing facility” consistently reduced modeled risk; “Home health service” tended to increase it. This does not mean HH services cause readmissions—only that in the training data, patients going to HH looked more like higher‑risk cases after accounting for other variables.
+- Medication adjustments showed small risk shifts; effect sizes vary by clinical context.
+
+## 5) Recommended follow‑up program and expected impact
+
+Program: High‑risk Home‑discharge pathway
+- Targeting rule: patients discharged Home with predicted P[readmit] ≥ 0.40.
+- Actions:
+  - SNF evaluation by case management as the default alternative disposition when clinically appropriate.
+  - Diabetes regimen optimization before discharge (e.g., initiate metformin if appropriate, clarify insulin plan).
+- Expected impact (association‑based, not causal):
+  - Across our three example patients, switching to SNF changed modeled risk by an average –0.024 (–2.4 percentage points). Metformin initiation averaged –0.005 (–0.5 pp).
+  - If applied to 30 flagged patients per month with 1/3 placed to SNF and 1/3 receiving med optimization, the model implies ≈ 30 × (0.333×0.024 + 0.333×0.005) ≈ 0.30 fewer 30‑day readmissions per month. Real‑world impact will differ and requires monitoring.
+
+Operationalization & monitoring
+- Use `predictions_current.csv` to identify candidates and to track calibration against actual outcomes.
+- Build a weekly review: confirm disposition choices, document reasons when SNF not appropriate, and track readmissions for continuous recalibration.
+- Equity check: monitor performance and interventions across race/age groups to avoid unintended disparities.
+
+Cautions
+- What‑if results reflect patterns in retrospective data; they are not treatment recommendations.
+- Always apply clinical judgment and shared decision‑making with patients and families.
