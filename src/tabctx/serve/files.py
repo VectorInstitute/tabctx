@@ -20,6 +20,10 @@ Features:
   a text column, encoded by tabctx.schema. A Parquet string column is
   text even when its values look like numbers ("007"); a CSV has no
   types, so there a column of number-like text is numbers.
+- A Parquet file's pandas index (what ``DataFrame.to_parquet()`` saves for
+  any index but the default 0..n-1 range, listed in the file's pandas
+  metadata) is not data, as pandas reads it back: those columns are
+  dropped, unless one is named as the target.
 
 Labels (the target column) keep their text as written: ``"1.0"`` and
 ``"01"`` are classes of their own, and ``"NA"`` can be a class among text
@@ -70,7 +74,7 @@ def read_table(path: Path, text_columns: Collection[str] = ()) -> Table:
     """A table file's columns as features. text_columns: names to keep as
     text whatever their values look like (a training text column must
     stay text at predict: "007" is not 7)."""
-    names, arrow = _read(path, text_columns)
+    names, arrow, _ = _read(path, text_columns)
     keep = _kept_text(path, names, text_columns)
     return Table(names, list(_features(arrow, names, keep)))
 
@@ -86,20 +90,24 @@ def read_training_table(
         # Known before reading, so the label column is read as text.
         header = _csv_header(path)
         target = header[-1].strip() if header else None
-    names, arrow = _read(path, (), raw_text=(target,) if target else ())
+    if target is not None:
+        target = target.strip()  # column names are compared stripped
+    names, arrow, dropped = _read(path, (), raw_text=(target,) if target else ())
     target = names[-1] if target is None else target
     if target not in names:
         raise InvalidInputError(
             f"target column {target!r} is not in the table's columns {names[:20]}"
+            + _index_hint(dropped, as_target=True)
         )
     if len(names) < 2:
         raise InvalidInputError(
             "the training table needs at least one feature column besides the target"
+            + _index_hint(dropped, as_target=True)
         )
-    index = names.index(target)
-    labels = _labels(arrow.column(index), task, pa)
-    arrow = arrow.remove_column(index)
-    del names[index]
+    position = names.index(target)
+    labels = _labels(arrow.column(position), task, pa)
+    arrow = arrow.remove_column(position)
+    del names[position]
     keep = _kept_text(path, names, ())
     return Table(names, list(_features(arrow, names, keep))), labels
 
@@ -265,22 +273,65 @@ def _is_parquet(path: Path) -> bool:
 
 
 def _read(path: Path, text_columns: Collection[str], raw_text: Collection[str] = ()):
-    """(column names, arrow table). raw_text: columns read as text with no
-    missing-value spellings applied (labels)."""
+    """(column names, arrow table, the pandas index columns left out).
+    raw_text: columns read as text with no missing-value spellings applied
+    (labels); a pandas index column named here is kept."""
     pa = _pyarrow()
     try:
         arrow = _read_arrow(path, text_columns, raw_text)
     except (pa.ArrowInvalid, pa.ArrowNotImplementedError, OSError) as e:
         raise InvalidInputError(f"could not read the table file: {e}") from e
     names = [str(n).strip() for n in arrow.column_names]
-    if not names:
-        raise InvalidInputError("the table file has no columns")
     duplicated = sorted({n for n in names if names.count(n) > 1})
     if duplicated:
         raise InvalidInputError(f"the table file repeats column name(s) {duplicated}")
+    arrow, index = _without_pandas_index(arrow, names, keep=raw_text)
+    names = [n for n in names if n not in index]
+    if not names:
+        raise InvalidInputError("the table file has no columns" + _index_hint(index))
     if arrow.num_rows == 0:
         raise InvalidInputError("the table file has a header but no rows")
-    return names, arrow
+    return names, arrow, index
+
+
+def _without_pandas_index(table, names: list[str], keep: Collection[str]):
+    """(table, the stripped names of the columns removed): table without
+    the pandas index that DataFrame.to_parquet() saves with the data (as
+    __index_level_0__, or under the index's name, for any index but the
+    default 0..n-1 range). The file's pandas metadata lists those columns,
+    and pandas reads them back as the index, not as data; read as
+    features they would be a row number the model learns from, and the
+    last column, where the default target is looked for. names: the
+    table's stripped column names (unique). keep: names to keep even so
+    (the requested target). Metadata pandas didn't write (not JSON, or
+    not the shape pandas writes) is ignored."""
+    try:
+        metadata = table.schema.pandas_metadata
+    except ValueError:
+        return table, []
+    index = metadata.get("index_columns") if isinstance(metadata, dict) else None
+    if not isinstance(index, list):
+        return table, []
+    # A RangeIndex is described by a dict and not stored as a column.
+    listed = {n.strip() for n in index if isinstance(n, str)}
+    kept = {str(k).strip() for k in keep}
+    drop = {i for i, n in enumerate(names) if n in listed and n not in kept}
+    if not drop:
+        return table, []
+    table = table.select([i for i in range(len(names)) if i not in drop])
+    return table, [names[i] for i in sorted(drop)]
+
+
+def _index_hint(index: list[str], as_target: bool = False) -> str:
+    """Why an error may be about the pandas index left out, and the fix;
+    as_target: the error is about the training target, which may be it."""
+    if not index:
+        return ""
+    target = ", or name it as the target" if as_target else ""
+    return (
+        f" (the file's pandas index {index} is not read as data; to use it, "
+        f"save the frame after reset_index(){target})"
+    )
 
 
 def _open_csv(path: Path):
