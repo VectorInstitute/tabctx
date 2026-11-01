@@ -114,16 +114,18 @@ The agent's LLM:
 - Codex and pi go through the Vector gateway with the same key as the
   tabular models. Codex uses gpt-5 by default, because for newer models
   Codex adds a `tool_search` tool that the gateway refuses. pi uses
-  claude-sonnet-5-5. `CODEX_MODEL` and `PI_MODEL` change them.
+  Qwen3_8-27B, an open model served on Vector's own GPUs (hosted
+  visitors whose project lacks it get claude-sonnet-5-5). `CODEX_MODEL`
+  and `PI_MODEL` change them.
 - `CLAUDE_VIA_GATEWAY=1` sends Claude Code through the gateway as well.
 
-## Results (2026-10-31, prod gateway)
+## Results (2026-10-31; pi on 2026-11-01, prod gateway)
 
 | Agent (LLM) | tabctx calls | Wall time | Model chosen | ROC AUC on real outcomes | Readmitted among its top 10 / top 100 |
 |---|---|---|---|---|---|
 | Claude Code 2.1 (Opus 5.5, own login) | 10 | 160 s | tabpfn-3.5 | 0.674 | 80% / 36% |
 | Codex 0.137 (gpt-5, via gateway) | 9 | 188 s | tabpfn-3.5 | 0.674 | 80% / 36% |
-| pi 0.73 (Sonnet 5.5, via gateway) | 10 | 134 s | tabpfn-3.5 | 0.674 | 80% / 36% |
+| pi 0.73 (Qwen3.8 27B, on-prem via gateway) | 9 | 404 s | tabpfn-3.5 | 0.674 | 80% / 36% |
 | Gemini CLI 0.38 | not run | | | | |
 
 Gemini CLI wasn't run because its free-tier Google login is no longer
@@ -153,6 +155,10 @@ A1C changes moved it by about 1 point or less. All three reports say
 these are associations the model learned from past records, not proven
 effects, and recommend a transitional-care program targeted by risk
 score, measured against a comparison group.
+
+pi on the open Qwen3.8 27B model, served on Vector's own GPUs, made
+the same choices and got the same score as the two frontier models. It
+took longer: 404 s, against 134 s for pi on Sonnet 5.5.
 
 In an earlier run of this task, Codex stopped after predicting, with a
 progress message and no report (gpt-5 in `codex exec` sometimes ends its

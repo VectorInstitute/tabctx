@@ -42,8 +42,13 @@ def test_each_agent_gets_the_best_model_the_key_can_use():
         "ANTHROPIC_SMALL_FAST_MODEL": "claude-haiku-5-5",
     }
     assert env["codex"] == {"CODEX_MODEL": "gpt-5"}
-    assert env["pi"] == {"PI_MODEL": "claude-sonnet-5-5"}
+    assert env["pi"] == {"PI_MODEL": "claude-sonnet-5-5"}  # no Qwen in ALL
     assert gateway.model_of(env["pi"]) == "claude-sonnet-5-5"
+
+
+def test_pi_prefers_the_on_prem_qwen():
+    env = gateway.agent_env(ALL | {"Qwen3_8-27B"})
+    assert env["pi"] == {"PI_MODEL": "Qwen3_8-27B"}
 
 
 def test_agents_the_key_cannot_run():

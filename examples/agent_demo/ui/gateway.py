@@ -24,7 +24,8 @@ _AGENT_MODELS = {
         "claude-sonnet-5",
     ],
     "codex": ["gpt-5"],
-    "pi": ["claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5"],
+    # pi runs on Vector's own on-prem Qwen; Claude only for projects without it.
+    "pi": ["Qwen3_8-27B", "claude-sonnet-5-5", "claude-sonnet-5", "claude-opus-5"],
 }
 # Claude Code's model for small background tasks (titles, summaries).
 _CLAUDE_SMALL = ["claude-haiku-5-5", "claude-haiku-4-5-20251001"]
