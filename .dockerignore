@@ -1,8 +1,16 @@
-# Keep the build context to what the image install actually reads
-# (pyproject.toml, README.md, LICENSE.md, src/). Everything else -- local
-# virtualenvs especially -- would bloat or break reproducible builds.
+# Build context for the two images built from this repository: the serving
+# image (Dockerfile; reads pyproject.toml, README.md, LICENSE.md, src/) and
+# the agent demo (examples/agent_demo/Dockerfile; also the demo). Everything
+# else -- local virtualenvs especially -- would bloat or break reproducible
+# builds.
 *
 !pyproject.toml
 !README.md
 !LICENSE.md
-!src
+!src/
+!examples/agent_demo/
+examples/agent_demo/workspace/
+examples/agent_demo/answers/
+examples/agent_demo/runs/
+**/__pycache__/
+**/.DS_Store

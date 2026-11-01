@@ -4,7 +4,61 @@
 ### Added
 - **A Ray-free standalone host**: `python -m tabctx.serve` (the new `standalone` extra: `[serve]` minus ray) serves the same routes as the Ray Serve deployment from one plain uvicorn process, for platforms that don't run Ray -- e.g. a Kubernetes Deployment behind a gateway. The service moved to `serve/service.py`, host-agnostic and importable without ray (route handlers unchanged; `ROUTE_SPECS` captures the routes at import time so `serve/standalone.py`'s `make_app()` can rebind them to a plain instance); `serve/app.py` keeps its import path and is now only the Ray host (the deployment settings and the consistent-hash affinity router). Serve-isms get standalone replacements: `GET /livez` answers 503 exactly when `check_health` would fail the replica (a dead per-GPU worker -- `/readyz` is the wrong liveness probe, it also 503s on transient pressure), and a request limiter replicates `max_ongoing_requests`/`max_queued_requests` shedding (`TABCTX_MAX_ONGOING_REQUESTS`/`TABCTX_MAX_QUEUED_REQUESTS`, defaults 8/16, probes exempt). One replica only: nothing outside Ray routes a dataset's predicts back to the replica that fit it. Unit-tested over httpx's ASGI transport in the ray-less unit environment (fit/predict inline and multipart, tenancy, 404/422, limiter, livez); the integration suite still proves `serve/app.py` on a live Ray cluster.
 - **A serving image** (`Dockerfile`, pushed to `ghcr.io/vectorinstitute/tabctx:<version>` by `.github/workflows/docker_image.yml` on each release tag): python:3.12-slim + a pinned torch (PyPI wheels bundle the CUDA runtime; the host supplies only the driver) + `tabctx[standalone,tabicl,tabpfn]`, entrypoint `python -m tabctx.serve --host 0.0.0.0`, non-root. Weights are mounted, not baked. CI smoke-tests the image against the fake backend (imports, readyz/livez, tenant-gated fit and predict); GPU validation stays with the deploying platform's rehearsal.
+
+### Changed
+- **The agent demo is now about hospital readmission, not telecom churn.** It uses the public Diabetes 130-US Hospitals table (UCI; OpenML #4541): 30,000 past stays and 2,000 current patients who appear nowhere in the history, picked in proportion to their number of stays so both sides have the same mix. The agent ranks the current patients by their risk of coming back within 30 days, finds the drivers, and tests care changes with what-if predictions. Admission and discharge codes are named, and diagnosis codes grouped, so tables and what-if rows read as "Home health service", not "6". Claude Code, Codex and pi all reached ROC AUC 0.674 on the real outcomes, with 8 of their top 10 and 36% of their top 100 readmitted (base rate 11.0%). `examples/agent_demo/task.py` now holds the files, columns, outcome labels and task steps, which the runner, scoring and page read.
+- **Demo page: less text.** The key note became a tooltip, agent cards show icon chips instead of two lines of text, the task shows as five step icons with the prompt folded, a failed tool call shows one line, and the hero lost its paragraph and footer. The predict card shows the expected split (mean probability), which says something even when almost no row crosses 50%.
+
+### Fixed
+- `examples/agent_demo/run.sh claude` failed on macOS's bash 3.2 without `CLAUDE_MODEL` set (an empty array is "unbound" under `set -u`).
+- `make_showcase.py` masks the login name, which `ls -l` output in a transcript shows.
+- Demo page tooltips escape untrusted values (column names, class labels, what-if values, tool errors) a second time, since the tooltip renders its attribute as HTML.
+
+## [0.16.0] - 2026-10-31
+### Added
+- **`tabctx-mcp`: tabular foundation models as tools for coding agents** (`tabctx/mcp_tools/`, `pip install "tabctx[mcp]"`). There are seven tools: `inspect_table`, `evaluate`, `fit_model`, `predict`, `what_if`, `explain` and `list_models`. They come in four forms, all over one implementation (`tools.TabularTools`):
+  - an MCP server (`tabctx-mcp`, stdio), for Claude Code, Codex and Gemini CLI;
+  - shell commands that print JSON (`tabctx-mcp fit ...`);
+  - `tabctx-mcp tools` and `tabctx-mcp call`, which expose and call the MCP tools without MCP;
+  - a pi extension (`tabctx-mcp pi-extension`) that registers them as native pi tools, with no shell involved.
+
+  How the tools behave:
+  - Fitted models are saved by name in `.tabctx-mcp/` (or `$TABCTX_MCP_HOME`), and fit the server again if it dropped their context.
+  - `evaluate` scores both models against scikit-learn gradient boosting on held-out rows.
+  - `predict` writes the table with prediction and probability columns, and returns the top-ranked rows (`rank_by`, `where`, `show`), with the id column found automatically.
+  - `what_if` can start from a real row (`base_file`, `base_where`) and change only some columns.
+  - `explain` is permutation importance, with all shuffled copies sent in one predict.
+  - Tables are CSV, TSV or Parquet. Blank cells are missing, and numbers stored as text become numbers.
+  - Errors reach the agent as MCP tool errors with their message: bad arguments, the deployment's 4xx answers, and file or network failures.
+  - `tabctx-mcp skill` prints a guide for agents (SKILL.md).
+
+  Further behaviour:
+  - Saved models are signed with HMAC under a per-user key (`~/.config/tabctx-mcp/signing.key`, mode 0600). A model planted in a project's `.tabctx-mcp/` is neither listed nor unpickled.
+  - `evaluate` keeps the other models' results when one fails.
+  - `predict` writes only inside the working directory, and never over its input.
+  - Class labels stay `"0"`/`"1"` when blank target cells make pandas read them as floats.
+  - Zero-padded codes such as `"02139"` stay text, and `where` filters match numbers numerically.
+  - Results are valid JSON: NaN becomes null.
+  - `explain` caps its batched predict at 60,000 rows.
+
+  `examples/agent_demo/` runs a churn task with Claude Code, Codex and pi through the prod gateway. All three reached ROC AUC 0.866-0.867 on the real outcomes, and 9 of each one's 10 top-ranked customers churned.
+- `examples/agent_demo/ui/`: a local web page that runs or replays an agent on the churn task. Each tabctx call appears as a chart card: column map, model comparison, predicted split and risk table, importance, what-if deltas. The scores against the real outcomes come last. The UI is FastAPI with Server-Sent Events and plain HTML, CSS and JS.
+- CI's unit and integration jobs install the `mcp` extra (which pulls in `client`), so the estimator tests, which were skipped there before, now run.
 - `benchmarks/bench_upload_formats.py`: the same tables through a gateway as JSON and as Parquet, interleaved, splitting each fit's time between the hop to tabctx and tabctx's own work. On prod (0.15.0, 12 fits each of 5,000 x 500 and 10,000 x 100 TabICL): Parquet bodies were 8.5 MiB vs 14.0 MiB, the hop's median 1.2 s vs 2.7 s, its worst 42 s vs 113 s, and 1 fit in 12 took over 10 s vs 3 in 12; tabctx's own work was the same. Baselines `prod-bench-0.15.0.json` and `upload-formats-0.15.0.json`.
+
+### Fixed
+- **A Parquet file's pandas index was read as data.** `DataFrame.to_parquet()` saves any index except the default 0..n-1 range as extra columns: `__index_level_0__` (after `train_test_split`, say), or the index's name. The server read those columns as features, so:
+  - the model learned from row numbers;
+  - predicting with JSON rows, or a file without the index, got a 422 ("the table has 20 columns; the training table had 21");
+  - with no `target` given, the index, which comes last, was used as the labels.
+
+  Columns the file's pandas metadata lists as its index are now dropped when the file is read (`serve/files.py`), the way pandas reads them back as the index. One named as the `target` is kept. Found through the gateway, fitting a file uploaded with `/v1/tabctx/upload`.
+
+  Other changes and limits:
+  - **Behaviour change:** a meaningful named index, such as `customer_id` or a `date` DatetimeIndex, used to be a feature and no longer is, matching pandas. To use it, save the frame after `reset_index()`, or name it as the target.
+  - When the index removal leaves too few columns, the error now says the index was removed.
+  - Pandas metadata that isn't in the shape pandas writes is ignored.
+  - **Still open:** `DataFrame.to_csv()` writes the index as an unnamed first column. CSV files have no metadata to recognize it by, so write CSVs with `index=False`.
 
 ## [0.15.0] - 2026-10-21
 ### Added

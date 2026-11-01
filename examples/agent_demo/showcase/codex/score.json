@@ -1,0 +1,8 @@
+{
+  "file": "patients_current.readmit_tabpfn.predictions.csv",
+  "rows": 2000,
+  "roc_auc": 0.6737,
+  "base_rate": 0.11,
+  "positive_in_top_10": 0.8,
+  "positive_in_top_100": 0.36
+}

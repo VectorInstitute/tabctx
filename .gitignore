@@ -8,3 +8,9 @@ build/
 .env
 .coverage
 gke-out/
+
+# tabctx-mcp: fitted models, and the agent demo's generated data and runs
+.tabctx-mcp/
+examples/agent_demo/workspace/
+examples/agent_demo/answers/
+examples/agent_demo/runs/
