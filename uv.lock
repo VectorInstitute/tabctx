@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
@@ -3425,6 +3425,12 @@ serve = [
     { name = "ray", extra = ["serve"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
+standalone = [
+    { name = "fastapi" },
+    { name = "pyarrow" },
+    { name = "python-multipart" },
+    { name = "uvicorn", extra = ["standard"] },
+]
 tabicl = [
     { name = "tabicl" },
     { name = "torch" },
@@ -3436,6 +3442,7 @@ tabpfn = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "pre-commit" },
     { name = "pyarrow" },
@@ -3448,6 +3455,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", marker = "extra == 'serve'" },
+    { name = "fastapi", marker = "extra == 'standalone'" },
     { name = "httpx", marker = "extra == 'dev'" },
     { name = "jinja2", marker = "extra == 'serve'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3" },
@@ -3455,9 +3463,11 @@ requires-dist = [
     { name = "pandas", marker = "extra == 'mcp'", specifier = ">=2.0" },
     { name = "pyarrow", marker = "extra == 'client'", specifier = ">=14" },
     { name = "pyarrow", marker = "extra == 'serve'", specifier = ">=14" },
+    { name = "pyarrow", marker = "extra == 'standalone'", specifier = ">=14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.9" },
+    { name = "python-multipart", marker = "extra == 'standalone'", specifier = ">=0.0.9" },
     { name = "ray", extras = ["serve"], marker = "extra == 'serve'", specifier = ">=2.58.0" },
     { name = "scikit-learn", marker = "extra == 'client'", specifier = ">=1.6" },
     { name = "tabctx", extras = ["client"], marker = "extra == 'mcp'" },
@@ -3466,11 +3476,13 @@ requires-dist = [
     { name = "torch", marker = "extra == 'tabicl'" },
     { name = "torch", marker = "extra == 'tabpfn'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'serve'" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'standalone'" },
 ]
-provides-extras = ["tabicl", "tabpfn", "serve", "client", "mcp", "dev"]
+provides-extras = ["tabicl", "tabpfn", "serve", "standalone", "client", "mcp", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "pre-commit" },
     { name = "pyarrow", specifier = ">=14" },
