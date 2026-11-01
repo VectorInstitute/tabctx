@@ -4,6 +4,9 @@
 ### Changed
 - **pi in the agent demo now runs on Vector's on-prem Qwen3.8 27B** (`Qwen3_8-27B` on the gateway) instead of Claude Sonnet 5.5, so one of the three agents uses an open model on Vector's own GPUs. A hosted visitor whose project lacks it still gets Sonnet. `PI_MODEL` overrides it as before.
 
+### Fixed
+- Demo page: an agent's progress notes render its **bold** and `code` instead of showing raw `**` and backticks (Qwen uses them a lot). Only those inline tags are allowed through.
+
 ## [0.17.0] - 2026-10-31
 ### Added
 - **A Ray-free standalone host**: `python -m tabctx.serve` (the new `standalone` extra: `[serve]` minus ray) serves the same routes as the Ray Serve deployment from one plain uvicorn process, for platforms that don't run Ray -- e.g. a Kubernetes Deployment behind a gateway. The service moved to `serve/service.py`, host-agnostic and importable without ray (route handlers unchanged; `ROUTE_SPECS` captures the routes at import time so `serve/standalone.py`'s `make_app()` can rebind them to a plain instance); `serve/app.py` keeps its import path and is now only the Ray host (the deployment settings and the consistent-hash affinity router). Serve-isms get standalone replacements: `GET /livez` answers 503 exactly when `check_health` would fail the replica (a dead per-GPU worker -- `/readyz` is the wrong liveness probe, it also 503s on transient pressure), and a request limiter replicates `max_ongoing_requests`/`max_queued_requests` shedding (`TABCTX_MAX_ONGOING_REQUESTS`/`TABCTX_MAX_QUEUED_REQUESTS`, defaults 8/16, probes exempt). One replica only: nothing outside Ray routes a dataset's predicts back to the replica that fit it. Unit-tested over httpx's ASGI transport in the ray-less unit environment (fit/predict inline and multipart, tenancy, 404/422, limiter, livez); the integration suite still proves `serve/app.py` on a live Ray cluster.

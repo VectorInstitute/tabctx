@@ -326,12 +326,18 @@ function drain() {
   }, delay);
 }
 
+// An agent's progress note: bold and `code` as the agent wrote them,
+// and nothing else (no images or links).
+function inlineMd(text) {
+  return DOMPurify.sanitize(marked.parseInline(text), { ALLOWED_TAGS: ["strong", "em", "code", "del"], ALLOWED_ATTR: [] });
+}
+
 function handle(ev, info) {
   const tl = $("#timeline");
   if (ev.type === "message") {
     const el = document.createElement("div");
     el.className = "msg";
-    el.innerHTML = `<span class="avatar">${esc(info.label[0])}</span><div class="body">${esc(ev.text.trim())}</div>`;
+    el.innerHTML = `<span class="avatar">${esc(info.label[0])}</span><div class="body">${inlineMd(ev.text.trim())}</div>`;
     el.onclick = () => el.classList.toggle("open");
     tl.appendChild(el);
     return;
