@@ -74,6 +74,11 @@ _METHODS = frozenset(
 # Concurrent calls per worker: its engine schedules GPU work itself (see
 # engine.py); these only need to queue and answer cheap calls promptly.
 _WORKER_THREADS = 16
+# Calls answered on their own thread instead of that pool: /readyz asks
+# every worker for a report, and fits on one device run one at a time, so
+# a backlog of more fits than the pool has threads would otherwise leave
+# the report waiting behind them and fail readiness on a healthy pod.
+_OWN_THREAD = frozenset({"report"})
 
 
 _NEVER_FITS = 1 << 62
@@ -268,7 +273,10 @@ def _worker_main(
                 )
 
     conn.send(_Ready(list(engine.backend_names), engine.default_backend, snapshot()))
-    with ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool:
+    with (
+        ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool,
+        ThreadPoolExecutor(1, thread_name_prefix=f"w-{device}-report") as reports,
+    ):
         while True:
             try:
                 msg = conn.recv()
@@ -289,7 +297,9 @@ def _worker_main(
                         )
                     )
                 continue
-            pool.submit(handle, req_id, method, args, kwargs)
+            (reports if method in _OWN_THREAD else pool).submit(
+                handle, req_id, method, args, kwargs
+            )
 
 
 # ---- serving process -------------------------------------------------------

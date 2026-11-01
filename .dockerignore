@@ -1,10 +1,11 @@
 # Build context for the two images built from this repository: the serving
-# image (Dockerfile; reads pyproject.toml, README.md, LICENSE.md, src/) and
-# the agent demo (examples/agent_demo/Dockerfile; also the demo). Everything
-# else -- local virtualenvs especially -- would bloat or break reproducible
-# builds.
+# image (Dockerfile; reads pyproject.toml, uv.lock, README.md, LICENSE.md and
+# src/) and the agent demo (examples/agent_demo/Dockerfile; also the demo).
+# Everything else -- local virtualenvs especially -- would bloat or break
+# reproducible builds.
 *
 !pyproject.toml
+!uv.lock
 !README.md
 !LICENSE.md
 !src/

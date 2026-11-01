@@ -274,3 +274,55 @@ def test_workers_share_the_pods_cpus_for_compiling(monkeypatch):
     monkeypatch.setenv("TORCHINDUCTOR_COMPILE_THREADS", "2")  # deployer's wins
     workers._share_cpus(4)
     assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "2"
+
+
+def test_report_answers_while_fits_fill_the_workers_pool(monkeypatch):
+    """/readyz asks each worker for a report. With more fits queued on a
+    device than the worker has pool threads, the report must not wait
+    behind them, or readiness fails on a healthy, busy pod."""
+    import multiprocessing as mp
+
+    import tabctx.serve.workers as workers
+    from tabctx.backends.fake import FakeBackend
+
+    release = threading.Event()
+    real_fit = FakeBackend.fit
+
+    def blocked_fit(self, X, y, task):
+        release.wait(30)
+        return real_fit(self, X, y, task)
+
+    monkeypatch.setattr(FakeBackend, "fit", blocked_fit)
+    parent, child = mp.Pipe()
+    # The worker's own loop, run on a thread so the patched fit applies.
+    loop = threading.Thread(
+        target=workers._worker_main,
+        args=(
+            child,
+            ServeSettings(backends=("fake",), devices=("cuda:0",)),
+            "cuda:0",
+            1,
+            None,
+            None,
+            0,
+        ),
+        daemon=True,
+    )
+    loop.start()
+    try:
+        assert isinstance(parent.recv(), workers._Ready)
+        n_fits = workers._WORKER_THREADS + 4
+        for i in range(n_fits):
+            parent.send((i, "fit", table(10), {"dataset_id": f"busy{i}"}))
+        parent.send((n_fits, "report", (), {}))
+        assert parent.poll(5), "report waited behind the queued fits"
+        req_id, ok, payload, _, _ = parent.recv()
+        assert (req_id, ok) == (n_fits, True) and payload["gpu_memory"] is None
+    finally:
+        release.set()
+        for _ in range(n_fits):  # drain, so the loop can shut down
+            assert parent.poll(30)
+            parent.recv()
+        parent.send(None)
+        loop.join(30)
+    assert not loop.is_alive()

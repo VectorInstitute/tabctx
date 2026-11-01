@@ -26,6 +26,8 @@ on:
     paths:
       - Dockerfile
       - .dockerignore
+      - pyproject.toml
+      - uv.lock
       - .github/workflows/docker_image.yml
       - src/**
       - pyproject.toml
@@ -50,6 +52,36 @@ jobs:
         run: |
           docker run --rm --entrypoint python tabctx-under-test -c \
             "import torch, tabicl, tabpfn, tabctx; print('torch', torch.__version__)"
+
+      - name: Locked versions and a C compiler for Triton
+        # Every package but torch's own stack is the uv.lock version, and
+        # torch.compile can build Triton's C helper (without a compiler it
+        # silently runs eager kernels instead).
+        run: |
+          docker run --rm --entrypoint sh tabctx-under-test -c '
+            set -e
+            cc --version | head -1
+            cd /opt/tabctx
+            uv export --frozen --no-dev --no-hashes --no-emit-project \
+              --extra standalone --extra tabicl --extra tabpfn -q -o /tmp/locked.txt
+            python - <<"PY"
+          import importlib.metadata as md, os, re, sysconfig
+          assert os.path.exists(os.path.join(sysconfig.get_paths()["include"], "Python.h"))
+          wrong = []
+          for line in open("/tmp/locked.txt"):
+              m = re.match(r"([A-Za-z0-9_.-]+)==([^\s;]+)", line)
+              if not m or re.match(r"(torch|triton|nvidia-)", m[1]):
+                  continue
+              try:
+                  have = md.version(m[1])
+              except md.PackageNotFoundError:
+                  continue  # a platform-marked dependency (mac, windows)
+              if have != m[2]:
+                  wrong.append(f"{m[1]} {have} != locked {m[2]}")
+          assert not wrong, wrong
+          print("locked versions match")
+          PY
+          '
 
       - name: Smoke test the server (fake backend, no GPU)
         run: |
