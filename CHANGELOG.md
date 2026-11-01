@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **pi in the agent demo now runs on Vector's on-prem Qwen3.8 27B** (`Qwen3_8-27B` on the gateway) instead of Claude Sonnet 5.5, so one of the three agents uses an open model on Vector's own GPUs. A hosted visitor whose project lacks it still gets Sonnet. `PI_MODEL` overrides it as before.
 
 ## [0.17.0] - 2026-10-31
 ### Added

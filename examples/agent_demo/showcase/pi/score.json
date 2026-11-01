@@ -1,5 +1,5 @@
 {
-  "file": "predictions.csv",
+  "file": "patients_current.readmit.predictions.csv",
   "rows": 2000,
   "roc_auc": 0.6737,
   "base_rate": 0.11,

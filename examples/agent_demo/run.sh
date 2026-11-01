@@ -14,7 +14,7 @@
 #
 # The agent's own LLM: Claude Code and Gemini CLI use your login. Codex
 # and pi go through the same Vector gateway as the tabular models, with
-# the same key (gpt-5 and claude-sonnet-5-5 by default; set CODEX_MODEL
+# the same key (gpt-5 and the on-prem Qwen3_8-27B by default; set CODEX_MODEL
 # or PI_MODEL to change). CLAUDE_VIA_GATEWAY=1 sends Claude Code there too
 # (CLAUDE_MODEL picks its model).
 #
@@ -127,14 +127,14 @@ pi)
       "baseUrl": "$GATEWAY/v1",
       "api": "openai-completions",
       "apiKey": "VP_API_KEY",
-      "models": [{"id": "${PI_MODEL:-claude-sonnet-5-5}", "contextWindow": 200000, "maxTokens": 16000}]
+      "models": [{"id": "${PI_MODEL:-Qwen3_8-27B}", "contextWindow": 262144, "maxTokens": 16000}]
     }
   }
 }
 EOF
   PI=${PI_BIN:-pi}
   # No bash: file tools and the tabctx tools only.
-  "$PI" -p --provider vector --model "${PI_MODEL:-claude-sonnet-5-5}" \
+  "$PI" -p --provider vector --model "${PI_MODEL:-Qwen3_8-27B}" \
     --tools "$tools" --mode json --no-session "$PROMPT" </dev/null >transcript.jsonl
   ;;
 esac

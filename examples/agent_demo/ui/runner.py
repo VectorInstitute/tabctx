@@ -48,7 +48,7 @@ AGENTS = {
     "pi": {
         "label": "pi",
         "binary": "pi",
-        "llm": "Sonnet 5.5 via Vector gateway",
+        "llm": "Qwen3.8 27B, on-prem via Vector gateway",
         "tools": "pi extension · no shell",
     },
 }
