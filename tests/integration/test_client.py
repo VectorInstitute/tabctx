@@ -59,7 +59,7 @@ def test_one_shot_fit_predict(two_replica_service):
 
 
 def test_model_discovery_and_selection(two_replica_service):
-    """Chat-completions-style model API: GET /v1/models lists exact
+    """Model API: GET /v1/models lists exact
     model ids; fit accepts one via `model` and echoes it back."""
     client = TabctxClient(two_replica_service)
     models = client.models()

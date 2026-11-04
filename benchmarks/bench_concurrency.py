@@ -1,28 +1,15 @@
 #!/usr/bin/env python3
-"""Concurrency sweep benchmark for a running tabctx deployment, using the
-same vocabulary this org already uses for LLM benchmarking
-(inference-platform/benchmarks/bench.py: concurrency sweep, throughput,
-latency percentiles, JSON baselines) so results are directly comparable
-across model/engine types, adapted for what tabctx's workload actually is:
+"""Concurrency sweep benchmark for a running tabctx deployment: throughput
+and latency percentiles at c=1,2,4,8,16..., saved as JSON baselines (the
+format inference-platform/benchmarks/bench.py uses). It measures:
 
-  LLM concept                    tabctx analog
-  ----------------------------   --------------------------------------------
-  TTFT (time to first token)     cold_fit_latency_ms -- one-time cost before
-                                  a NEW tenant's context is usable at all.
-                                  There's no streaming equivalent of "first
-                                  token" here; fit() is the all-or-nothing
-                                  gate a tenant must clear before anything
-                                  is servable, so it plays TTFT's role.
-  decode / inter-token latency   warm_predict_latency_ms -- recurring cost
-                                  of a request against an ALREADY-cached
-                                  context. Not streamed (no per-token
-                                  granularity), so this is a whole-response
-                                  latency, not a per-token one.
-  output tok/s (throughput)      warm_predict_ops_per_sec -- steady-state
-                                  throughput of predict() calls against
-                                  pre-warmed, distinct tenants' contexts.
-  concurrency sweep              same concept: run at c=1,2,4,8,16... and
-                                  see how throughput/latency respond.
+  cold_fit_latency_ms        one-time cost before a NEW tenant's context
+                             is usable at all: fit() is the gate a tenant
+                             must clear before anything is servable.
+  warm_predict_latency_ms    recurring cost of a request against an
+                             ALREADY-cached context (whole response).
+  warm_predict_ops_per_sec   steady-state throughput of predict() calls
+                             against pre-warmed, distinct tenants' contexts.
 
 Why sweep with DISTINCT tenants per concurrency level (not N threads
 hammering one dataset_id): the question this answers is "how does the
@@ -31,13 +18,12 @@ matters for capacity planning -- not lock contention on a single shared
 resource (that's covered separately by probe_scale.py's race tests).
 
 v1 is known to serialize all GPU work per replica via one coarse lock (see
-tabctx's README) -- unlike an LLM engine's continuous batching, throughput
+tabctx's README), so throughput
 here is NOT expected to scale with concurrency past c=1; if anything it
 should plateau or degrade (queueing) as c grows. That is the headline
 number this benchmark exists to track over time: re-run it after any
 future concurrency-model change and compare against a saved baseline to
-prove whether it actually improved, the same way inference-platform's LLM
-benchmarks compare before/after a config change.
+prove whether it actually improved.
 
 Usage:
   bench_concurrency.py --base-url http://127.0.0.1:8000 \

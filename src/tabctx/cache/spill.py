@@ -4,8 +4,7 @@ When GPU-budget pressure evicts a context, the caller-visible effect used
 to be a later 404 and a full re-fit. With a spill store attached
 (TABCTX_SPILL_DIR), capacity evictions instead serialize the context to
 local disk, and a later get() for it transparently reloads and re-admits
-it -- the same trade LLM engines make when they swap KV blocks to host
-memory.
+it.
 
 Economics, measured honestly (A100 + GCP pd-ssd, 2026-08-29): reloading
 a ~13GB spilled TabICL context took ~54s at ~250MB/s disk -- SLOWER than

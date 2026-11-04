@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>Serve tabular foundation models like you serve LLMs.</b><br>
+  <b>The serving engine for tabular foundation models.</b><br>
   Fit a table once, keep it on the GPU, and answer every later prediction in a fraction of a second.
 </p>
 
@@ -35,8 +35,8 @@ boosting with no training loop ([our numbers](https://github.com/VectorInstitute
 the training table *is* the prompt. Encoding that table is the expensive part, and it's the same
 work on every prediction. **tabctx encodes each table once, keeps the
 result in a GPU cache shared by many tables and users, and serves
-predictions against it**, behind one OpenAI-style endpoint you run on
-your own GPUs.
+predictions against it**, behind one HTTP endpoint you run on your
+own GPUs.
 
 <p align="center">
   <picture>

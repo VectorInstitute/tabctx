@@ -12,9 +12,8 @@ pretrained model, any table, no training pipeline.
 It also creates a serving problem. Encoding the training table is by far
 the most expensive part of that forward pass, and it's identical every
 time you predict against the same training set. Both TabICL and TabPFN
-know this: each can cache its own encoded training table (both call this
-their "KV cache", by analogy to LLMs) so repeat predictions skip the
-re-encode. But that cache lives inside one Python estimator object in
+know this: each can cache its own encoded training table (both call it
+their "KV cache") so repeat predictions skip the re-encode. But that cache lives inside one Python estimator object in
 one process. The moment you want to *serve* these models -- many users,
 many datasets, one GPU -- you need things a single object can't give
 you:
@@ -27,21 +26,15 @@ you:
 - route repeat requests to wherever their cached table lives when the
   service scales past one replica.
 
-**tabctx is that layer.** LLM serving went through the same transition
--- a per-request KV cache inside one process became a managed,
-multi-tenant, memory-governed resource (vLLM's PagedAttention is the
-famous example). tabctx does the analogous job for tabular ICL models,
-where the cached unit is a training table's encoding rather than a chat
-session's tokens. Hosted APIs such as Prior Labs' cache a fitted table
-on their own servers; tabctx is the open, self-hosted version, for
-several models at once, on GPUs you run.
+**tabctx is that layer.** The unit it manages is a training table's
+encoding: one context per table, cached, measured, evicted and routed
+like any other shared resource. Hosted APIs such as Prior Labs' cache a
+fitted table on their own servers; tabctx is the open, self-hosted
+version, for several models at once, on GPUs you run.
 
-Two deliberate non-choices, briefly: it isn't built *on* vLLM, because
-vLLM's machinery is specialized for autoregressive token-by-token
-generation, which these models don't do. And it isn't written in a
-"faster language": like vLLM itself, the heavy math runs in the model's
-GPU kernels, so plain Python orchestration behind a standard Ray Serve
-deployment is exactly fast enough.
+It is plain Python on purpose. The heavy math runs in the models' own
+GPU kernels, so the orchestration around them (the cache, admission,
+routing) costs little next to a fit or a predict.
 
 ## Architecture
 
