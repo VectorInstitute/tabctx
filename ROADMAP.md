@@ -12,8 +12,8 @@ gets deleted when it empties.
    the first prospective users, 2026-09-01: "upload a cohort table per
    application, run TabICLv2 once, save the kv cache to disk, let end
    users just pick their application"). What exists and what's missing
-   is spelled out in the README section "Serving many applications from
-   pre-computed contexts"; the build order that falls out of it:
+   is spelled out in docs/how-it-works.md, "Serving many applications
+   from pre-computed contexts"; the build order that falls out of it:
    1. A `ContextStore` protocol (persist / load / list / delete by id)
       with a local-directory implementation first and an object-storage
       one second; the existing `DiskSpillStore` becomes the eviction
