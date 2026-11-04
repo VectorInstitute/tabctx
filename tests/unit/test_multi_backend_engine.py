@@ -1,6 +1,6 @@
 """Unit tests for multi-backend dispatch in TabctxEngine: several models
 served over ONE shared cache and GPU budget, contexts remembering which
-backend fit them (the chat-completions-style serving shape)."""
+backend fit them."""
 
 import pytest
 

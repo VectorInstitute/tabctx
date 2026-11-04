@@ -47,10 +47,8 @@ gets deleted when it empties.
 
 ## Throughput and table size: multi-GPU and CUDA-level work
 
-The LLM serving engines (vLLM, SGLang, TensorRT-LLM) got their gains first
-from memory management and scheduling (paged KV, continuous batching,
-prefix reuse) and then from CUDA kernels. tabctx already has the
-scheduling layer (context cache, usage-aware admission, evict-ahead,
+Serving gains come first from memory management and scheduling, then
+from CUDA kernels. tabctx already has the scheduling layer (context cache, usage-aware admission, evict-ahead,
 spill, same-context coalescing). This track adds multi-GPU replicas and
 the kernel work. Everything is developed and tested on a GKE GPU node
 first, then validated on prod's A40s (Ampere sm_86: no FlashAttention-3,

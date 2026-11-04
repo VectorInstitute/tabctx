@@ -4,9 +4,8 @@ This is the core thing tabctx exists to add: TabICL and TabPFN both cache
 the encoded training context inside a single fitted estimator object
 (fit-once, predict-many), but that cache lives in exactly one process with
 no notion of capacity, eviction, or sharing across concurrent training sets.
-ContextCacheManager makes that a real multi-tenant resource -- the direct
-analog of what PagedAttention did for per-request LLM KV caches, scoped here
-to per-training-set tabular ICL contexts.
+ContextCacheManager makes that a real multi-tenant resource, one context
+per training set.
 
 Locking. The cache's lock guards only its bookkeeping (entries, usage,
 pins, ids in transit); spill reads and writes run outside it. Scheduling

@@ -179,7 +179,7 @@ class FitRequest(BaseModel):
         default=None, description=_TASK_DOC
     )
     dataset_id: str | None = None
-    # Which model serves this dataset (chat-completions style): an exact
+    # Which model serves this dataset: an exact
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
     # the deployment's first-listed model.
     model: str | None = None
@@ -771,8 +771,8 @@ class TabctxService:
 
     @fastapi_app.get("/v1/models")
     def models(self):
-        """Which models this deployment serves (chat-completions style
-        discovery): pass one of these ids as `model` in fit requests.
+        """Which models this deployment serves: pass one of these ids
+        as `model` in fit requests.
         The first is the default."""
         return {
             "data": [
