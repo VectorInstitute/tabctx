@@ -2,7 +2,7 @@
 
     from tabctx import TabctxClassifier
 
-    clf = TabctxClassifier(model="tabpfn-3.5")   # TABCTX_BASE_URL, TABCTX_API_KEY
+    clf = TabctxClassifier()          # TABCTX_BASE_URL, TABCTX_API_KEY
     clf.fit(X_train, y_train)                    # DataFrame or array; text and NaN fine
     clf.predict_proba(X_test)
 
@@ -52,7 +52,6 @@ from tabctx.table_files import (
 )
 from tabctx.types import Task
 
-DEFAULT_MODEL = "tabpfn-3.5"
 # The Vector gateway takes request bodies up to 30 MiB; this leaves room
 # for the multipart envelope around the file.
 MAX_REQUEST_BYTES = 29 * 1024 * 1024
@@ -67,12 +66,13 @@ class _TabctxEstimator(BaseEstimator):
 
     def __init__(
         self,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         client: TabctxClient | None = None,
         max_request_bytes: int | None = MAX_REQUEST_BYTES,
     ) -> None:
         """model: a model id from client.models() ("tabpfn-3.5",
-        "tabicl-v2"). client: where to send the tables; default
+        "tabicl-v2"); default: the deployment's default model, asked at
+        fit and kept as model_. client: where to send the tables; default
         TabctxClient(), configured by TABCTX_BASE_URL and TABCTX_API_KEY.
         max_request_bytes: the largest table file to send in one request
         (the Vector gateway takes 30 MiB bodies); None for no limit."""
@@ -105,10 +105,10 @@ class _TabctxEstimator(BaseEstimator):
                 f"can be at most {limit:,} (max_request_bytes). "
                 "Fit on fewer rows."
             )
+        self.model_ = self.model or self._client().default_model()
         digest = hashlib.sha256(data)
-        digest.update(f"\0{self.model}\0{self._task}".encode())
+        digest.update(f"\0{self.model_}\0{self._task}".encode())
         self.dataset_id_ = f"sklearn-{digest.hexdigest()[:32]}"
-        self.model_ = self.model
         self.n_features_in_ = len(cols.names)
         self._names = cols.names
         self._named = cols.named

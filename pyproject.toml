@@ -63,8 +63,9 @@ standalone = [
     "python-multipart>=0.0.9",
 ]
 # The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
-# tables as Parquet (without it, gzip CSV).
-client = ["scikit-learn>=1.6", "pyarrow>=14"]
+# tables as Parquet (without it, gzip CSV). pandas: the estimators take
+# DataFrames, and scikit-learn's own loaders (fetch_openml) return them.
+client = ["scikit-learn>=1.6", "pyarrow>=14", "pandas>=2.0"]
 # tabctx-mcp: the models as tools for coding agents (MCP server and CLI).
 mcp = ["tabctx[client]", "pandas>=2.0", "mcp>=2.3"]
 dev = ["pytest>=7.0", "pytest-cov", "httpx"]

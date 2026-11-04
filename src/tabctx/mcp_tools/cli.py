@@ -28,7 +28,7 @@ from typing import Any
 from mcp.server.mcpserver.exceptions import ToolError
 
 from tabctx.mcp_tools.tables import json_safe
-from tabctx.mcp_tools.tools import MODELS, TabularTools
+from tabctx.mcp_tools.tools import TabularTools
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -63,13 +63,15 @@ def _parser() -> argparse.ArgumentParser:
     table("inspect", "describe a table", target=False)
 
     s = table("evaluate", "hold out rows and score each model")
-    s.add_argument("--models", default=",".join(MODELS))
+    s.add_argument(
+        "--models", help="comma-separated model ids; default: every model served"
+    )
     s.add_argument("--no-baseline", action="store_true")
     s.add_argument("--test-size", type=float, default=0.25)
     model_opts(s)
 
     s = table("fit", "fit a model and keep it under a name")
-    s.add_argument("--model", default=MODELS[0], help=f"one of {list(MODELS)}")
+    s.add_argument("--model", help="model id; default: the server's default")
     s.add_argument("--name")
     model_opts(s)
 
@@ -92,7 +94,7 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     s = table("explain", "rank columns by permutation importance")
-    s.add_argument("--model", default=MODELS[0], help=f"one of {list(MODELS)}")
+    s.add_argument("--model", help="model id; default: the server's default")
     s.add_argument("--top", type=int, default=20)
     model_opts(s)
     return p
@@ -136,7 +138,7 @@ def run(
         return tools.evaluate(
             args.path,
             args.target,
-            _split(args.models),
+            _split(args.models) if args.models is not None else None,
             not args.no_baseline,
             args.test_size,
             _split(args.drop),

@@ -106,6 +106,30 @@ class PredictResult:
     served_by: str | None
 
 
+# The tabular models tabctx serves, preferred first. A gateway in front of
+# tabctx may list them among other models (Vector's lists LLMs too) and
+# without tabctx's `default` mark; this list picks them out there.
+KNOWN_MODELS = ("tabpfn-3.5", "tabicl-v2")
+
+
+def tabular_models_in(models: list[dict]) -> tuple[list[str], str | None]:
+    """(the tabular model ids in a /v1/models listing, the default one).
+
+    tabctx's own listing marks every entry with `default`, so its entries
+    are exactly its models and one of them is the default. A listing
+    without that mark (a gateway's whole catalog, or a tabctx older than
+    the mark) is narrowed to KNOWN_MODELS, and the default is the first
+    of them that it lists."""
+    if any("default" in m for m in models):
+        ids = [m["id"] for m in models if "default" in m]
+        marked = [m["id"] for m in models if m.get("default") is True]
+        default = (marked or ids)[0] if ids else None
+        return ids, default
+    listed = [m["id"] for m in models if m["id"] in KNOWN_MODELS]
+    preferred = [i for i in KNOWN_MODELS if i in listed]
+    return listed, preferred[0] if preferred else None
+
+
 class TabctxClient:
     def __init__(
         self,
@@ -337,6 +361,23 @@ class TabctxClient:
         """The models this deployment serves; pass an id as fit(model=...)."""
         return self._get("/v1/models")["data"]
 
+    def tabular_models(self) -> list[str]:
+        """The ids of the tabular models behind this URL, in the order
+        GET /v1/models lists them (see tabular_models_in)."""
+        return tabular_models_in(self.models())[0]
+
+    def default_model(self) -> str:
+        """The model to use when none is named: the one tabctx's
+        /v1/models marks as default; through a gateway that marks none,
+        the first of KNOWN_MODELS it lists."""
+        default = tabular_models_in(self.models())[1]
+        if default is None:
+            raise TabctxError(
+                "GET /v1/models lists no tabular model this client knows "
+                f"({', '.join(KNOWN_MODELS)}); pass a model id"
+            )
+        return default
+
     def limits(self) -> dict:
         """Capability discovery: what shapes will this deployment admit?
         Use it to validate a table client-side before uploading it."""
@@ -345,7 +386,8 @@ class TabctxClient:
     # ---- internals -------------------------------------------------------
 
     def _get(self, path: str) -> dict:
-        return self._request(path, None, self._auth())
+        # GETs are safe to repeat, so they retry on 503 like fit and predict.
+        return self._with_retries(lambda: self._request(path, None, self._auth()))
 
     def _headers(
         self, session_id: str | None, content_type: str = "application/json"

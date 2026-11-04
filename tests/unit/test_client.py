@@ -503,6 +503,49 @@ class TestGetEndpoints:
         models = TabctxClient("http://localhost:8000").models()
         assert models == [{"id": "tabicl-v2", "object": "model", "default": True}]
 
+    # A gateway in front of tabctx (Vector's) lists its whole catalog: LLMs
+    # and the tabular models, none marked default.
+    GATEWAY = [
+        {"id": "accounts/fireworks/models/glm-5p2", "owned_by": "fireworks"},
+        {"id": "gpt-5", "owned_by": "openai"},
+        {"id": "tabicl-v2", "owned_by": "on_prem"},
+        {"id": "tabpfn-3.5", "owned_by": "on_prem"},
+    ]
+
+    @pytest.mark.parametrize(
+        "data, tabular, default",
+        [
+            # tabctx's own listing: the marked model, wherever it is listed.
+            (
+                [
+                    {"id": "tabicl-v2", "default": False},
+                    {"id": "tabpfn-3.5", "default": True},
+                ],
+                ["tabicl-v2", "tabpfn-3.5"],
+                "tabpfn-3.5",
+            ),
+            # A tabctx-only deployment of one model.
+            ([{"id": "tabicl-v2", "default": True}], ["tabicl-v2"], "tabicl-v2"),
+            # A gateway: only the known tabular models, TabPFN preferred.
+            (GATEWAY, ["tabicl-v2", "tabpfn-3.5"], "tabpfn-3.5"),
+            # A gateway that offers only TabICL.
+            (GATEWAY[:3], ["tabicl-v2"], "tabicl-v2"),
+        ],
+    )
+    def test_tabular_and_default_model(self, monkeypatch, data, tabular, default):
+        _install(monkeypatch, lambda req: _json_response({"data": data}))
+        client = TabctxClient("http://localhost:8000")
+        assert client.tabular_models() == tabular
+        assert client.default_model() == default
+
+    @pytest.mark.parametrize("data", [[], GATEWAY[:2]])
+    def test_no_tabular_model_to_default_to(self, monkeypatch, data):
+        _install(monkeypatch, lambda req: _json_response({"data": data}))
+        client = TabctxClient("http://localhost:8000")
+        assert client.tabular_models() == []
+        with pytest.raises(TabctxError, match="no tabular model"):
+            client.default_model()
+
     def test_limits(self, monkeypatch):
         _install(monkeypatch, lambda req: _json_response({"models": ["tabicl-v2"]}))
         assert TabctxClient("http://localhost:8000").limits() == {
@@ -528,6 +571,23 @@ class TestBackpressureRetry:
         assert attempts["n"] == 3
         # Exponential backoff: 0.01 * 2**0, 0.01 * 2**1.
         assert no_real_sleep == [0.01, 0.02]
+
+    def test_a_get_retries_on_503_too(self, monkeypatch, no_real_sleep):
+        # The estimators ask /v1/models on every fit without a model; a
+        # busy ingress must not fail that fit when a named model's would
+        # have retried.
+        attempts = {"n": 0}
+
+        def handler(req):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise _http_error(503, {"detail": "replica busy"})
+            return _json_response({"data": [{"id": "tabicl-v2", "default": True}]})
+
+        _install(monkeypatch, handler)
+        client = TabctxClient("http://localhost:8000", retry_backoff_s=0.01)
+        assert client.default_model() == "tabicl-v2"
+        assert attempts["n"] == 2
 
     def test_exhausts_retries_raises_backpressure_error(
         self, monkeypatch, no_real_sleep

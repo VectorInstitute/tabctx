@@ -4,6 +4,20 @@
 ### Changed
 - **A shorter README with a logo and a headline figure.** The front page now has the pitch, a fit-vs-predict chart from a saved A40 sweep (`benchmarks/plot_readme_figure.py` draws it from `benchmarks/baselines/sweep-a40x4-tabicl-v2.json`), a quickstart that runs on a laptop with no API key (checked against a fresh install of 0.17.1 from PyPI), the agent tools, a comparison with in-process models and hosted APIs, and each model's weights license. The detail moved, unchanged, into `docs/serving.md`, `docs/how-it-works.md`, `docs/benchmarks.md` and `docs/coding-agents.md`. Images use absolute URLs so the PyPI page shows them too.
 
+### Fixed
+- **The estimators and `tabctx-mcp` use the deployment's own default model** when none is named, instead of always `tabpfn-3.5`. Before, `TabctxClassifier()`, `TabctxRegressor()` and the agent tools' `fit_model`/`explain` failed with a 422 on any deployment that doesn't serve TabPFN, and `evaluate` reported an error for TabPFN there.
+  - `model=None` (the default) is resolved at fit time from `GET /v1/models`, and the estimators record the answer as `model_`. The context id is computed from that resolved model, so naming the default explicitly reuses the same cached context.
+  - tabctx's own listing marks its default. A gateway lists its whole catalog with no mark: Vector's lists 65 LLMs beside `tabicl-v2` and `tabpfn-3.5`. There, the client narrows the list to the tabular models it knows (`tabctx.client.KNOWN_MODELS`) and prefers `tabpfn-3.5`, as before.
+  - `evaluate` with no `models` runs every tabular model served, and never a gateway's LLMs.
+  - New: `TabctxClient.tabular_models()` and `TabctxClient.default_model()`.
+  - GET requests now retry on 503, like fit and predict.
+  - The agent tools check their arguments and read the table before asking the server.
+- **`pip install "tabctx[client]"` installs pandas.** The estimators are built for DataFrames, and scikit-learn's loaders (`fetch_openml(as_frame=True)`) need pandas, so the documented quickstart failed on a clean install.
+- **`from tabctx import TabctxClient`** works (also `PredictResult`). Before, the client could only be imported from `tabctx.client`.
+
+### Removed
+- `tabctx.estimators.DEFAULT_MODEL` and `tabctx.mcp_tools.tools.MODELS`: the default now comes from the deployment. `tabctx.client.KNOWN_MODELS` lists the tabular model ids the client recognises in a gateway's catalog.
+
 ## [0.17.1] - 2026-11-01
 ### Changed
 - **pi in the agent demo now runs on Vector's on-prem Qwen3.8 27B** (`Qwen3_8-27B` on the gateway) instead of Claude Sonnet 5.5, so one of the three agents uses an open model on Vector's own GPUs. A hosted visitor whose project lacks it still gets Sonnet. `PI_MODEL` overrides it as before.

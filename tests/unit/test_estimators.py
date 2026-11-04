@@ -19,7 +19,7 @@ from sklearn.model_selection import GridSearchCV, cross_val_score
 
 from tabctx import TabctxClassifier, TabctxRegressor
 from tabctx.client import TabctxClient
-from tabctx.errors import DatasetNotFoundError
+from tabctx.errors import DatasetNotFoundError, InvalidInputError
 
 
 @pytest.fixture
@@ -257,3 +257,72 @@ class TestApiKey:
         monkeypatch.delenv("TABCTX_BASE_URL")
         with pytest.raises(ValueError, match="TABCTX_BASE_URL"):
             TabctxClient()
+
+
+class TestDefaultModel:
+    """Without a model, the estimators use the deployment's default, so a
+    deployment that serves only TabICL works with no arguments."""
+
+    TABICL_ONLY = [{"id": "tabicl-v2", "object": "model", "default": True}]
+
+    def test_uses_the_deployments_default_model(self, tmp_path):
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        clf = TabctxClassifier(client=deployment).fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.model_ == "tabicl-v2"
+        assert clf.model is None  # the parameter stays as given (clone)
+        assert deployment.fits[-1]["model"] == "tabicl-v2"
+        assert clf.predict([[1.0]]).tolist() == ["b"]
+
+    def test_regressor_too(self, tmp_path):
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        reg = TabctxRegressor(client=deployment).fit([[0.0], [1.0]], [0.5, 2.5])
+        assert reg.model_ == "tabicl-v2"
+
+    def test_clone_and_params_keep_the_unset_model(self, tmp_path):
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        clf = TabctxClassifier(client=deployment).fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.get_params()["model"] is None
+        copy_ = clone(clf)
+        assert copy_.model is None and not hasattr(copy_, "model_")
+
+    def test_through_a_gateway_catalog(self, tmp_path):
+        # LLMs listed first and nothing marked default: TabPFN, not an LLM.
+        catalog = [
+            {"id": "gpt-5", "object": "model", "owned_by": "openai"},
+            {"id": "tabicl-v2", "object": "model", "owned_by": "on_prem"},
+            {"id": "tabpfn-3.5", "object": "model", "owned_by": "on_prem"},
+        ]
+        deployment = FakeDeployment(tmp_path, models=catalog)
+        clf = TabctxClassifier(client=deployment).fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.model_ == "tabpfn-3.5"
+
+    def test_an_explicit_model_is_sent_as_given(self, deployment):
+        clf = TabctxClassifier(model="tabicl-v2", client=deployment)
+        clf.fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.model_ == "tabicl-v2"
+        assert deployment.fits[-1]["model"] == "tabicl-v2"
+
+    def test_the_context_id_follows_the_resolved_model(self, tmp_path):
+        # Fitting with the default and naming the same model explicitly is
+        # the same context, so the server's cache is reused.
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        X, y = [[0.0], [1.0]], ["a", "b"]
+        implicit = TabctxClassifier(client=deployment).fit(X, y)
+        explicit = TabctxClassifier(model="tabicl-v2", client=deployment).fit(X, y)
+        assert implicit.dataset_id_ == explicit.dataset_id_
+
+    def test_a_model_the_deployment_lacks_is_refused(self, tmp_path):
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        with pytest.raises(InvalidInputError, match="serves"):
+            TabctxClassifier(model="tabpfn-3.5", client=deployment).fit(
+                [[0.0], [1.0]], ["a", "b"]
+            )
+
+
+def test_the_client_is_importable_from_the_package():
+    import tabctx
+    from tabctx import PredictResult, TabctxClient
+
+    assert TabctxClient is tabctx.client.TabctxClient
+    assert PredictResult is tabctx.client.PredictResult
+    assert {"TabctxClient", "PredictResult"} <= set(tabctx.__all__)

@@ -5,8 +5,8 @@ description: Predict from tables (CSV/Parquet) with tabular foundation models (T
 
 # Tabular predictions with tabctx
 
-`tabctx-mcp` gives you two tabular foundation models, `tabpfn-3.5` (the
-default) and `tabicl-v2`. They learn from a labelled table in one call,
+`tabctx-mcp` gives you tabular foundation models, such as `tabpfn-3.5`
+and `tabicl-v2`; a tool given no model uses the server's default. They learn from a labelled table in one call,
 on a GPU server: there is no training loop and no hyperparameters, and
 they are usually as accurate as a tuned gradient-boosting model, or more.
 Prefer them to writing your own model code.
