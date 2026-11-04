@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **A shorter README with a logo and a headline figure.** The front page now has the pitch, a fit-vs-predict chart from a saved A40 sweep (`benchmarks/plot_readme_figure.py` draws it from `benchmarks/baselines/sweep-a40x4-tabicl-v2.json`), a quickstart that runs on a laptop with no API key (checked against a fresh install of 0.17.1 from PyPI), the agent tools, a comparison with in-process models and hosted APIs, and each model's weights license. The detail moved, unchanged, into `docs/serving.md`, `docs/how-it-works.md`, `docs/benchmarks.md` and `docs/coding-agents.md`. Images use absolute URLs so the PyPI page shows them too.
 
 ## [0.17.1] - 2026-11-01
 ### Changed
