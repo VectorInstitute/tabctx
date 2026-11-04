@@ -68,7 +68,7 @@ own GPUs.
 Run a server on your laptop (CPU works; it uses the GPU if there is one):
 
 ```bash
-pip install "tabctx[standalone,tabicl,client]" pandas
+pip install "tabctx[standalone,tabicl,client]"
 TABCTX_BACKEND=tabicl python -m tabctx.serve        # http://127.0.0.1:8000
 ```
 
@@ -77,13 +77,12 @@ Then use it like any scikit-learn model:
 ```python
 from sklearn.datasets import fetch_openml
 from sklearn.model_selection import train_test_split
-from tabctx import TabctxClassifier
-from tabctx.client import TabctxClient
+from tabctx import TabctxClassifier, TabctxClient
 
 X, y = fetch_openml("credit-g", version=1, as_frame=True, return_X_y=True)
 X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
 
-clf = TabctxClassifier(model="tabicl-v2", client=TabctxClient("http://127.0.0.1:8000"))
+clf = TabctxClassifier(client=TabctxClient("http://127.0.0.1:8000"))  # the server's default model
 clf.fit(X_train, y_train)          # encodes the table once, on the server
 clf.score(X_test, y_test)          # 0.77, no training loop, no tuning
 clf.predict_proba(X_test[:5])      # reuses the cached context: ~50 ms on a laptop
