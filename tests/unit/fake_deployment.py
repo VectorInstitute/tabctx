@@ -34,8 +34,9 @@ class FakeDeployment:
     def models(self):
         return self.served
 
-    # The real client's rule, over this fake's model list.
+    # The real client's rules, over this fake's model list.
     default_model = TabctxClient.default_model
+    tabular_models = TabctxClient.tabular_models
 
     def fit_file(self, file, target=None, dataset_id=None, model=None, task=None):
         ids = [m["id"] for m in self.served]

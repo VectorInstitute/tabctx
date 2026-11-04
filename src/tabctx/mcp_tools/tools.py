@@ -90,9 +90,9 @@ class TabularTools:
         """Fit a model on every labelled row of the table and keep it
         under a name for predict and what_if. model: default, the
         deployment's default model."""
-        model = model or self._client().default_model()
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
+        model = model or self._client().default_model()
         name = name or _default_name(path, target, model)
         check_name(name)
         estimator = _estimator(task, model, self.client)
@@ -240,15 +240,17 @@ class TabularTools:
         score it on the held-out rows; with baseline, a scikit-learn
         gradient-boosting model as well, for comparison. models: default,
         every model the deployment serves."""
-        if models is None:
-            models = [m["id"] for m in self._client().models()]
-        if not models and not baseline:
+        if models is not None and not models and not baseline:
             raise ValueError("nothing to evaluate: give models, or baseline=True")
         if not 0 < test_size < 1:
             raise ValueError(f"test_size must be between 0 and 1, got {test_size}")
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
         Xtr, Xte, ytr, yte = _split(X, y, task, test_size, seed)
+        if models is None:
+            models = self._client().tabular_models()
+            if not models and not baseline:
+                raise ValueError("the deployment serves no tabular model")
         runs = [
             (m, lambda m=m: (_estimator(task, m, self.client), Xtr, Xte))
             for m in models
@@ -314,7 +316,6 @@ class TabularTools:
         held-out rows and measure how much the score drops. All shuffled
         copies go to the server in one predict. model: default, the
         deployment's default model."""
-        model = model or self._client().default_model()
         if repeats < 1 or max_rows < 1:
             raise ValueError("repeats and max_rows must be at least 1")
         frame = read_table(path)
@@ -325,6 +326,7 @@ class TabularTools:
         max_rows = max(1, min(max_rows, MAX_EXPLAIN_ROWS // copies))
         if len(Xte) > max_rows:
             Xte, yte = Xte.iloc[:max_rows], yte.iloc[:max_rows]
+        model = model or self._client().default_model()
         estimator = _estimator(task, model, self.client).fit(Xtr, ytr)
         name, score = _importance_score(task, estimator, yte)
 

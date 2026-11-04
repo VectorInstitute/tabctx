@@ -138,7 +138,7 @@ def run(
         return tools.evaluate(
             args.path,
             args.target,
-            _split(args.models) if args.models else None,
+            _split(args.models) if args.models is not None else None,
             not args.no_baseline,
             args.test_size,
             _split(args.drop),

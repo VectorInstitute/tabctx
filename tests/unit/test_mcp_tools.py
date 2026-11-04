@@ -493,3 +493,29 @@ def test_explain_defaults_to_the_deployments_model(tabicl_only, history):
     out = tools.explain(history, "churn", drop=["customer_id"], repeats=1)
     assert out["model"] == "tabicl-v2"
     assert deployment.fits[-1]["model"] == "tabicl-v2"
+
+
+def test_evaluate_through_a_gateway_skips_its_other_models(tmp_path, history):
+    catalog = [
+        {"id": "gpt-5", "object": "model", "owned_by": "openai"},
+        {"id": "tabicl-v2", "object": "model", "owned_by": "on_prem"},
+        {"id": "tabpfn-3.5", "object": "model", "owned_by": "on_prem"},
+    ]
+    deployment = FakeDeployment(tmp_path, models=catalog)
+    tools = TabularTools(ModelStore(tmp_path / "g"), client=deployment)
+    out = tools.evaluate(history, "churn", drop=["customer_id"])
+    assert [r["model"] for r in out["results"]] == ["tabicl-v2", "tabpfn-3.5", BASELINE]
+
+
+def test_a_bad_argument_fails_before_asking_the_server(tmp_path, history):
+    class Unreachable(FakeDeployment):
+        def models(self):
+            raise AssertionError("asked the server before checking arguments")
+
+    tools = TabularTools(ModelStore(tmp_path / "u"), client=Unreachable(tmp_path))
+    with pytest.raises(ValueError, match="repeats"):
+        tools.explain(history, "churn", repeats=0)
+    with pytest.raises(Exception, match="nope"):
+        tools.fit_model(history, "nope")
+    with pytest.raises(ValueError, match="nothing to evaluate"):
+        tools.evaluate(history, "churn", models=[], baseline=False)

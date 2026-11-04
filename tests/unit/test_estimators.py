@@ -278,6 +278,24 @@ class TestDefaultModel:
         reg = TabctxRegressor(client=deployment).fit([[0.0], [1.0]], [0.5, 2.5])
         assert reg.model_ == "tabicl-v2"
 
+    def test_clone_and_params_keep_the_unset_model(self, tmp_path):
+        deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
+        clf = TabctxClassifier(client=deployment).fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.get_params()["model"] is None
+        copy_ = clone(clf)
+        assert copy_.model is None and not hasattr(copy_, "model_")
+
+    def test_through_a_gateway_catalog(self, tmp_path):
+        # LLMs listed first and nothing marked default: TabPFN, not an LLM.
+        catalog = [
+            {"id": "gpt-5", "object": "model", "owned_by": "openai"},
+            {"id": "tabicl-v2", "object": "model", "owned_by": "on_prem"},
+            {"id": "tabpfn-3.5", "object": "model", "owned_by": "on_prem"},
+        ]
+        deployment = FakeDeployment(tmp_path, models=catalog)
+        clf = TabctxClassifier(client=deployment).fit([[0.0], [1.0]], ["a", "b"])
+        assert clf.model_ == "tabpfn-3.5"
+
     def test_an_explicit_model_is_sent_as_given(self, deployment):
         clf = TabctxClassifier(model="tabicl-v2", client=deployment)
         clf.fit([[0.0], [1.0]], ["a", "b"])

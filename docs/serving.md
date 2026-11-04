@@ -15,7 +15,7 @@ pip install "tabctx[serve]"      # + Ray Serve deployment (ray[serve], fastapi,
                                  #   pyarrow and python-multipart for table files)
 pip install "tabctx[standalone]" # + the Ray-free host (python -m tabctx.serve):
                                  #   [serve] minus ray, single replica only
-pip install "tabctx[client]"     # + scikit-learn estimators (scikit-learn, pyarrow)
+pip install "tabctx[client]"     # + scikit-learn estimators (scikit-learn, pyarrow, pandas)
 pip install "tabctx[dev]"        # + test dependencies
 ```
 
