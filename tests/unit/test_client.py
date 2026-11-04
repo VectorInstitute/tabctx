@@ -503,6 +503,30 @@ class TestGetEndpoints:
         models = TabctxClient("http://localhost:8000").models()
         assert models == [{"id": "tabicl-v2", "object": "model", "default": True}]
 
+    @pytest.mark.parametrize(
+        "data, expected",
+        [
+            # The one /v1/models marks, wherever it is listed.
+            (
+                [
+                    {"id": "tabicl-v2", "default": False},
+                    {"id": "tabpfn-3.5", "default": True},
+                ],
+                "tabpfn-3.5",
+            ),
+            # A deployment that marks none (older servers): the first.
+            ([{"id": "tabicl-v2"}, {"id": "tabpfn-3.5"}], "tabicl-v2"),
+        ],
+    )
+    def test_default_model(self, monkeypatch, data, expected):
+        _install(monkeypatch, lambda req: _json_response({"data": data}))
+        assert TabctxClient("http://localhost:8000").default_model() == expected
+
+    def test_default_model_of_a_deployment_without_models(self, monkeypatch):
+        _install(monkeypatch, lambda req: _json_response({"data": []}))
+        with pytest.raises(TabctxError, match="no models"):
+            TabctxClient("http://localhost:8000").default_model()
+
     def test_limits(self, monkeypatch):
         _install(monkeypatch, lambda req: _json_response({"models": ["tabicl-v2"]}))
         assert TabctxClient("http://localhost:8000").limits() == {

@@ -3419,6 +3419,7 @@ dependencies = [
 
 [package.optional-dependencies]
 client = [
+    { name = "pandas" },
     { name = "pyarrow" },
     { name = "scikit-learn" },
 ]
@@ -3476,6 +3477,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'serve'" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3" },
     { name = "numpy", specifier = ">=1.24" },
+    { name = "pandas", marker = "extra == 'client'", specifier = ">=2.0" },
     { name = "pandas", marker = "extra == 'mcp'", specifier = ">=2.0" },
     { name = "pyarrow", marker = "extra == 'client'", specifier = ">=14" },
     { name = "pyarrow", marker = "extra == 'serve'", specifier = ">=14" },

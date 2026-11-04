@@ -43,6 +43,16 @@ def test_classifier_on_a_dataframe_with_text_and_missing(two_replica_service):
     assert clf.score(X, y) == 0.75
 
 
+def test_without_a_model_the_deployments_default_is_used(two_replica_service):
+    # The deployment serves only the fake backend: an estimator that names
+    # no model must use it (asked from GET /v1/models), not a model the
+    # deployment lacks.
+    X, y = churn()
+    clf = TabctxClassifier(client=TabctxClient(two_replica_service)).fit(X, y)
+    assert clf.model_ == "fake"
+    assert clf.predict(X.iloc[:2]).tolist() == ["stay"] * 2
+
+
 def test_regressor_and_numpy_input(two_replica_service):
     X = np.random.default_rng(1).normal(size=(30, 4))
     y = np.arange(30, dtype=float)

@@ -337,6 +337,14 @@ class TabctxClient:
         """The models this deployment serves; pass an id as fit(model=...)."""
         return self._get("/v1/models")["data"]
 
+    def default_model(self) -> str:
+        """The id of the model a request without one gets: the one
+        /v1/models marks as default, else the first it lists."""
+        models = self.models()
+        if not models:
+            raise TabctxError("the deployment lists no models (GET /v1/models)")
+        return next((m["id"] for m in models if m.get("default")), models[0]["id"])
+
     def limits(self) -> dict:
         """Capability discovery: what shapes will this deployment admit?
         Use it to validate a table client-side before uploading it."""

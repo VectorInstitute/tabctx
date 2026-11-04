@@ -2,8 +2,8 @@
 tests (estimators, tabctx-mcp): it reads the files the client sends and
 encodes them with the server's own schema code."""
 
-from tabctx.client import PredictResult
-from tabctx.errors import DatasetNotFoundError
+from tabctx.client import PredictResult, TabctxClient
+from tabctx.errors import DatasetNotFoundError, InvalidInputError
 from tabctx.schema import TableSchema
 from tabctx.serve.files import read_table, read_training_table
 
@@ -13,8 +13,14 @@ class FakeDeployment:
     results depend on how the rows were encoded); regression returns the
     first encoded feature."""
 
-    def __init__(self, tmp_path, classes_order=None):
+    def __init__(self, tmp_path, classes_order=None, models=None):
+        """models: GET /v1/models' data; default both models, TabPFN the
+        default, as a full deployment lists them."""
         self.tmp_path = tmp_path
+        self.served = models or [
+            {"id": "tabpfn-3.5", "object": "model", "default": True},
+            {"id": "tabicl-v2", "object": "model", "default": False},
+        ]
         self.contexts: dict[str, tuple] = {}
         self.fits: list[dict] = []
         self.predict_calls: list[int] = []
@@ -25,7 +31,18 @@ class FakeDeployment:
         p.write_bytes(data)
         return p
 
+    def models(self):
+        return self.served
+
+    # The real client's rule, over this fake's model list.
+    default_model = TabctxClient.default_model
+
     def fit_file(self, file, target=None, dataset_id=None, model=None, task=None):
+        ids = [m["id"] for m in self.served]
+        if model is not None and model not in ids:
+            raise InvalidInputError(
+                f"unknown backend {model!r}; this deployment serves {ids}"
+            )
         features, y = read_training_table(self._path(file), target, task)
         schema, _ = TableSchema.learn(features.columns, features.names)
         self.fits.append({"dataset_id": dataset_id, "model": model, "task": task})

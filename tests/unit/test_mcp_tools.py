@@ -457,3 +457,39 @@ def test_fitting_a_name_again_says_it_replaced_it(tools, history):
     )
     again = tools.fit_model(history, "churn", name="c", drop=["customer_id"])
     assert "replaced the earlier model named 'c'" in again["note"]
+
+
+@pytest.fixture
+def tabicl_only(tmp_path):
+    deployment = FakeDeployment(
+        tmp_path, models=[{"id": "tabicl-v2", "object": "model", "default": True}]
+    )
+    return TabularTools(ModelStore(tmp_path / "s"), client=deployment), deployment
+
+
+def test_fit_defaults_to_the_deployments_model(tabicl_only, history):
+    tools, deployment = tabicl_only
+    out = tools.fit_model(history, "churn", drop=["customer_id"])
+    assert deployment.fits[-1]["model"] == "tabicl-v2"
+    assert out["model"] == "tabicl-v2" and "tabicl-v2" in out["name"]
+    assert tools.store.load(out["name"])[0].model == "tabicl-v2"
+
+
+def test_evaluate_defaults_to_every_model_served(tabicl_only, history):
+    tools, _ = tabicl_only
+    out = tools.evaluate(history, "churn", drop=["customer_id"])
+    assert [r["model"] for r in out["results"]] == ["tabicl-v2", BASELINE]
+    assert all("metrics" in r for r in out["results"])
+
+
+def test_evaluate_without_baseline_still_defaults_to_every_model(tabicl_only, history):
+    tools, _ = tabicl_only
+    out = tools.evaluate(history, "churn", drop=["customer_id"], baseline=False)
+    assert [r["model"] for r in out["results"]] == ["tabicl-v2"]
+
+
+def test_explain_defaults_to_the_deployments_model(tabicl_only, history):
+    tools, deployment = tabicl_only
+    out = tools.explain(history, "churn", drop=["customer_id"], repeats=1)
+    assert out["model"] == "tabicl-v2"
+    assert deployment.fits[-1]["model"] == "tabicl-v2"

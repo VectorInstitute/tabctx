@@ -17,7 +17,8 @@ import pandas as pd
 from sklearn import metrics
 from sklearn.model_selection import train_test_split
 
-from tabctx.estimators import DEFAULT_MODEL, TabctxClassifier, TabctxRegressor
+from tabctx.client import TabctxClient
+from tabctx.estimators import TabctxClassifier, TabctxRegressor
 from tabctx.labels import infer_task
 from tabctx.mcp_tools.store import ModelInfo, ModelStore, check_name
 from tabctx.mcp_tools.tables import (
@@ -30,7 +31,6 @@ from tabctx.mcp_tools.tables import (
     rows_matching,
 )
 
-MODELS = ("tabpfn-3.5", "tabicl-v2")
 BASELINE = "gradient-boosting"
 # explain sends the held-out rows once per shuffled column and repeat in
 # one predict; past this many rows it uses fewer held-out rows.
@@ -58,6 +58,9 @@ class TabularTools:
         self.store = store or ModelStore()
         self.client = client
 
+    def _client(self) -> Any:
+        return self.client if self.client is not None else TabctxClient()
+
     # ---- describe ------------------------------------------------------
 
     def inspect_table(self, path: str, target: str | None = None) -> dict[str, Any]:
@@ -79,13 +82,15 @@ class TabularTools:
         self,
         path: str,
         target: str,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         name: str | None = None,
         drop: Sequence[str] = (),
         task: str | None = None,
     ) -> dict[str, Any]:
         """Fit a model on every labelled row of the table and keep it
-        under a name for predict and what_if."""
+        under a name for predict and what_if. model: default, the
+        deployment's default model."""
+        model = model or self._client().default_model()
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
         name = name or _default_name(path, target, model)
@@ -224,7 +229,7 @@ class TabularTools:
         self,
         path: str,
         target: str,
-        models: Sequence[str] = MODELS,
+        models: Sequence[str] | None = None,
         baseline: bool = True,
         test_size: float = 0.25,
         drop: Sequence[str] = (),
@@ -233,7 +238,10 @@ class TabularTools:
     ) -> dict[str, Any]:
         """Hold out part of the table, fit each model on the rest, and
         score it on the held-out rows; with baseline, a scikit-learn
-        gradient-boosting model as well, for comparison."""
+        gradient-boosting model as well, for comparison. models: default,
+        every model the deployment serves."""
+        if models is None:
+            models = [m["id"] for m in self._client().models()]
         if not models and not baseline:
             raise ValueError("nothing to evaluate: give models, or baseline=True")
         if not 0 < test_size < 1:
@@ -292,7 +300,7 @@ class TabularTools:
         self,
         path: str,
         target: str,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         drop: Sequence[str] = (),
         task: str | None = None,
         test_size: float = 0.25,
@@ -304,7 +312,9 @@ class TabularTools:
         """Which columns the model relies on (permutation importance): fit
         on part of the table, then shuffle one column at a time in the
         held-out rows and measure how much the score drops. All shuffled
-        copies go to the server in one predict."""
+        copies go to the server in one predict. model: default, the
+        deployment's default model."""
+        model = model or self._client().default_model()
         if repeats < 1 or max_rows < 1:
             raise ValueError("repeats and max_rows must be at least 1")
         frame = read_table(path)

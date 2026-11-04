@@ -4,6 +4,11 @@
 ### Changed
 - **A shorter README with a logo and a headline figure.** The front page now has the pitch, a fit-vs-predict chart from a saved A40 sweep (`benchmarks/plot_readme_figure.py` draws it from `benchmarks/baselines/sweep-a40x4-tabicl-v2.json`), a quickstart that runs on a laptop with no API key (checked against a fresh install of 0.17.1 from PyPI), the agent tools, a comparison with in-process models and hosted APIs, and each model's weights license. The detail moved, unchanged, into `docs/serving.md`, `docs/how-it-works.md`, `docs/benchmarks.md` and `docs/coding-agents.md`. Images use absolute URLs so the PyPI page shows them too.
 
+### Fixed
+- **The estimators and `tabctx-mcp` use the deployment's own default model** when none is named, instead of always `tabpfn-3.5`. Before, `TabctxClassifier()`, `TabctxRegressor()` and the agent tools' `fit_model`/`explain` failed with a 422 on any deployment that doesn't serve TabPFN, and `evaluate` reported an error for TabPFN there. Now `model=None` (the default) asks `GET /v1/models` at fit time, and the estimators record the answer as `model_`. The context id is computed from that resolved model, so naming the default explicitly reuses the same cached context. `evaluate` with no `models` runs every model the deployment serves. New: `TabctxClient.default_model()`, which returns the model `/v1/models` marks as default, or else the first one it lists.
+- **`pip install "tabctx[client]"` installs pandas.** The estimators are built for DataFrames, and scikit-learn's loaders (`fetch_openml(as_frame=True)`) need pandas, so the documented quickstart failed on a clean install.
+- **`from tabctx import TabctxClient`** works (also `PredictResult`). Before, the client could only be imported from `tabctx.client`.
+
 ## [0.17.1] - 2026-11-01
 ### Changed
 - **pi in the agent demo now runs on Vector's on-prem Qwen3.8 27B** (`Qwen3_8-27B` on the gateway) instead of Claude Sonnet 5.5, so one of the three agents uses an open model on Vector's own GPUs. A hosted visitor whose project lacks it still gets Sonnet. `PI_MODEL` overrides it as before.

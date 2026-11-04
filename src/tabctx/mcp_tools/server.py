@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
 from tabctx.mcp_tools.tables import json_safe
-from tabctx.mcp_tools.tools import MODELS, TabularTools
+from tabctx.mcp_tools.tools import TabularTools
 
 INSTRUCTIONS = """\
 Tabular foundation models (TabPFN, TabICL) on a GPU server. They learn
@@ -33,7 +33,13 @@ fitting. tabicl-v2 takes at most 10 classes; tabpfn-3.5 up to 160.
 
 Path = Annotated[str, Field(description="A CSV, TSV or Parquet file")]
 Target = Annotated[str, Field(description="The column to predict")]
-Model = Annotated[str, Field(description=f"One of {list(MODELS)}")]
+Model = Annotated[
+    str | None,
+    Field(
+        description="A model id, e.g. 'tabpfn-3.5' or 'tabicl-v2'; "
+        "default: the server's default"
+    ),
+]
 Drop = Annotated[
     list[str],
     Field(description="Columns to leave out: ids, and anything that leaks the answer"),
@@ -63,7 +69,8 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
         path: Path,
         target: Target,
         models: Annotated[
-            list[str] | None, Field(description=f"Default: {list(MODELS)}")
+            list[str] | None,
+            Field(description="Default: every model the server serves"),
         ] = None,
         baseline: bool = True,
         test_size: float = 0.25,
@@ -78,7 +85,7 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
             t.evaluate,
             path,
             target,
-            list(MODELS) if models is None else models,
+            models,
             baseline,
             test_size,
             drop or [],
@@ -89,7 +96,7 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
     def fit_model(
         path: Path,
         target: Target,
-        model: Model = MODELS[0],
+        model: Model = None,
         name: Annotated[
             str | None, Field(description="Name to keep the model under")
         ] = None,
@@ -158,7 +165,7 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
     def explain(
         path: Path,
         target: Target,
-        model: Model = MODELS[0],
+        model: Model = None,
         drop: Drop | None = None,
         task: Task = None,
         top: int = 20,

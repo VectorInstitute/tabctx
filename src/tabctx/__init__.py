@@ -10,6 +10,7 @@ PagedAttention did for per-request LLM KV caches.
 """
 
 from tabctx.cache.manager import CachedContext, ContextCacheManager
+from tabctx.client import PredictResult, TabctxClient
 from tabctx.engine import TabctxEngine
 from tabctx.errors import (
     AdmissionRejected,
@@ -56,6 +57,8 @@ __all__ = [
     "HostMemoryUnavailableError",
     "InvalidInputError",
     "PredictOutcome",
+    "PredictResult",
+    "TabctxClient",
     "TabctxEngine",
     "TabctxError",
     "Task",
