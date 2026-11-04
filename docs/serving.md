@@ -75,7 +75,7 @@ routing/tenancy headers for you, raises the same tabctx exceptions the
 in-process engine does):
 
 ```python
-from tabctx.client import TabctxClient
+from tabctx import TabctxClient
 
 client = TabctxClient("http://localhost:8000", tenant_id="acme")
 client.fit(X_train, y_train, dataset_id="churn-v1")
