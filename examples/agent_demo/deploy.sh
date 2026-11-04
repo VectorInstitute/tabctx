@@ -17,6 +17,13 @@ REPOSITORY=${REPOSITORY:-tabctx-agent-demo}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 TAG=$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet || echo "-dirty")
 IMAGE=$REGION-docker.pkg.dev/$PROJECT/$REPOSITORY/demo:$TAG
+# The service runs as its own service account with no roles. The demo runs coding agents
+# that execute commands, so whatever identity it has, a run can use: the default compute
+# account (Editor on the project) would hand a prompt-injected run the whole project.
+# Nothing in the demo calls a GCP API; it only talks to the Vector gateway with the
+# visitor's key.
+SA_NAME=${SA_NAME:-tabctx-agent-demo}
+SERVICE_ACCOUNT=$SA_NAME@$PROJECT.iam.gserviceaccount.com
 gcloud=(gcloud --project "$PROJECT" ${GCP_ACCOUNT:+--account "$GCP_ACCOUNT"})
 
 if ! "${gcloud[@]}" artifacts repositories describe "$REPOSITORY" --location "$REGION" >/dev/null 2>&1; then
@@ -24,6 +31,11 @@ if ! "${gcloud[@]}" artifacts repositories describe "$REPOSITORY" --location "$R
     --repository-format docker --description "tabctx agent demo images"
 fi
 
+if ! "${gcloud[@]}" iam service-accounts describe "$SERVICE_ACCOUNT" >/dev/null 2>&1; then
+  "${gcloud[@]}" iam service-accounts create "$SA_NAME" \
+    --display-name "tabctx agent demo (Cloud Run runtime)" \
+    --description "Runtime identity of the public tabctx agent demo. No roles."
+fi
 "${gcloud[@]}" builds submit "$ROOT" --region "$REGION" \
   --config "$ROOT/examples/agent_demo/cloudbuild.yaml" --substitutions "_IMAGE=$IMAGE"
 
@@ -31,7 +43,7 @@ fi
 # hour per request for the live event streams; CPU always on, so a run keeps
 # going when its viewer closes the tab.
 "${gcloud[@]}" run deploy "$SERVICE" --region "$REGION" --image "$IMAGE" \
-  --allow-unauthenticated --port 8080 \
+  --allow-unauthenticated --port 8080 --service-account "$SERVICE_ACCOUNT" \
   --min-instances 0 --max-instances 1 --concurrency 80 \
   --cpu 4 --memory 8Gi --no-cpu-throttling --execution-environment gen2 \
   --timeout 3600 \
