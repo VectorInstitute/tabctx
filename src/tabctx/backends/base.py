@@ -31,14 +31,24 @@ class TabularICLBackend(Protocol):
         ...
 
     def predict(
-        self, payload: Any, X_test: ArrayLike, return_proba: bool = False
+        self,
+        payload: Any,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         """Run inference against a cached context. Must be a SINGLE
         inference pass regardless of return_proba -- derive predictions from
         probabilities (e.g. argmax) rather than calling predict() and
         predict_proba() separately, since each call is a full forward pass
         over the cached context. A classification's labels are strings,
-        whatever return_proba is (backends._outcome)."""
+        whatever return_proba is (backends._outcome).
+
+        quantiles: for a regression context only (the engine checks), the
+        levels in (0, 1) at which to also return each row's predicted
+        distribution, as PredictOutcome.quantiles -- from the same pass as
+        the mean. A model that predicts only a point raises
+        InvalidInputError."""
         ...
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:

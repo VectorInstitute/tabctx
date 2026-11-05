@@ -45,7 +45,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends._outcome import classification_outcome
+from tabctx.backends._outcome import classification_outcome, regression_outcome
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.labels import regression_hint
 from tabctx.types import ArrayLike, PredictOutcome, Task
@@ -179,26 +179,41 @@ class TabPFNBackend(QuiescedMeasurement):
         return 600 * n_rows * n_features
 
     def predict(
-        self, payload: Any, X_test: ArrayLike, return_proba: bool = False
+        self,
+        payload: Any,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         import torch
 
         X_arr = np.asarray(X_test, dtype=float)
         try:
             with device_scope(self._device):
-                return self._predict(payload, X_arr, return_proba)
+                return self._predict(payload, X_arr, return_proba, quantiles)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
 
     def _predict(
-        self, model: Any, X_arr: np.ndarray, return_proba: bool
+        self,
+        model: Any,
+        X_arr: np.ndarray,
+        return_proba: bool,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         if hasattr(model, "predict_proba"):
             # Single pass regardless of return_proba (protocol
             # requirement): derive labels from probabilities.
             proba = model.predict_proba(X_arr)
             return classification_outcome(proba, model.classes_, return_proba)
-        return PredictOutcome(predictions=model.predict(X_arr).tolist())
+        if quantiles is None:
+            return regression_outcome(model.predict(X_arr))
+        # "main": the mean and the quantiles (one array per level, in the
+        # order asked) from one pass over the cached context.
+        out = model.predict(X_arr, output_type="main", quantiles=list(quantiles))
+        return regression_outcome(
+            out["mean"], np.stack(out["quantiles"], axis=1), len(quantiles)
+        )
 
     # ---- spillover serialization (see cache/spill.py) ----------------
 

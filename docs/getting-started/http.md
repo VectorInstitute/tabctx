@@ -42,7 +42,10 @@ gzip or zstd CSV, or Parquet).
     ```
 
 Text cells are categories, `null` is a missing value, and the task is
-inferred from the labels unless you send `task`. When the training table
+inferred from the labels unless you send `task`. A regression predict
+can also ask for `quantiles` of the predicted distribution, e.g.
+`"quantiles": [0.05, 0.95]` (`-F quantiles=0.05,0.95` in a form), and
+gets `quantiles` (one row per test row) and `quantile_levels` back. When the training table
 was a file, a test file's columns are matched by name.
 
 ## Large tables

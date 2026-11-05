@@ -326,3 +326,40 @@ def test_the_client_is_importable_from_the_package():
     assert TabctxClient is tabctx.client.TabctxClient
     assert PredictResult is tabctx.client.PredictResult
     assert {"TabctxClient", "PredictResult"} <= set(tabctx.__all__)
+
+
+class TestPredictQuantiles:
+    def test_one_column_per_level_in_the_order_given(self, deployment):
+        X = np.array([[1.0], [2.0], [3.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0, 3.0])
+        out = reg.predict_quantiles(X, quantiles=[0.9, 0.1])
+        assert out.shape == (3, 2)
+        np.testing.assert_allclose(out, [[1.9, 1.1], [2.9, 2.1], [3.9, 3.1]])
+
+    def test_the_default_is_the_median_and_a_90_percent_interval(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        np.testing.assert_allclose(reg.predict_quantiles(X)[0], [1.05, 1.5, 1.95])
+
+    def test_bad_levels_are_a_value_error(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        for bad in ([1.2], [], "0.5"):
+            with pytest.raises(ValueError):
+                reg.predict_quantiles(X, quantiles=bad)
+
+    def test_a_test_table_over_several_requests(self, deployment):
+        # Random values, which Parquet can't compress below the limit.
+        X = np.random.default_rng(0).normal(size=(2000, 1))
+        reg = TabctxRegressor(client=deployment, max_request_bytes=6_000)
+        reg.fit(X[:10], np.arange(10.0))
+        out = reg.predict_quantiles(X, quantiles=[0.5])
+        assert len(deployment.predict_calls) > 1  # split into several files
+        # Tables reach the model as float32.
+        np.testing.assert_allclose(out[:, 0], X[:, 0] + 0.5, atol=1e-6)
+
+    def test_a_context_lost_on_the_server_is_fit_again(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        deployment.contexts.clear()  # evicted, or the server restarted
+        np.testing.assert_allclose(reg.predict_quantiles(X, [0.5])[:, 0], [1.5, 2.5])

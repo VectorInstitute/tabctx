@@ -55,7 +55,9 @@ class FakeDeployment:
         if self.contexts.pop(dataset_id, None) is None:
             raise DatasetNotFoundError(f"no context for dataset_id={dataset_id!r}")
 
-    def predict_file(self, dataset_id, file, return_proba=False, model=None):
+    def predict_file(
+        self, dataset_id, file, return_proba=False, model=None, quantiles=None
+    ):
         self.predict_calls.append(len(file))
         if dataset_id not in self.contexts:
             raise DatasetNotFoundError(
@@ -65,7 +67,11 @@ class FakeDeployment:
         table = read_table(self._path(file), text_columns=schema.text_names)
         X = schema.encode(schema.select(table.names, table.columns))
         if task == "regression":
-            return PredictResult(X[:, 0].tolist(), None, None, 1.0, None)
+            # Quantile q of each row: its first feature plus q.
+            qs = None
+            if quantiles is not None:
+                qs = [[v + q for q in quantiles] for v in X[:, 0]]
+            return PredictResult(X[:, 0].tolist(), None, None, 1.0, None, qs)
         k = len(classes)
         preds = [classes[int(round(v)) % k] if v == v else classes[0] for v in X[:, 0]]
         order = self.classes_order or classes

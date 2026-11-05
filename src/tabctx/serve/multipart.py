@@ -161,7 +161,10 @@ class _Form:
         if not self._in_file:
             if self.open_part in self.fields:
                 # One value per field, so no reader can pick a different one.
-                raise InvalidInputError(f"form field {self.open_part!r} is repeated")
+                raise InvalidInputError(
+                    f"form field {self.open_part!r} is repeated: send it once "
+                    "(a list as one value, e.g. 0.05,0.95)"
+                )
             try:
                 self.fields[self.open_part] = self._data.decode("utf-8")
             except UnicodeDecodeError as e:

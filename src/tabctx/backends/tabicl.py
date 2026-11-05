@@ -64,7 +64,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends._outcome import classification_outcome
+from tabctx.backends._outcome import classification_outcome, regression_outcome
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.labels import regression_hint
@@ -548,14 +548,18 @@ class TabICLBackend(QuiescedMeasurement):
             )
 
     def predict(
-        self, payload: Any, X_test: ArrayLike, return_proba: bool = False
+        self,
+        payload: Any,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         import torch
 
         model = payload
         try:
             with device_scope(self._device):
-                return self._predict(model, X_test, return_proba)
+                return self._predict(model, X_test, return_proba, quantiles)
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         finally:
@@ -563,13 +567,24 @@ class TabICLBackend(QuiescedMeasurement):
             self._release_host_memory(model)
 
     def _predict(
-        self, model: Any, X_test: ArrayLike, return_proba: bool
+        self,
+        model: Any,
+        X_test: ArrayLike,
+        return_proba: bool,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(X_test)
             return classification_outcome(proba, model.classes_, return_proba)
         # Regressor: no predict_proba to derive from.
-        return PredictOutcome(predictions=model.predict(X_test).tolist())
+        if quantiles is None:
+            return regression_outcome(model.predict(X_test))
+        # The mean and the quantiles from one pass over the cached context;
+        # tabicl returns them (rows, levels), in the order asked.
+        out = model.predict(
+            X_test, output_type=["mean", "quantiles"], alphas=list(quantiles)
+        )
+        return regression_outcome(out["mean"], out["quantiles"], len(quantiles))
 
     def warmup(self) -> None:
         """Load the model weights for both tasks now, with throwaway fits,

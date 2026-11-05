@@ -81,6 +81,15 @@ against the result.
 
     [:octicons-arrow-right-24: Add a model](contributing/adding-a-model.md)
 
+-   :material-chart-bell-curve:{ .lg .middle } **Prediction intervals**
+
+    ---
+
+    Regression predicts a distribution, so ask for its quantiles, such
+    as a 90% interval per row, from the same model call as the mean.
+
+    [:octicons-arrow-right-24: Prediction intervals](getting-started/python.md#prediction-intervals)
+
 -   :material-language-python:{ .lg .middle } **Drop-in scikit-learn**
 
     ---

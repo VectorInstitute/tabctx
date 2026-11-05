@@ -56,6 +56,9 @@ own GPUs.
   and a fit that would run the GPU out of memory is refused *before* it runs.
 - **Two models, one endpoint.** `tabicl-v2` and `tabpfn-3.5` behind
   `GET /v1/models`; pick one per request. Adding a model is one class.
+- **Prediction intervals.** Regression predicts a distribution, so you can
+  ask for its quantiles (say a 90% interval) at no extra cost:
+  `reg.predict_quantiles(X, [0.05, 0.95])`.
 - **Drop-in scikit-learn.** `TabctxClassifier` and `TabctxRegressor` take
   DataFrames with text, dates and missing values as they are, and work with
   pipelines and `cross_val_score`.
