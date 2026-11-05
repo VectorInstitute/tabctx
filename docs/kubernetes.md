@@ -132,5 +132,6 @@ release).
 ## Monitoring
 
 `GET /readyz` reports the cache (`cache_stats`), the GPU memory torch
-really holds (`real_gpu_memory`), host memory, and the server's uptime: a
+really holds (`real_gpu_memory`, measured every 5 s; `device_report_age_s`
+says how long ago), host memory, and the server's uptime: a
 burst of 404s with a reset uptime means a restart, not an eviction.

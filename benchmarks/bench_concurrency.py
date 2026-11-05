@@ -256,6 +256,8 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
 
     readyz = _get(f"{base_url}/readyz", timeout)
     real_gpu = readyz.get("real_gpu_memory") or {}
+    # /readyz's device numbers are measured every few seconds: say how old.
+    report_age_s = readyz.get("device_report_age_s")
 
     return {
         "n_train": n_train,
@@ -265,6 +267,7 @@ def run_shape_point(base_url, timeout, n_train, n_test, n_features, seed, n_samp
         "fit_latency_ms": round(fit_ms, 1),
         "warm_predict_latency_ms": _percentiles(predict_latencies),
         "real_gpu_allocated_mb_after": real_gpu.get("allocated_mb"),
+        "real_gpu_report_age_s": report_age_s,
     }
 
 

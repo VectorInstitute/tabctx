@@ -103,8 +103,9 @@ startupSeconds: 1200
 terminationGracePeriodSeconds: 300
 
 readinessProbe:
-  # A multi-GPU pod asks every worker for a report (up to 30 s).
-  timeoutSeconds: 35
+  # /readyz answers from measurements it doesn't wait for, but a busy
+  # host (a CPU-bound fit) can slow any reply.
+  timeoutSeconds: 10
   periodSeconds: 15
   failureThreshold: 6
 
