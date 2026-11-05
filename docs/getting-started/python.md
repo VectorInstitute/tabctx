@@ -31,6 +31,24 @@ from sklearn.model_selection import cross_val_score
 cross_val_score(TabctxClassifier(client=client), X, y, cv=5)
 ```
 
+## Prediction intervals
+
+TabICL and TabPFN predict a distribution over the target, not just a
+number. `predict_quantiles` returns that distribution's quantiles, from
+the same model call as the mean:
+
+```python
+reg = TabctxRegressor(client=client).fit(X_train, y_train)
+q = reg.predict_quantiles(X_test, quantiles=[0.05, 0.5, 0.95])
+low, median, high = q[:, 0], q[:, 1], q[:, 2]      # a 90% interval per row
+```
+
+Levels are in (0, 1), in any order; the columns follow it. Check the
+intervals on held-out data before relying on them:
+[`examples/prediction_intervals.py`](https://github.com/VectorInstitute/tabctx/blob/main/examples/prediction_intervals.py)
+does it for California housing, where the 90% interval held 86.5% of the
+prices. Classifiers already return a distribution: `predict_proba`.
+
 ## The client
 
 `TabctxClient` is the HTTP client underneath, pure standard library. It
@@ -43,6 +61,7 @@ client.fit(X_train, y_train, dataset_id="churn-v1")            # DataFrame, arra
 client.fit_file("train.parquet", target="churned", dataset_id="churn-v2")
 result = client.predict("churn-v1", X_test, return_proba=True)
 result.predictions, result.probabilities, result.classes
+client.predict("prices", X_test, quantiles=[0.05, 0.95]).quantiles  # regression
 
 client.datasets()             # what the server holds for this tenant
 client.delete("churn-v1")     # gone from GPU, host memory and disk
