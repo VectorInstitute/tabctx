@@ -291,6 +291,11 @@ class TabctxPredictResponse(BaseModel):
     )
     n_test: int
     latency_ms: float
+    cache_outcome: Literal["hit", "restored"] = Field(
+        default="hit",
+        description="Whether the context was resident or restored from the disk tier. "
+        "Coalesced requests report their batch's outcome.",
+    )
     served_by: str | None = None
     timings_ms: dict[str, float | int] | None = Field(
         default=None, description=_TIMINGS_DOC
@@ -860,6 +865,9 @@ class TabctxService:
         with timing.collect() as timings:
             response = self._predict_timed(req, file, headers, session_id)
         response.timings_ms = timings.as_dict()
+        response.cache_outcome = (
+            "restored" if timings.counts.get("restores", 0) else "hit"
+        )
         return response
 
     def _predict_timed(

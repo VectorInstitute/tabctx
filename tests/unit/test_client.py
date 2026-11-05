@@ -387,6 +387,7 @@ class TestPredict:
         assert result.probabilities is None
         assert result.classes is None
         assert result.served_by is None
+        assert result.cache_outcome is None
 
     def test_predict_by_reference_sends_test_upload_id(self, monkeypatch):
         captured = {}
@@ -836,3 +837,19 @@ class TestQuantiles:
         TabctxClient("http://x").predict_file("d", b"a\n1\n", quantiles=[0.1, 0.9])
         body = b"".join(seen[0].data)
         assert b'name="quantiles"\r\n\r\n0.1,0.9\r\n' in body
+
+
+@pytest.mark.parametrize("cache_outcome", ["hit", "restored"])
+def test_predict_cache_outcome(monkeypatch, cache_outcome):
+    _install(
+        monkeypatch,
+        lambda req: _json_response(
+            {
+                "predictions": ["a"],
+                "latency_ms": 1.0,
+                "cache_outcome": cache_outcome,
+            }
+        ),
+    )
+    result = TabctxClient("http://localhost:8000").predict("ds-1", [[1.0]])
+    assert result.cache_outcome == cache_outcome

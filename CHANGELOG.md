@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- Predict responses and `PredictResult` expose `cache_outcome`: `hit` for a resident context or `restored` after disk spillover. Coalesced requests share their batch's outcome; older deployments leave the client field as `None`.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;
