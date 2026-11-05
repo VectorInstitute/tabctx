@@ -1,0 +1,131 @@
+site_name: tabctx
+site_description: The serving engine for tabular foundation models.
+site_url: https://vectorinstitute.github.io/tabctx/
+repo_url: https://github.com/VectorInstitute/tabctx
+repo_name: VectorInstitute/tabctx
+edit_uri: edit/main/docs/
+copyright: Built at the <a href="https://vectorinstitute.ai">Vector Institute</a>. Apache 2.0.
+
+theme:
+  name: material
+  logo: assets/icon.svg
+  favicon: assets/icon.svg
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/VectorInstitute/tabctx
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/tabctx/
+
+hooks:
+  - docs/hooks.py
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: [".", "docs"]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            show_signature_annotations: true
+            separate_signature: true
+            signature_crossrefs: true
+            members_order: source
+            merge_init_into_class: true
+            filters: ["!^_"]
+            heading_level: 3
+
+exclude_docs: |
+  hooks.py
+  __pycache__/
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Quickstart: getting-started/quickstart.md
+      - Python and scikit-learn: getting-started/python.md
+      - HTTP API: getting-started/http.md
+  - Guides:
+      - Serving: serving.md
+      - Coding agents: coding-agents.md
+  - Concepts:
+      - How it works: how-it-works.md
+      - Benchmarks: benchmarks.md
+  - Reference:
+      - Python API: reference/python.md
+      - HTTP API: reference/http-api.md
+      - Configuration: reference/configuration.md
+  - Contribute:
+      - Contributing: contributing/index.md
+      - Add a model: contributing/adding-a-model.md
+      - Roadmap: roadmap.md
+      - Changelog: changelog.md

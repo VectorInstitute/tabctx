@@ -87,6 +87,16 @@ dev = [
     # in-process (no server, no ray) via httpx's ASGI transport.
     "fastapi",
 ]
+# The docs site (mkdocs.yml): `uv sync --group docs && uv run mkdocs serve`.
+# The service's deps too: the build writes the HTTP API's OpenAPI spec.
+docs = [
+    "mkdocs-material>=9.6",
+    "mkdocstrings[python]>=0.29",
+    "fastapi",
+    "uvicorn",
+    "python-multipart>=0.0.9",
+    "pyarrow>=14",
+]
 
 [tool.ruff]
 line-length = 88

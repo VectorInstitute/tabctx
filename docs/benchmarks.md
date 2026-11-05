@@ -1,7 +1,7 @@
 # Benchmarks
 
 Every number here is from real GPUs, and every script that produced one
-is in [`benchmarks/`](../benchmarks/) with its saved output under
+is in [`benchmarks/`](https://github.com/VectorInstitute/tabctx/tree/main/benchmarks) with its saved output under
 `benchmarks/baselines/`.
 
 ## Fit once, predict fast
@@ -41,7 +41,7 @@ sharing one A100-40GB** (v0.7.0, 2026-08-29,
   overestimate (v0.3.0), malformed input surfacing as a raw 500 (v0.5.0),
   the multi-replica routing gap itself (v0.6.0), and an upstream Ray
   Serve quirk where `request_router_config` changes never reach live
-  proxies (see ROADMAP.md). Full list in [CHANGELOG.md](../CHANGELOG.md).
+  proxies (see ROADMAP.md). Full list in [CHANGELOG.md](changelog.md).
 - **Column count scales linearly, not quadratically** (TabICLv2's
   inducing-point column attention, confirmed empirically out to 700
   columns; `benchmarks/baselines/v0.5.0-feature-sweep.json`, pre-kv-cache).

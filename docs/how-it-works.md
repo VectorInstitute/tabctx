@@ -82,7 +82,7 @@ device's usage regardless of which model a request picks.
   the memory budget so one oversized request can't crash the whole
   replica, the failure mode this library exists partly to prevent (the
   naive one-shot wrapper it replaces did crash this way; see
-  [CHANGELOG](../CHANGELOG.md)). Chunks are sized by a measured predict cost
+  [CHANGELOG](changelog.md)). Chunks are sized by a measured predict cost
   model (`memory/predict.py`): against a kv context a predict's memory
   follows its test rows and their width, not the training table, so a
   100-row predict against a 10,000 x 500 context is one call. A chunk that
@@ -147,7 +147,7 @@ what is still missing.
   restarted replica pointed at the same directory can reload its
   predecessor's spilled contexts -- no training data needed.
 
-**Missing (see [ROADMAP.md](../ROADMAP.md), item 1):**
+**Missing (see [ROADMAP.md](roadmap.md), item 1):**
 
 1. **Explicit, durable persistence.** Spilling happens only *on
    eviction*, to replica-local disk, best-effort and LRU-bounded. There

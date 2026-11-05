@@ -106,7 +106,13 @@ def make_app(service: TabctxService | None = None) -> FastAPI:
         yield
         service.close()
 
-    app = FastAPI(title=fastapi_app.title, lifespan=lifespan)
+    app = FastAPI(
+        title=fastapi_app.title,
+        summary=fastapi_app.summary,
+        version=fastapi_app.version,
+        openapi_tags=fastapi_app.openapi_tags,
+        lifespan=lifespan,
+    )
     for spec in ROUTE_SPECS:
         app.add_api_route(
             spec.path,
@@ -114,6 +120,8 @@ def make_app(service: TabctxService | None = None) -> FastAPI:
             methods=list(spec.methods),
             response_model=spec.response_model,
             openapi_extra=spec.openapi_extra,
+            summary=spec.summary,
+            tags=spec.tags,
         )
     app.add_middleware(
         _RequestLimiter,

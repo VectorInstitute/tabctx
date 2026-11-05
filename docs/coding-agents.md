@@ -8,7 +8,7 @@ CLI. The same tools also run as a JSON command line, and as a pi
 extension for agents without MCP.
 
 `TABCTX_BASE_URL` is any tabctx deployment: one you run yourself (see
-the [Quickstart](../README.md#quickstart)), or Vector's gateway with a
+the [Quickstart](getting-started/quickstart.md)), or Vector's gateway with a
 `vp_` key, as below.
 
 ```bash
@@ -43,6 +43,6 @@ churn current.csv`, and so on (`tabctx-mcp --help`).
 Fitted models live in `.tabctx-mcp/` (or `$TABCTX_MCP_HOME`), so a model
 fitted in one call is still there for the next. `tabctx-mcp skill`
 prints the guide for agents. The readmission demo in
-[`examples/agent_demo/`](../examples/agent_demo/) runs the same task with
+[`examples/agent_demo/`](https://github.com/VectorInstitute/tabctx/tree/main/examples/agent_demo) runs the same task with
 each agent and scores their predictions against what the patients
 actually did.
