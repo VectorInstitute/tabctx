@@ -15,10 +15,10 @@ Deployment modes (env var TABCTX_REQUIRE_TENANT):
 
 - "false" (default, backward compatible): the header is honored when
   present, and absent-header requests use the raw dataset_id unscoped.
-  NOTE this mode is not a security boundary: nothing stops an unscoped
-  caller from crafting a dataset_id that textually collides with a
-  scoped one. It exists so single-tenant/dev deployments keep working
-  with zero client changes.
+  An unscoped caller can't name a scoped id (`t:...`, rejected with
+  422), but this mode is still not a security boundary: any caller can
+  claim any tenant id. It exists so single-tenant/dev deployments keep
+  working with zero client changes.
 - "true": every /v1/tabctx request MUST carry a valid tenant header;
   requests without one are rejected (HTTP 401 at the app layer). With no
   unscoped namespace, tenants are fully isolated from each other --
@@ -128,8 +128,16 @@ def resolve_tenant_id(headers: Mapping[str, str]) -> str | None:
 
 
 def scope_dataset_id(tenant_id: str | None, dataset_id: str) -> str:
-    """The cache-facing dataset id for (tenant, dataset)."""
+    """The cache-facing dataset id for (tenant, dataset). A caller without
+    a tenant can't name an id in the scoped namespace (`t:...`): it would
+    reach that tenant's context -- predict on it, or delete it."""
     if tenant_id is None:
+        if dataset_id.startswith(f"{_SCOPE_PREFIX}:"):
+            raise InvalidInputError(
+                f"dataset_id {dataset_id!r}: ids starting with "
+                f"'{_SCOPE_PREFIX}:' are reserved for tenant-scoped contexts; "
+                f"pick another id, or send a {TENANT_HEADER!r} header"
+            )
         return dataset_id
     return f"{_SCOPE_PREFIX}:{tenant_id}:{dataset_id}"
 

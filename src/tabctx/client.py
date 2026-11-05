@@ -380,9 +380,9 @@ class TabctxClient:
         return default
 
     def datasets(self) -> list[dict]:
-        """The contexts the deployment holds for you (your tenant's),
-        resident or spilled: id, model, task, shape, size, location and fit
-        time. With several replicas, the one that answers lists its own."""
+        """Your tenant's contexts on the replica that answers, resident or
+        spilled: id, model, task, shape, size, location and fit time. With
+        several replicas this is only that replica's share."""
         return self._get("/v1/tabctx/datasets")["data"]
 
     def delete(self, dataset_id: str) -> None:
@@ -390,9 +390,21 @@ class TabctxClient:
         memory and its disk tier. Raises DatasetNotFoundError if there is
         none (never fit, already deleted, evicted, or lost to a restart)."""
         path = f"/v1/tabctx/datasets/{urllib.parse.quote(dataset_id, safe='')}"
-        headers = self._headers(session_id=dataset_id)
-        # Safe to retry on 503: a second delete of the same id only 404s.
-        self._with_retries(lambda: self._request(path, None, headers, "DELETE"))
+        headers = self._headers(session_id=dataset_id, content_type=None)
+        attempts = 0
+
+        def send() -> None:
+            nonlocal attempts
+            attempts += 1
+            try:
+                self._request(path, None, headers, "DELETE")
+            except DatasetNotFoundError:
+                # A 503 can come after some GPUs already deleted their copy;
+                # then the retry finds nothing left, which is success.
+                if attempts == 1:
+                    raise
+
+        self._with_retries(send)
 
     def limits(self) -> dict:
         """Capability discovery: what shapes will this deployment admit?
@@ -405,13 +417,14 @@ class TabctxClient:
         # GETs are safe to repeat, so they retry on 503 like fit and predict.
         # The tenant header too: tenant-scoped GETs (the dataset listing)
         # answer for that tenant, and need it where tenancy is required.
-        headers = self._headers(session_id=None)
+        headers = self._headers(session_id=None, content_type=None)
         return self._with_retries(lambda: self._request(path, None, headers))
 
     def _headers(
-        self, session_id: str | None, content_type: str = "application/json"
+        self, session_id: str | None, content_type: str | None = "application/json"
     ) -> dict[str, str]:
-        headers = {"Content-Type": content_type}
+        """content_type: None for a request without a body."""
+        headers = {"Content-Type": content_type} if content_type else {}
         if session_id is not None:
             headers[self._session_header] = session_id
         if self._tenant_id is not None:
@@ -501,10 +514,10 @@ class TabctxClient:
             return InvalidInputError(detail)
         if code == 404:
             # Both not-found kinds share the status; the server's upload
-            # message always says "upload" (see UploadStore.consume), so
-            # this sniff only ever swaps between two same-semantics
-            # not-found types.
-            if "upload" in detail.lower():
+            # message starts "no upload" (see UploadStore.consume). Only its
+            # start is matched: other details echo caller ids, which may
+            # contain the word.
+            if detail.startswith("no upload "):
                 return UploadNotFoundError(detail)
             return DatasetNotFoundError(detail)
         if code == 413:

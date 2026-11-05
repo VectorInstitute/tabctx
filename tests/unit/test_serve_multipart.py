@@ -169,6 +169,39 @@ def test_a_fit_drops_the_cached_schema_until_it_succeeds():
     assert order == ["first", "second"] and cache.get("d") is new
 
 
+def test_a_delete_waits_for_a_fit_of_its_id_and_drops_its_schema():
+    """Else a fit finishing after the delete would cache the schema (the
+    training table's text categories) of a context that is gone."""
+    import threading
+
+    cache = SchemaCache()
+    schema = TableSchema((("red", "blue"),))
+    fitting, release = threading.Event(), threading.Event()
+
+    def fit():
+        with cache.fitting("d") as record:
+            fitting.set()
+            assert release.wait(5)
+            record(schema)
+
+    t = threading.Thread(target=fit)
+    t.start()
+    assert fitting.wait(5)
+    deleted = threading.Event()
+
+    def delete():
+        with cache.deleting("d"):
+            deleted.set()
+
+    d = threading.Thread(target=delete)
+    d.start()
+    assert not deleted.wait(0.05)  # behind the fit
+    release.set()
+    t.join(5)
+    d.join(5)
+    assert deleted.is_set() and cache.get("d") is None
+
+
 def test_long_boundaries_and_plain_file_fields_are_422(store):
     with pytest.raises(InvalidInputError, match="malformed"):
         read(body(), store, content_type="multipart/form-data; boundary=" + "b" * 300)

@@ -68,6 +68,8 @@ class TestRequireTenantMode:
 class TestScoping:
     def test_none_tenant_is_identity(self):
         assert scope_dataset_id(None, "ds") == "ds"
+        with pytest.raises(InvalidInputError, match="reserved"):
+            scope_dataset_id(None, "t:acme:ds")  # another tenant's context
         assert unscope_dataset_id(None, "ds") == "ds"
 
     def test_roundtrip(self):

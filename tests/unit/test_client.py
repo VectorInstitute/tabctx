@@ -589,6 +589,36 @@ class TestDatasets:
         with pytest.raises(DatasetNotFoundError):
             TabctxClient("http://localhost:8000").delete("gone")
 
+    def test_a_missing_id_that_says_upload_is_still_a_dataset(self, monkeypatch):
+        detail = "no context for dataset_id='upload-batch-7' -- it was never fit"
+        self._capture(monkeypatch, _http_error(404, {"detail": detail}))
+        with pytest.raises(DatasetNotFoundError):
+            TabctxClient("http://localhost:8000").delete("upload-batch-7")
+
+    def test_a_retry_that_finds_it_gone_is_success(self, monkeypatch, no_real_sleep):
+        """A 503 can follow a partial delete; the retry finding nothing left
+        means it is deleted."""
+        replies = [
+            _http_error(503, {"detail": "deleting failed on cuda:1; retry"}),
+            _http_error(404, {"detail": "no context for dataset_id='d'"}),
+        ]
+
+        def handler(req):
+            raise replies.pop(0)
+
+        _install(monkeypatch, handler)
+        TabctxClient("http://localhost:8000").delete("d")
+        assert replies == []
+
+    def test_requests_without_a_body_send_no_content_type(self, monkeypatch):
+        seen = self._capture(monkeypatch, {"data": []})
+        client = TabctxClient("http://localhost:8000", api_key="k")
+        client.datasets()
+        client.delete("d")
+        for req in seen:
+            assert "Content-type" not in req.headers
+            assert req.headers["Authorization"] == "Bearer k"
+
     def test_delete_retries_on_backpressure(self, monkeypatch, no_real_sleep):
         replies = [_http_error(503, {"detail": "busy"}), _json_response({})]
 

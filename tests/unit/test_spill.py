@@ -11,6 +11,7 @@ from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
 from tabctx.cache.spill import DiskSpillStore
 from tabctx.engine import TabctxEngine
+from tabctx.errors import CacheUnavailableError
 from tabctx.memory import (
     A100_40GB_TABICL_CALIBRATION,
     AdaptiveMemoryEstimator,
@@ -367,7 +368,7 @@ class TestDelete:
         spilling.start()
         assert store.entered.wait(5)
         try:
-            with pytest.raises(TimeoutError, match="retry"):
+            with pytest.raises(CacheUnavailableError, match="retry"):
                 cache.delete("stuck", settle_timeout_s=0.01)
         finally:
             store.gate.set()

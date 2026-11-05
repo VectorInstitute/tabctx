@@ -18,6 +18,7 @@ import pytest
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from tabctx.errors import CacheUnavailableError
 from tabctx.serve.factory import BACKEND_ENV_VAR
 from tabctx.serve.service import ROUTE_SPECS, TabctxService, fastapi_app
 from tabctx.serve.standalone import (
@@ -406,12 +407,19 @@ class TestDatasets:
         app = make_app(service)
 
         def busy(*args):
-            raise TimeoutError("worker for cuda:1 did not answer in 30s")
+            raise CacheUnavailableError("cuda:1 didn't list its contexts; retry")
 
         monkeypatch.setattr(service._engine, "contexts", busy)
         monkeypatch.setattr(service._engine, "evict", busy)
         assert _request(app, "GET", "/v1/tabctx/datasets").status_code == 503
         assert _delete(app, "d").status_code == 503
+
+    def test_an_empty_id_is_invalid(self, app):
+        assert _request(app, "DELETE", "/v1/tabctx/datasets/").status_code == 422
+
+    def test_the_listing_names_the_replica(self, app):
+        body = _request(app, "GET", "/v1/tabctx/datasets").json()
+        assert body == {"data": [], "served_by": None}  # no Ray replica here
 
     def test_routes_are_in_the_openapi_spec(self, app):
         paths = _request(app, "GET", "/openapi.json").json()["paths"]
@@ -448,9 +456,35 @@ class TestDatasetsPerTenant:
         assert _request(app, "GET", "/v1/tabctx/datasets").status_code == 401
         assert _delete(app, "d").status_code == 401
 
+    def test_a_malformed_tenant_is_invalid(self, app):
+        bad = {TENANT_HEADER: "no:colons"}
+        assert (
+            _request(app, "GET", "/v1/tabctx/datasets", headers=bad).status_code == 422
+        )
+        assert _delete(app, "d", bad).status_code == 422
+
 
 class TestDatasetsWithoutTenancy:
     def test_unscoped_callers_never_see_tenant_contexts(self, app):
         _fit(app, "theirs", {TENANT_HEADER: "tenant-a"})
         _fit(app, "mine")
         assert _listed(app) == ["mine"]
+
+    def test_unscoped_callers_cannot_name_a_tenant_context(self, app):
+        """Not by its scoped id either: no delete, predict or overwrite."""
+        tenant = {TENANT_HEADER: "acme"}
+        _fit(app, "secret", tenant)
+        scoped = "t:acme:secret"
+        assert _delete(app, scoped).status_code == 422
+        predict = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": scoped, "test_X": TEST_X},
+        )
+        assert predict.status_code == 422
+        fit = _request(
+            app, "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": scoped}
+        )
+        assert fit.status_code == 422 and "reserved" in fit.json()["detail"]
+        assert _listed(app, tenant) == ["secret"]

@@ -729,13 +729,13 @@ class TabctxEngine:
         """Remove a context from every tier (device, host memory, disk);
         True if there was one. Its memory is freed now, or -- while a fit
         measures itself, or a predict still uses it -- once that is done."""
-        # A move between tiers lands first, outside the release lock, so
-        # releases (finishing predicts) don't wait behind a spill write.
-        self._cache.wait_settled(dataset_id)
-        # Under the release lock, so the memory is freed either before a
-        # fit starts measuring or after it is done (see _measuring).
+        # The delete may wait for a move between tiers, so it runs outside
+        # the release lock (finishing predicts and fits need that lock).
+        # Holding `removed` keeps the memory alive until it is dropped under
+        # the lock: freed before a fit starts measuring or after it is done
+        # (see _measuring).
+        removed, existed = self._cache.delete(dataset_id)
         with self._release_lock:
-            removed, existed = self._cache.delete(dataset_id)
             if removed is not None and self._fitting:
                 self._parked.append(removed)
             removed = None

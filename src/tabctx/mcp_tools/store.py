@@ -47,6 +47,8 @@ class ModelInfo:
     classes: list[str] | None = None
     dropped: list[str] = field(default_factory=list)
     created: str = ""
+    # The model's context on the server ("" for models saved before 0.19).
+    dataset_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -109,16 +111,21 @@ class ModelStore:
         """The models this user's tabctx-mcp saved (others are left out)."""
         if not self.root.is_dir():
             return []
-        out = []
-        for meta in sorted(self.root.glob("*.json")):
-            try:
-                record = json.loads(meta.read_text())
-                data = (self.root / f"{meta.stem}.pkl").read_bytes()
-            except (OSError, ValueError):
-                continue
-            if hmac.compare_digest(str(record.get("signature", "")), self._sign(data)):
-                out.append(ModelInfo.from_dict(record))
-        return out
+        found = (self.verified(meta.stem) for meta in sorted(self.root.glob("*.json")))
+        return [info for info in found if info is not None]
+
+    def verified(self, name: str) -> ModelInfo | None:
+        """A model's description if this user's tabctx-mcp saved it (its
+        signature verifies), else None. Nothing is unpickled."""
+        try:
+            check_name(name)
+            record = json.loads((self.root / f"{name}.json").read_text())
+            data = (self.root / f"{name}.pkl").read_bytes()
+        except (OSError, ValueError):
+            return None
+        if hmac.compare_digest(str(record.get("signature", "")), self._sign(data)):
+            return ModelInfo.from_dict(record)
+        return None
 
     def _record(self, name: str) -> dict[str, Any]:
         check_name(name)

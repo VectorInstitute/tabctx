@@ -75,12 +75,16 @@ _METHODS = frozenset(
 # Concurrent calls per worker: its engine schedules GPU work itself (see
 # engine.py); these only need to queue and answer cheap calls promptly.
 _WORKER_THREADS = 16
-# Quick reads answered on their own thread instead of that pool: /readyz
-# asks every worker for a report (and a listing asks for its contexts),
-# and fits on one device run one at a time, so a backlog of more fits than
-# the pool has threads would otherwise leave them waiting behind the fits
-# (and fail readiness on a healthy pod).
-_OWN_THREAD = frozenset({"report", "contexts"})
+# Calls answered outside that pool. Fits on one device run one at a time,
+# so a backlog of more fits than the pool has threads would leave anything
+# queued behind them for minutes. /readyz asks every worker for a report,
+# on a thread of its own (else readiness fails on a healthy pod). Listings
+# and deletes never take the device, so they get a small pool of their
+# own: a delete may wait for a context's spill write to land, and must not
+# hold up the report meanwhile.
+_REPORT = frozenset({"report"})
+_CATALOG = frozenset({"contexts", "evict"})
+_CATALOG_THREADS = 4
 
 
 _NEVER_FITS = 1 << 62
@@ -278,7 +282,11 @@ def _worker_main(
     with (
         ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool,
         ThreadPoolExecutor(1, thread_name_prefix=f"w-{device}-report") as reports,
+        ThreadPoolExecutor(
+            _CATALOG_THREADS, thread_name_prefix=f"w-{device}-catalog"
+        ) as catalog,
     ):
+        lanes = {**dict.fromkeys(_REPORT, reports), **dict.fromkeys(_CATALOG, catalog)}
         while True:
             try:
                 msg = conn.recv()
@@ -299,9 +307,7 @@ def _worker_main(
                         )
                     )
                 continue
-            (reports if method in _OWN_THREAD else pool).submit(
-                handle, req_id, method, args, kwargs
-            )
+            lanes.get(method, pool).submit(handle, req_id, method, args, kwargs)
 
 
 # ---- serving process -------------------------------------------------------

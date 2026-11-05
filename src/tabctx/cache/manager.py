@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tabctx.cache.policies import EvictionPolicy, LRUEvictionPolicy
-from tabctx.errors import CacheCapacityError
+from tabctx.errors import CacheCapacityError, CacheUnavailableError
 from tabctx.schema import TableSchema
 from tabctx.types import ContextInfo, EngineStats, Location, Task
 
@@ -290,20 +290,22 @@ class ContextCacheManager:
         spill, restore or replacement of this id to land (else a spill
         write finishing afterwards would bring the context back), then
         removes both copies under the lock, so no get() or evict_one() can
-        see one copy gone and the other still there. The spill tier's
-        delete is two unlinks, short enough to hold the lock for. Raises
-        TimeoutError if the move doesn't land in settle_timeout_s (nothing
-        is deleted then: retry)."""
+        see one copy gone and the other still there. The spilled copy goes
+        first: if unlinking it fails, the resident copy is untouched. Its
+        two unlinks are short, though a multi-GB file can take ~0.1 s, and
+        bookkeeping (light predicts' peek and touch) waits meanwhile.
+        Raises CacheUnavailableError if the move doesn't land in
+        settle_timeout_s (nothing is deleted then: retry)."""
         with self._settled:
             if not self._settled.wait_for(
                 lambda: dataset_id not in self._in_transit, settle_timeout_s
             ):
-                raise TimeoutError(
-                    f"{dataset_id!r} is still moving between cache tiers after "
+                raise CacheUnavailableError(
+                    "the context is still moving between cache tiers after "
                     f"{settle_timeout_s:.0f} s; nothing was deleted, retry"
                 )
-            removed = self._remove(dataset_id)
             spilled = self._spill is not None and self._spill.delete(dataset_id)
+            removed = self._remove(dataset_id)
         return removed, removed is not None or spilled
 
     def contexts(self) -> list[ContextInfo]:

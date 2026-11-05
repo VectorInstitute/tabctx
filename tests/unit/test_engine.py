@@ -255,6 +255,31 @@ class TestListAndDelete:
         assert payload() is None
 
 
+def test_a_delete_waiting_for_a_move_holds_no_engine_lock():
+    """While a delete waits for a spill or restore of its id to land,
+    finishing predicts and fits must still get the release lock."""
+    import threading
+
+    engine, _ = make_engine()
+    engine.fit(TRAIN_X, TRAIN_Y, dataset_id="d")
+    cache = engine._cache
+    with cache._lock:
+        cache._transit_add("d")  # a move of "d" in progress
+    result: list = []
+    deleting = threading.Thread(target=lambda: result.append(engine.evict("d")))
+    deleting.start()
+    try:
+        deleting.join(0.05)
+        assert deleting.is_alive()  # waiting for the move
+        assert engine._release_lock.acquire(timeout=1)
+        engine._release_lock.release()
+    finally:
+        with cache._lock:
+            cache._transit_discard("d")
+        deleting.join(5)
+    assert result == [True]
+
+
 class TestNumpyInput:
     """X/y as numpy arrays take the rectangular-shape fast path
     (_rect_shape) instead of the per-row Python loop -- both must agree

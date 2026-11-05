@@ -113,6 +113,6 @@ def test_list_and_delete_on_the_owning_replica(two_replica_service):
         client.predict("team/to-delete", TEST_X)
     with pytest.raises(DatasetNotFoundError):
         client.delete("team/to-delete")
-    # Listings are per replica: none may still show it.
+    # Listings are per replica, from whichever answers; none may show it.
     for _ in range(6):
         assert "team/to-delete" not in [d["dataset_id"] for d in client.datasets()]
