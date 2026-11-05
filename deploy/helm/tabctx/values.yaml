@@ -12,8 +12,8 @@ image:
 imagePullSecrets: []
 
 # Models to serve (TABCTX_BACKEND); the first is the default. tabicl and
-# tabdpt are licensed for commercial use (tabdpt is in images after
-# 0.18.0); tabpfn needs a token (below) and is licensed for non-commercial
+# tabdpt are licensed for commercial use (tabdpt is in images from
+# 0.19.0); tabpfn needs a token (below) and is licensed for non-commercial
 # use.
 models: [tabicl]
 

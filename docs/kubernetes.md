@@ -21,8 +21,8 @@ curl localhost:8000/v1/models
 ```
 
 The chart serves TabICLv2 by default. `--set 'models={tabicl,tabdpt}'`
-adds TabDPT (both licensed for commercial use) with an image built after
-0.18.0, and `tabpfn` needs a [token](#tabpfn).
+adds TabDPT (both licensed for commercial use; images from 0.19.0), and
+`tabpfn` needs a [token](#tabpfn).
 
 To try it on a cluster without GPUs (kind, minikube), shrink it:
 

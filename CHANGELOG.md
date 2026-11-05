@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.19.0] - 2026-11-05
 ### Fixed
 - A 422 for a non-finite number in a request (`Infinity`) no longer becomes a 500: the error echoes the value as text.
 - **`/readyz` no longer waits behind long fits** (#51). It read GPU memory through torch's allocator (which waits for a fit freeing memory), asked each GPU worker for a report (up to 30 s behind its queued calls), took the host-memory guard's cross-process lock and walked the spill directory; on prod, readiness timed out during large fits, so a busy replica looked hung, and with the Helm chart's single replica that would take it out of its Service. Now every one of those is measured on its own thread every 5 s (worker processes send theirs), and `/readyz` reads the latest results and the guard's counters without a lock. It reports how old the device measurements are (`device_report_age_s`), and fails only for a dead worker or one silent for 10 minutes. Polled every 0.2 s during a 49 s TabICL fit on a CPU: median 1 ms, at most 353 ms. `/v1/tabctx/limits` reads the cache's counters without its lock too. A worker that never reports goes stale from its start; a spill tier that can't be read is shown as an error rather than a stuck worker. Not yet verified on a GPU: on a single-GPU replica serving in-process, whether torch releases the interpreter lock while its measuring call waits on the allocator; replicas with GPU worker processes measure in those processes, out of `/readyz`'s way.
