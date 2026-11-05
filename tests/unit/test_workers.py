@@ -72,6 +72,32 @@ def test_quantiles_cross_the_process_boundary(built):
         engine.evict("q")
 
 
+def test_a_restore_in_a_worker_is_counted_in_the_serving_process(tmp_path):
+    """A predict's restore from the disk tier happens in the worker; its
+    count must reach the serving process's timings, which is what a
+    predict response's cache_outcome is read from."""
+    from tabctx import timing
+
+    one = build_engine(
+        ServeSettings(
+            backends=("fake",), devices=("cuda:0",), spill_dir=str(tmp_path / "cuda_0")
+        )
+    )
+    one.engine.fit(*table(10, label="x"), dataset_id="r")
+    assert one.engine._cache.evict_one() is not None  # to cuda_0/ on disk
+    one.close()
+
+    workers = build_engine(_settings(tmp_path))
+    try:
+        assert workers.worker_shards  # really in worker processes
+        for expected in (1, 0):  # restored, then resident
+            with timing.collect() as timings:
+                assert workers.engine.predict("r", [[0.0, 0.0]]).predictions == ["x"]
+            assert timings.counts.get("restores", 0) == expected
+    finally:
+        workers.close()
+
+
 def test_errors_cross_the_process_boundary_with_their_type(built):
     with pytest.raises(DatasetNotFoundError):
         built.engine.predict("never-fit", [[0.0, 0.0]])

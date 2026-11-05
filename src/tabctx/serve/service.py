@@ -308,7 +308,6 @@ class TabctxPredictResponse(BaseModel):
     n_test: int
     latency_ms: float
     cache_outcome: Literal["hit", "restored"] = Field(
-        default="hit",
         description="Whether the context was resident or restored from the disk tier. "
         "Coalesced requests report their batch's outcome.",
     )
@@ -944,11 +943,8 @@ class TabctxService:
         session_id: str | None,
     ) -> TabctxPredictResponse:
         with timing.collect() as timings:
-            response = self._predict_timed(req, file, headers, session_id)
+            response = self._predict_timed(req, file, headers, session_id, timings)
         response.timings_ms = timings.as_dict()
-        response.cache_outcome = (
-            "restored" if timings.counts.get("restores", 0) else "hit"
-        )
         return response
 
     def _predict_timed(
@@ -957,6 +953,7 @@ class TabctxService:
         file: Path | None,
         headers: dict[str, str],
         session_id: str | None,
+        timings: timing.Timings,
     ) -> TabctxPredictResponse:
         start = time.monotonic()
         try:
@@ -989,6 +986,9 @@ class TabctxService:
             quantile_levels=req.quantiles if outcome.quantiles is not None else None,
             n_test=len(X_test),
             latency_ms=latency_ms,
+            # The engine counts a restore from the disk tier; a worker's or
+            # a coalesced batch's counts are merged in by now.
+            cache_outcome="restored" if timings.counts.get("restores") else "hit",
             served_by=_replica_tag(),
         )
 
