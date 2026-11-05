@@ -78,6 +78,7 @@ class TestHttpContract:
         )
         assert predict.status_code == 200, predict.text
         assert len(predict.json()["predictions"]) == len(TEST_X)
+        assert predict.json()["cache_outcome"] == "hit"
 
     def test_fit_with_multipart_table_file(self, app):
         csv = b"f1,f2,target\n0.0,1.0,a\n1.0,0.0,b\n0.5,0.5,a\n"
@@ -515,6 +516,59 @@ class TestOpenApi:
     def test_the_spec_names_the_service_and_its_version(self, app):
         info = app.openapi()["info"]
         assert info["title"] == "tabctx" and info["version"]
+
+
+@pytest.mark.parametrize("batch_window_ms", [0, 5])
+def test_predict_reports_restore_then_hit(monkeypatch, tmp_path, batch_window_ms):
+    monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+    monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+    monkeypatch.setenv("TABCTX_SPILL_DIR", str(tmp_path))
+    monkeypatch.setenv("TABCTX_BATCH_WINDOW_MS", str(batch_window_ms))
+    service = TabctxService()
+    app = make_app(service)
+    fit = _request(app, "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": "d1"})
+    assert fit.status_code == 200, fit.text
+    assert service._engine._cache.evict_one() is not None
+    for expected in ("restored", "hit"):
+        response = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": "d1", "test_X": TEST_X},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["cache_outcome"] == expected
+
+
+def test_coalesced_predicts_share_restored_outcome(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from tabctx.serve.service import TabctxPredictRequest
+
+    monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+    monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+    monkeypatch.setenv("TABCTX_SPILL_DIR", str(tmp_path))
+    monkeypatch.setenv("TABCTX_BATCH_WINDOW_MS", "100")
+    service = TabctxService()
+    app = make_app(service)
+    fit = _request(app, "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": "d1"})
+    assert fit.status_code == 200, fit.text
+    assert service._engine._cache.evict_one() is not None
+    barrier = Barrier(2)
+
+    def predict():
+        barrier.wait(timeout=5)
+        return service._predict_sync(
+            TabctxPredictRequest(dataset_id="d1", test_X=TEST_X), None, {}, None
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(predict) for _ in range(2)]
+        responses = [future.result(timeout=5) for future in futures]
+    assert service._predictor.engine_calls == 1
+    assert all(response.cache_outcome == "restored" for response in responses)
+    assert all(response.timings_ms["n_restores"] == 1 for response in responses)
 
 
 class TestReadyzNeverWaits:

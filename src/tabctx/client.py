@@ -50,7 +50,7 @@ import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
 from tabctx.errors import (
     AdmissionRejected,
@@ -111,6 +111,8 @@ class PredictResult:
     # probabilities).
     quantiles: list[list[float]] | None = None
     quantile_levels: list[float] | None = None
+    # None for older deployments and the stateless legacy endpoint.
+    cache_outcome: Literal["hit", "restored"] | None = None
 
 
 # The tabular models tabctx serves, preferred first. A gateway in front of
@@ -605,6 +607,7 @@ def _predict_result(resp: dict, asked_quantiles: bool = False) -> PredictResult:
         served_by=resp.get("served_by"),
         quantiles=resp.get("quantiles"),
         quantile_levels=resp.get("quantile_levels"),
+        cache_outcome=resp.get("cache_outcome"),
     )
 
 
