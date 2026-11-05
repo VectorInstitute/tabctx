@@ -56,7 +56,7 @@ from typing import Any
 from tabctx import timing
 from tabctx.errors import BackendComputeError
 from tabctx.schema import TableSchema
-from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,7 @@ _METHODS = frozenset(
         "fit",
         "predict",
         "evict",
+        "contexts",
         "schema",
         "estimate_fit_bytes",
         "report",
@@ -74,11 +75,12 @@ _METHODS = frozenset(
 # Concurrent calls per worker: its engine schedules GPU work itself (see
 # engine.py); these only need to queue and answer cheap calls promptly.
 _WORKER_THREADS = 16
-# Calls answered on their own thread instead of that pool: /readyz asks
-# every worker for a report, and fits on one device run one at a time, so
-# a backlog of more fits than the pool has threads would otherwise leave
-# the report waiting behind them and fail readiness on a healthy pod.
-_OWN_THREAD = frozenset({"report"})
+# Quick reads answered on their own thread instead of that pool: /readyz
+# asks every worker for a report (and a listing asks for its contexts),
+# and fits on one device run one at a time, so a backlog of more fits than
+# the pool has threads would otherwise leave them waiting behind the fits
+# (and fail readiness on a healthy pod).
+_OWN_THREAD = frozenset({"report", "contexts"})
 
 
 _NEVER_FITS = 1 << 62
@@ -667,8 +669,11 @@ class ProcessShard:
     def schema(self, dataset_id: str) -> TableSchema | None:
         return self._call("schema", dataset_id)
 
-    def evict(self, dataset_id: str) -> None:
-        self._call("evict", dataset_id)
+    def evict(self, dataset_id: str) -> bool:
+        return self._call("evict", dataset_id)
+
+    def contexts(self) -> list[ContextInfo]:
+        return self._call("contexts", timeout_s=QUICK_CALL_TIMEOUT_S)
 
     def report(self) -> dict:
         """The worker's spill stats and real GPU memory (see _report)."""

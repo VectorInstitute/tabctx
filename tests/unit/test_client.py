@@ -553,6 +553,56 @@ class TestGetEndpoints:
         }
 
 
+class TestDatasets:
+    def _capture(self, monkeypatch, response):
+        seen: list = []
+
+        def handler(req):
+            seen.append(req)
+            if isinstance(response, Exception):
+                raise response
+            return _json_response(response)
+
+        _install(monkeypatch, handler)
+        return seen
+
+    def test_lists_the_callers_contexts(self, monkeypatch):
+        listed = [{"dataset_id": "d", "model": "tabicl-v2"}]
+        seen = self._capture(monkeypatch, {"data": listed})
+        client = TabctxClient("http://localhost:8000", tenant_id="acme")
+        assert client.datasets() == listed
+        (req,) = seen
+        assert req.get_method() == "GET"
+        assert req.full_url == "http://localhost:8000/v1/tabctx/datasets"
+        assert req.headers["X-tabctx-tenant-id"] == "acme"
+
+    def test_delete_sends_the_id_quoted_with_its_affinity_header(self, monkeypatch):
+        seen = self._capture(monkeypatch, {"dataset_id": "a/b c", "deleted": True})
+        assert TabctxClient("http://localhost:8000").delete("a/b c") is None
+        (req,) = seen
+        assert req.get_method() == "DELETE" and req.data is None
+        assert req.full_url == "http://localhost:8000/v1/tabctx/datasets/a%2Fb%20c"
+        assert req.headers["X-session-id"] == "a/b c"
+
+    def test_deleting_a_missing_context_raises_not_found(self, monkeypatch):
+        self._capture(monkeypatch, _http_error(404, {"detail": "no context"}))
+        with pytest.raises(DatasetNotFoundError):
+            TabctxClient("http://localhost:8000").delete("gone")
+
+    def test_delete_retries_on_backpressure(self, monkeypatch, no_real_sleep):
+        replies = [_http_error(503, {"detail": "busy"}), _json_response({})]
+
+        def handler(req):
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+
+        _install(monkeypatch, handler)
+        TabctxClient("http://localhost:8000").delete("d")
+        assert replies == [] and len(no_real_sleep) == 1
+
+
 class TestBackpressureRetry:
     def test_retries_on_503_then_succeeds(self, monkeypatch, no_real_sleep):
         attempts = {"n": 0}

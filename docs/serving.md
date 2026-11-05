@@ -236,6 +236,42 @@ behind the same API. No client changes and no routing header needed.
   `per_device`); `/v1/tabctx/limits` reports the best single GPU's
   headroom and each device's.
 
+## Listing and deleting contexts
+
+`GET /v1/tabctx/datasets` lists the contexts the replica holds for the
+caller's tenant, resident or spilled to disk: id, model, task, shape,
+size, location, GPU and fit time. It shows metadata only, never a table.
+`DELETE /v1/tabctx/datasets/{dataset_id}` removes one from device
+memory, host memory and the disk tier on every GPU of the replica, and
+answers 404 if there is none.
+
+```python
+client = TabctxClient("http://localhost:8000", tenant_id="acme")
+client.datasets()            # [{"dataset_id": "churn-v1", "model": "tabicl-v2", ...}]
+client.delete("churn-v1")    # DatasetNotFoundError if it isn't there
+```
+
+```bash
+curl localhost:8000/v1/tabctx/datasets
+curl -X DELETE localhost:8000/v1/tabctx/datasets/churn-v1
+```
+
+What a delete covers:
+
+- **The context and its spilled copy.** A predict already running on it
+  finishes, then its memory is freed. A spill or restore of it in
+  progress lands first, so no copy reappears afterwards; if one doesn't
+  land in time the delete answers 503 and deleted nothing.
+- **Uploaded tables** are already gone: an upload is deleted as soon as
+  the fit or predict that used it has read it, and unused uploads
+  expire after `TABCTX_UPLOAD_TTL_S`.
+- **One tenant's ids only.** Another tenant's context of the same name
+  is untouched, and callers without a tenant id never see scoped ones.
+
+With several Ray replicas, each replica lists its own contexts. The
+client sends a delete with `x-session-id: <dataset_id>`, so it reaches
+the replica that holds the context.
+
 ## Tenant isolation
 
 `dataset_id` alone is a flat, guessable namespace -- without isolation,

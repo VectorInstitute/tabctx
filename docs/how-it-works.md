@@ -159,11 +159,10 @@ what is still missing.
    serving endpoint. Publishing an application should also work as a
    batch job that fits and writes the context to the shared store, with
    the deployment warm-loading a manifest of contexts at start.
-3. **A catalog.** You must already know a `dataset_id`; there is no
-   `GET /v1/tabctx/datasets` listing an application's contexts with
-   their task, model, shape, schema and residency (GPU / spilled /
-   persisted). The schema now travels with the context, so this is
-   mostly an endpoint.
+3. **A catalog.** `GET /v1/tabctx/datasets` (0.19) lists a tenant's
+   contexts with their model, task, shape and residency (resident /
+   spilled), and `DELETE` removes one. Still missing: the schema in the
+   listing, and a `persisted` state once item 1 exists.
 4. **Roles.** Tenancy is namespacing, not authorization: a tenant that
    can predict can also re-fit or evict. "Admin publishes, users predict"
    needs scoped credentials at the gateway (or read-only tenant tokens).

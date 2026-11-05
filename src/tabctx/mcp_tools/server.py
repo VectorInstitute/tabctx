@@ -179,6 +179,15 @@ def build_server(tools: TabularTools | None = None) -> MCPServer:
         """The fitted models kept so far, with their targets and features."""
         return _run(t.list_models)
 
+    @tool
+    def delete_model(
+        name: Annotated[str, Field(description="A fitted model's name")],
+    ) -> dict[str, Any]:
+        """Delete a fitted model: its cached context on the tabctx
+        deployment and its saved files here, which include its training
+        table. For when the user wants a model, or the data it holds, gone."""
+        return _run(t.delete_model, name)
+
     return server
 
 

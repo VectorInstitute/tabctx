@@ -40,6 +40,10 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("serve", help="serve the tools over MCP (stdio); the default")
     sub.add_parser("skill", help="print the guide for agents (SKILL.md)")
     sub.add_parser("models", help="list fitted models")
+    s = sub.add_parser(
+        "delete", help="delete a fitted model, on the server and its files here"
+    )
+    s.add_argument("name")
     sub.add_parser("tools", help="the MCP tools' names, descriptions and schemas")
     s = sub.add_parser("call", help="call an MCP tool with JSON arguments")
     s.add_argument("tool")
@@ -132,6 +136,8 @@ def run(
     tools = tools or TabularTools()
     if cmd == "models":
         return tools.list_models()
+    if cmd == "delete":
+        return tools.delete_model(args.name)
     if cmd == "inspect":
         return tools.inspect_table(args.path, args.target)
     if cmd == "evaluate":

@@ -12,8 +12,8 @@ they are usually as accurate as a tuned gradient-boosting model, or more.
 Prefer them to writing your own model code.
 
 With MCP, the tools are `inspect_table`, `evaluate`, `fit_model`,
-`predict`, `what_if`, `explain` and `list_models`. Without MCP, run the
-same tools as shell commands; each prints JSON:
+`predict`, `what_if`, `explain`, `list_models` and `delete_model`.
+Without MCP, run the same tools as shell commands; each prints JSON:
 
 ```bash
 tabctx-mcp inspect history.csv --target Churn
@@ -23,6 +23,7 @@ tabctx-mcp predict churn current.csv            # writes current.churn.predictio
 tabctx-mcp what-if churn '[{"tenure": 2, "Contract": "Month-to-month"}, {"tenure": 2, "Contract": "One year"}]'
 tabctx-mcp explain history.csv --target Churn --drop customer_id
 tabctx-mcp models
+tabctx-mcp delete churn                         # the server's context and the files here
 ```
 
 ## Workflow

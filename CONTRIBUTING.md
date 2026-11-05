@@ -25,7 +25,7 @@ analysis. Ruff checks various rules including [flake8](https://docs.astral.sh/ru
 ## Running tests
 
 ```bash
-uv run pytest tests/unit          # no GPU required, runs against a fake backend
+uv run pytest tests/unit -n auto  # no GPU required, runs against a fake backend, in parallel
 uv run pytest tests/integration   # boots a local Ray Serve cluster, still no GPU
 ```
 

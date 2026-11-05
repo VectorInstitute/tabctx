@@ -519,3 +519,35 @@ def test_a_bad_argument_fails_before_asking_the_server(tmp_path, history):
         tools.fit_model(history, "nope")
     with pytest.raises(ValueError, match="nothing to evaluate"):
         tools.evaluate(history, "churn", models=[], baseline=False)
+
+
+class TestDeleteModel:
+    def test_deletes_the_server_context_and_the_files(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        assert tools.delete_model("churn") == {
+            "deleted": "churn",
+            "server_context_deleted": True,
+        }
+        assert deployment.contexts == {}
+        assert tools.list_models()["models"] == []
+        assert list(tools.store.root.iterdir()) == []  # the training table too
+
+    def test_a_context_already_gone_from_the_server(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        deployment.contexts.clear()  # evicted, or the server restarted
+        out = tools.delete_model("churn")
+        assert out["server_context_deleted"] is False
+        assert tools.list_models()["models"] == []
+
+    def test_an_unknown_name_lists_the_models(self, tools, history):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        with pytest.raises(ValueError, match="fitted models: \\['churn'\\]"):
+            tools.delete_model("nope")
+
+    def test_cli(self, tools, history, capsys):
+        from tabctx.mcp_tools import cli
+
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        capsys.readouterr()
+        assert cli.main(["delete", "churn"], tools) == 0
+        assert json.loads(capsys.readouterr().out)["deleted"] == "churn"

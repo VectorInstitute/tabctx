@@ -86,6 +86,12 @@ class ModelStore:
         check_name(name)
         return (self.root / f"{name}.json").is_file()
 
+    def delete(self, name: str) -> None:
+        """Remove a model's files (the pickle holds its training table)."""
+        self._record(name)  # a clear error, listing the models, if absent
+        for suffix in (".pkl", ".json"):
+            (self.root / f"{name}{suffix}").unlink(missing_ok=True)
+
     def info(self, name: str) -> ModelInfo:
         return ModelInfo.from_dict(self._record(name))
 

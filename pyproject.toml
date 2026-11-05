@@ -76,6 +76,8 @@ dev = ["pytest>=7.0", "pytest-cov", "httpx"]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
+    # The unit tests run in parallel (-n auto): each test owns its state.
+    "pytest-xdist",
     "httpx",
     "pre-commit",
     "ruff",

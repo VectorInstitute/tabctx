@@ -1,6 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **List and delete contexts** (#103, part 1). `GET /v1/tabctx/datasets` lists the caller's contexts, resident or spilled: id, model, task, shape, size, location, GPU and fit time (metadata only). `DELETE /v1/tabctx/datasets/{dataset_id}` removes one from device memory, host memory and the disk tier on every GPU, or answers 404 if there is none. Both are scoped by tenant like every `/v1/tabctx` route. See "Listing and deleting contexts" in `docs/serving.md`.
+  - A delete is atomic with respect to spills and restores: one in progress lands first, so no copy reappears afterwards. If it doesn't land in time, the delete answers 503 having deleted nothing.
+  - On a multi-GPU replica the delete asks every live GPU, not just the ones the residency snapshot lists, and fails if one of them errors, so it never reports success while a copy may survive.
+  - Client: `TabctxClient.datasets()` and `TabctxClient.delete(dataset_id)`.
+  - Agents: a `delete_model` tool (and `tabctx-mcp delete <name>`) removes a model's context on the server and its saved files, which include its training table.
+  - Spilled contexts now record their fit time; ones spilled by older versions list it as `null`.
+
+### Fixed
+- `TabctxClient`'s GET requests send the tenant header, as its POSTs always did.
+
+### Changed
+- The unit tests run in parallel (`pytest -n auto`, with pytest-xdist in the dev dependencies), as CI now does.
 
 ## [0.18.0] - 2026-11-04
 ### Changed

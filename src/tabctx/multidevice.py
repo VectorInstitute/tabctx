@@ -44,6 +44,7 @@ use either interchangeably.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import threading
 import time
@@ -64,7 +65,7 @@ from tabctx.placement import (
     PlacementPolicy,
 )
 from tabctx.schema import TableSchema
-from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,9 @@ class Shard(Protocol):
 
     def schema(self, dataset_id: str) -> TableSchema | None: ...
 
-    def evict(self, dataset_id: str) -> None: ...
+    def evict(self, dataset_id: str) -> bool: ...
+
+    def contexts(self) -> list[ContextInfo]: ...
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -287,20 +290,34 @@ class MultiDeviceEngine:
             self._evict_from(dataset_id, others, announce)
             return resolved
 
-    def _evict_from(self, dataset_id: str, indices: list[int], announce: bool) -> None:
+    def _evict_from(
+        self,
+        dataset_id: str,
+        indices: list[int],
+        announce: bool,
+        strict: bool = False,
+    ) -> bool:
         """Evict the id from each device, reporting each removal that
-        happened; a device that fails (a dead worker) is logged and skipped,
-        so the others are still cleaned up."""
+        happened; True if any device had it. A device that fails (a dead
+        worker) is logged and skipped, so the others are still cleaned up;
+        `strict` then re-raises the first failure once all were tried."""
+        removed = False
+        failure: Exception | None = None
         for i in indices:
             try:
-                self._shards[i].evict(dataset_id)
-            except Exception:  # noqa: BLE001 -- keep cleaning the others
+                had = self._shards[i].evict(dataset_id)
+            except Exception as e:  # noqa: BLE001 -- keep cleaning the others
                 logger.exception(
                     "evicting %s from %s failed", dataset_id, self._devices[i]
                 )
+                failure = failure or e
                 continue
-            if announce:
+            removed = removed or had
+            if announce and had:
                 self._emit("removed", dataset_id, i)
+        if strict and failure is not None:
+            raise failure
+        return removed
 
     def _emit(
         self, kind: EventKind, dataset_id: str, index: int, backend: str | None = None
@@ -365,9 +382,27 @@ class MultiDeviceEngine:
             with self._id_locks.hold(dataset_id):
                 self._evict_from(dataset_id, self._locate(dataset_id), announce=False)
 
-    def evict(self, dataset_id: str) -> None:
+    def evict(self, dataset_id: str) -> bool:
+        """Remove the id from every device (resident and spilled copies);
+        True if any had it. Asks every live device, not just those the
+        residency snapshots list (they may lag), and raises if one fails:
+        a delete must not report success while a copy may survive. A dead
+        worker's in-memory contexts are gone with it."""
+        live = [i for i, s in enumerate(self._shards) if getattr(s, "alive", True)]
         with self._id_locks.hold(dataset_id):
-            self._evict_from(dataset_id, self._locate(dataset_id), announce=True)
+            return self._evict_from(dataset_id, live, announce=True, strict=True)
+
+    def contexts(self) -> list[ContextInfo]:
+        """Every context on every live device, each tagged with its device.
+        During a re-fit that moves an id, both copies may be listed."""
+        out: list[ContextInfo] = []
+        for device, shard in zip(self._devices, self._shards, strict=True):
+            if getattr(shard, "alive", True):
+                out += [
+                    dataclasses.replace(info, device=device)
+                    for info in shard.contexts()
+                ]
+        return out
 
     def residency(self) -> dict[str, dict[str, list[str]]]:
         """Where every context is now, per device (lock-free snapshots):

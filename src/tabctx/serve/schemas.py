@@ -76,6 +76,11 @@ class SchemaCache:
                 _, old = self._entries.popitem(last=False)
                 self._bytes -= old.approx_bytes
 
+    def forget(self, dataset_id: str) -> None:
+        """Drop a deleted context's schema (it holds the training table's
+        text categories)."""
+        self._drop(dataset_id)
+
     def _drop(self, dataset_id: str) -> None:
         with self._lock:
             old = self._entries.pop(dataset_id, None)

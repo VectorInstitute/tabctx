@@ -1,8 +1,11 @@
 """Unit tests for the disk spillover tier (cache/spill.py + its
 ContextCacheManager integration)."""
 
+import json
 import threading
 from pathlib import Path
+
+import pytest
 
 from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import CachedContext, ContextCacheManager
@@ -26,6 +29,14 @@ def _ctx(dataset_id: str, est_bytes: int = 100, payload=None) -> CachedContext:
         payload=payload if payload is not None else {"data": dataset_id},
         est_bytes=est_bytes,
     )
+
+
+def _rewrite_meta(spill, dataset_id, edit):
+    """Edit a spilled context's metadata file in place (an older format)."""
+    meta_path, _ = spill._paths(dataset_id)
+    meta = json.loads(meta_path.read_text())
+    edit(meta)
+    meta_path.write_text(json.dumps(meta))
 
 
 class TestDiskSpillStore:
@@ -149,14 +160,6 @@ class TestCacheManagerIntegration:
         assert spill.spill(ctx)
         assert spill.load("csv").schema == ctx.schema
 
-    def _rewrite_meta(self, spill, dataset_id, edit):
-        import json
-
-        meta_path, _ = spill._paths(dataset_id)
-        meta = json.loads(meta_path.read_text())
-        edit(meta)
-        meta_path.write_text(json.dumps(meta))
-
     def test_meta_from_before_schemas_loads_its_names(self, tmp_path):
         # 0.14 and earlier recorded only a CSV's column names.
         spill = DiskSpillStore(tmp_path)
@@ -166,13 +169,13 @@ class TestCacheManagerIntegration:
             del meta["schema"]
             meta["feature_names"] = ["age", "bmi"]
 
-        self._rewrite_meta(spill, "old", old_format)
+        _rewrite_meta(spill, "old", old_format)
         assert spill.load("old").schema == TableSchema((None, None), ("age", "bmi"))
 
     def test_meta_without_any_schema_loads_as_none(self, tmp_path):
         spill = DiskSpillStore(tmp_path)
         assert spill.spill(_ctx("older"))
-        self._rewrite_meta(spill, "older", lambda meta: meta.pop("schema"))
+        _rewrite_meta(spill, "older", lambda meta: meta.pop("schema"))
         assert spill.load("older").schema is None
 
     def test_no_spill_store_behaves_as_before(self):
@@ -297,3 +300,123 @@ def test_put_keeps_a_replaced_id_visible_while_making_room(tmp_path):
     store.gate.set()
     t.join(5)
     assert cache.holds("refit")
+
+
+class TestDelete:
+    """delete() removes a context from every tier and says whether there
+    was one, atomically with respect to moves between tiers."""
+
+    def test_deletes_a_resident_context(self, tmp_path):
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        ctx = _ctx("a")
+        cache.put(ctx)
+        assert cache.delete("a") == (ctx, True)
+        assert not cache.has("a")
+        assert cache.stats().used_bytes == 0
+
+    def test_deletes_a_spilled_context_and_its_files(self, tmp_path):
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        cache.put(_ctx("a"))
+        cache.evict_one()
+        assert list(tmp_path.iterdir())  # spilled to disk
+        assert cache.delete("a") == (None, True)
+        assert not cache.has("a")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_an_absent_id_was_not_there(self, tmp_path):
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        assert cache.delete("never") == (None, False)
+        assert ContextCacheManager(1000).delete("never") == (None, False)
+
+    def test_files_a_predecessor_spilled_are_deleted(self, tmp_path):
+        DiskSpillStore(tmp_path).spill(_ctx("old"))
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        assert cache.delete("old") == (None, True)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_waits_for_a_spill_in_progress_so_nothing_resurrects(self, tmp_path):
+        """Without waiting, the spill write would land after the delete and
+        the next get() would bring the context back."""
+        store = GatedSpillStore(tmp_path)
+        cache = ContextCacheManager(1000, spill_store=store)
+        cache.put(_ctx("moving"))
+        spilling = threading.Thread(target=cache.evict_one)
+        spilling.start()
+        assert store.entered.wait(5)
+        result: list = []
+        deleting = threading.Thread(
+            target=lambda: result.append(cache.delete("moving"))
+        )
+        deleting.start()
+        deleting.join(0.05)
+        assert deleting.is_alive()  # held until the spill lands
+        store.gate.set()
+        spilling.join(5)
+        deleting.join(5)
+        assert result == [(None, True)]
+        assert not cache.has("moving") and cache.get("moving") is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_move_that_never_lands_fails_the_delete(self, tmp_path):
+        """Never "not there" while a copy is about to land: the caller
+        retries instead."""
+        store = GatedSpillStore(tmp_path)
+        cache = ContextCacheManager(1000, spill_store=store)
+        cache.put(_ctx("stuck"))
+        spilling = threading.Thread(target=cache.evict_one)
+        spilling.start()
+        assert store.entered.wait(5)
+        try:
+            with pytest.raises(TimeoutError, match="retry"):
+                cache.delete("stuck", settle_timeout_s=0.01)
+        finally:
+            store.gate.set()
+            spilling.join(5)
+        assert cache.delete("stuck") == (None, True)
+
+
+class TestContexts:
+    def test_lists_resident_and_spilled_contexts(self, tmp_path):
+        cache = ContextCacheManager(150, spill_store=DiskSpillStore(tmp_path))
+        cache.put(_ctx("cold"))
+        cache.put(_ctx("hot"))  # over capacity: "cold" spills
+        listed = {i.dataset_id: i for i in cache.contexts()}
+        assert {k: i.location for k, i in listed.items()} == {
+            "hot": "resident",
+            "cold": "spilled",
+        }
+        cold = listed["cold"]
+        assert (cold.model, cold.task, cold.n_train, cold.n_features, cold.bytes) == (
+            "fake",
+            "classification",
+            3,
+            2,
+            100,
+        )
+
+    def test_fit_time_survives_the_spill_tier(self, tmp_path):
+        cache = ContextCacheManager(1000, spill_store=DiskSpillStore(tmp_path))
+        ctx = _ctx("a")
+        ctx.fitted_at = 1_700_000_000.0
+        cache.put(ctx)
+        cache.evict_one()
+        assert [i.fitted_at for i in cache.contexts()] == [1_700_000_000.0]
+        assert cache.get("a").fitted_at == 1_700_000_000.0
+
+    def test_meta_from_before_fit_times_lists_none(self, tmp_path):
+        store = DiskSpillStore(tmp_path)
+        store.spill(_ctx("old"))
+        _rewrite_meta(store, "old", lambda meta: meta.pop("fitted_at"))
+        assert [i.fitted_at for i in store.contexts()] == [None]
+        assert store.load("old").fitted_at is None
+
+    def test_unreadable_meta_is_left_out(self, tmp_path):
+        store = DiskSpillStore(tmp_path)
+        store.spill(_ctx("good"))
+        store.spill(_ctx("bad"))
+        meta_path, _ = store._paths("bad")
+        meta_path.write_text("{not json")
+        assert [i.dataset_id for i in store.contexts()] == ["good"]
+
+    def test_lists_nothing_without_contexts(self):
+        assert ContextCacheManager(1000).contexts() == []

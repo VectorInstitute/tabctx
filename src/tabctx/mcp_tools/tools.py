@@ -18,6 +18,7 @@ from sklearn import metrics
 from sklearn.model_selection import train_test_split
 
 from tabctx.client import TabctxClient
+from tabctx.errors import DatasetNotFoundError
 from tabctx.estimators import TabctxClassifier, TabctxRegressor
 from tabctx.labels import infer_task
 from tabctx.mcp_tools.store import ModelInfo, ModelStore, check_name
@@ -75,6 +76,18 @@ class TabularTools:
             "store": str(self.store.root),
             "models": [i.as_dict() for i in self.store.list()],
         }
+
+    def delete_model(self, name: str) -> dict[str, Any]:
+        """Delete a fitted model: its context on the deployment, then its
+        files here (which hold its training table)."""
+        _, estimator = self.store.load(name)
+        try:
+            self._client().delete(estimator.dataset_id_)
+            on_server = True
+        except DatasetNotFoundError:  # evicted or lost already
+            on_server = False
+        self.store.delete(name)
+        return {"deleted": name, "server_context_deleted": on_server}
 
     # ---- fit and predict -----------------------------------------------
 

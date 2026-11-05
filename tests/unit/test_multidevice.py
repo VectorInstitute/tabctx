@@ -538,6 +538,66 @@ class TestMovingContexts:
         assert len(calls) == 2
 
 
+class TestListAndDelete:
+    def test_contexts_are_tagged_with_their_device(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="a")
+        engine.fit(*table(20), dataset_id="b")
+        listed = {i.dataset_id: i.device for i in engine.contexts()}
+        assert listed == {d: f"cuda:{where(shards, d)[0]}" for d in ("a", "b")}
+
+    def test_spilled_contexts_are_listed_on_their_device(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        shards[owner]._cache.make_room(CAPACITY)
+        (info,) = engine.contexts()
+        assert (info.location, info.device) == ("spilled", f"cuda:{owner}")
+
+    def test_evict_reports_whether_any_device_had_it(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10), dataset_id="d")
+        shards[where(shards, "d")[0]]._cache.make_room(CAPACITY)  # spill it
+        assert engine.evict("d") is True
+        assert engine.evict("d") is False
+        assert engine.contexts() == []
+
+    def test_evict_asks_every_device_not_just_the_snapshot(self):
+        """A residency snapshot can lag (a worker's view arrives with its
+        next reply): a delete must not trust it."""
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        engine._locate = lambda dataset_id: []  # a stale view: nowhere
+        assert engine.evict("d") is True
+        assert not shards[owner].has("d")
+
+    def test_a_failing_device_fails_the_delete_after_cleaning_the_others(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        broken = shards[1 - owner]
+
+        def fail(dataset_id):
+            raise RuntimeError("worker gone")
+
+        broken.evict = fail
+        with pytest.raises(RuntimeError, match="worker gone"):
+            engine.evict("d")
+        assert not shards[owner].has("d")  # still removed where it lived
+
+    def test_a_dead_device_is_skipped(self):
+        """Its in-memory contexts died with it; calling it would only fail."""
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        dead = shards[1 - owner]
+        dead.alive = False
+        dead.evict = dead.contexts = lambda *a: pytest.fail("called a dead device")
+        assert engine.evict("d") is True
+        assert engine.contexts() == []
+
+
 class TestFailures:
     def test_failed_refit_keeps_the_previous_context(self):
         engine, shards, _ = build(2)

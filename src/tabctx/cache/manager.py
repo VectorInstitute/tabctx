@@ -26,7 +26,7 @@ from typing import Any
 from tabctx.cache.policies import EvictionPolicy, LRUEvictionPolicy
 from tabctx.errors import CacheCapacityError
 from tabctx.schema import TableSchema
-from tabctx.types import EngineStats, Task
+from tabctx.types import ContextInfo, EngineStats, Location, Task
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,22 @@ class CachedContext:
     schema: TableSchema | None = None
     created_at: float = field(default_factory=time.monotonic)
     last_accessed_at: float = field(default_factory=time.monotonic)
+    # Wall-clock time of the fit, for listings (created_at is monotonic,
+    # meaningless outside this process). Travels through the spill tier;
+    # None for contexts spilled before it was recorded.
+    fitted_at: float | None = field(default_factory=time.time)
+
+    def info(self, location: Location = "resident") -> ContextInfo:
+        return ContextInfo(
+            dataset_id=self.dataset_id,
+            model=self.backend_name,
+            task=self.task,
+            n_train=self.n_train,
+            n_features=self.n_features,
+            bytes=self.est_bytes,
+            location=location,
+            fitted_at=self.fitted_at,
+        )
 
 
 class ContextCacheManager:
@@ -258,16 +274,48 @@ class ContextCacheManager:
                 self._transit_discard(context.dataset_id)
 
     def evict(self, dataset_id: str) -> CachedContext | None:
-        """Drop a context from every tier and return the resident one (the
-        caller decides when its memory may be released). Never spills: this
-        is caller intent (fit_predict's one-shot cleanup, an explicit
-        delete), and a spilled copy left behind would silently resurrect on
-        the next get()."""
-        with self._lock:
+        """delete(), returning just the resident context."""
+        return self.delete(dataset_id)[0]
+
+    def delete(
+        self, dataset_id: str, settle_timeout_s: float = 600.0
+    ) -> tuple[CachedContext | None, bool]:
+        """Drop a context from every tier. Returns the resident one (the
+        caller decides when its memory may be released) and whether there
+        was a copy in any tier. Never spills: this is caller intent (an
+        explicit delete, fit_predict's one-shot cleanup), and a spilled copy
+        left behind would silently resurrect on the next get().
+
+        Atomic with respect to moves between tiers: it first waits for a
+        spill, restore or replacement of this id to land (else a spill
+        write finishing afterwards would bring the context back), then
+        removes both copies under the lock, so no get() or evict_one() can
+        see one copy gone and the other still there. The spill tier's
+        delete is two unlinks, short enough to hold the lock for. Raises
+        TimeoutError if the move doesn't land in settle_timeout_s (nothing
+        is deleted then: retry)."""
+        with self._settled:
+            if not self._settled.wait_for(
+                lambda: dataset_id not in self._in_transit, settle_timeout_s
+            ):
+                raise TimeoutError(
+                    f"{dataset_id!r} is still moving between cache tiers after "
+                    f"{settle_timeout_s:.0f} s; nothing was deleted, retry"
+                )
             removed = self._remove(dataset_id)
-        if self._spill is not None:
-            self._spill.delete(dataset_id)
-        return removed
+            spilled = self._spill is not None and self._spill.delete(dataset_id)
+        return removed, removed is not None or spilled
+
+    def contexts(self) -> list[ContextInfo]:
+        """Every context here, resident and spilled: metadata only. A
+        context moving between tiers right now may be missing."""
+        with self._lock:
+            resident = [entry.info("resident") for entry in self._entries.values()]
+        if self._spill is None:
+            return resident
+        held = {info.dataset_id for info in resident}
+        spilled = [i for i in self._spill.contexts() if i.dataset_id not in held]
+        return resident + spilled
 
     # ---- lock-free snapshots ---------------------------------------
     # Readers that only need bookkeeping (a multi-device router choosing a
