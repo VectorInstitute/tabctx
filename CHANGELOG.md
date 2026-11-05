@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 ### Added
+- **TabDPT, a third model** (#102): `TABCTX_BACKEND=tabdpt` (or `tabicl,tabdpt`) serves Layer 6's TabDPT as `tabdpt-1.3`. Its code and weights are Apache-2.0, so with TabICLv2 there are now two models a business can serve without a separate license. Install with `pip install "tabctx[tabdpt]"`; the container image includes it.
+  - On credit-g it scored 0.764 against TabICL's 0.772; on 3,000 rows of California housing, R² 0.892, with its 90% interval holding 87.6% of held-out prices. Classification, regression, prediction intervals, list and delete, and the spill tier all work as for the other models.
+  - TabDPT keeps no encoding of the training table: its fit stores the table and each predict draws a context from it. So a TabDPT context is small (about 130 KB for 750 rows) and its predicts cost what they cost in-process; tabctx adds serving: one endpoint, admission control, tenancy.
+  - Fits on one device share one network per task, as TabPFN's do, and the spill tier stores a context without it.
+  - Predicts use a fixed seed: TabDPT samples each predict's context at random, and the same request should give the same answer.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;

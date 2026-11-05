@@ -1,4 +1,4 @@
-# The standalone serving image: tabctx + tabicl + tabpfn + torch, serving
+# The standalone serving image: tabctx + tabicl + tabpfn + tabdpt + torch, serving
 # `python -m tabctx.serve` (serve/standalone.py) -- no Ray. Built and
 # pushed by .github/workflows/docker_image.yml on each release tag, and
 # smoke-tested there against the fake backend (no GPU in CI).
@@ -52,7 +52,7 @@ COPY src ./src
 # resolution for both, so the extras' unpinned `torch` and the pin cannot
 # diverge. The project itself goes in last, without re-resolving.
 RUN uv export --frozen --no-dev --no-hashes --no-emit-project \
-        --extra standalone --extra tabicl --extra tabpfn -o /tmp/locked.txt \
+        --extra standalone --extra tabicl --extra tabpfn --extra tabdpt -o /tmp/locked.txt \
     && grep -v -E '^(torch|triton|nvidia-)' /tmp/locked.txt > /tmp/requirements.txt \
     && uv pip install --system --no-cache \
         "torch==${TORCH_VERSION}" -r /tmp/requirements.txt \

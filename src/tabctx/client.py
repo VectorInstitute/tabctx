@@ -116,7 +116,7 @@ class PredictResult:
 # The tabular models tabctx serves, preferred first. A gateway in front of
 # tabctx may list them among other models (Vector's lists LLMs too) and
 # without tabctx's `default` mark; this list picks them out there.
-KNOWN_MODELS = ("tabpfn-3.5", "tabicl-v2")
+KNOWN_MODELS = ("tabpfn-3.5", "tabicl-v2", "tabdpt-1.3")
 
 
 def tabular_models_in(models: list[dict]) -> tuple[list[str], str | None]:

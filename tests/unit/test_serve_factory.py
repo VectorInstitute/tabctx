@@ -48,6 +48,10 @@ class TestServeSettings:
         monkeypatch.setenv(BACKEND_ENV_VAR, "tabpfn")
         assert ServeSettings.from_env().backends == ("tabpfn",)
 
+    def test_tabdpt_is_a_known_backend(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "tabicl,tabdpt")
+        assert ServeSettings.from_env().backends == ("tabicl", "tabdpt")
+
     @pytest.mark.parametrize("bad", ["0", "-0.5", "1.5", "abc"])
     def test_bad_fraction_rejected(self, monkeypatch, bad):
         monkeypatch.setenv(GPU_MEMORY_FRACTION_ENV_VAR, bad)

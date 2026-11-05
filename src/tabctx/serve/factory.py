@@ -10,7 +10,8 @@ Environment variables:
 - ``TABCTX_BACKEND``: comma-separated list of models to serve behind the
   one endpoint (requests pick one via their ``model`` field; the FIRST
   listed is the default). Known kinds: ``"tabicl"`` (default; requires
-  torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"fake"``
+  torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"tabdpt"``
+  (requires torch + tabdpt), ``"fake"``
   (deterministic stand-in, no GPU/torch -- what makes serving testable
   on a laptop or in CI). E.g. ``TABCTX_BACKEND=tabicl,tabpfn`` serves
   both models over one shared cache and GPU budget.
@@ -128,9 +129,9 @@ FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
 
 logger = logging.getLogger(__name__)
 
-BackendKind = Literal["tabicl", "tabpfn", "fake"]
+BackendKind = Literal["tabicl", "tabpfn", "tabdpt", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
-BACKEND_KINDS: tuple[BackendKind, ...] = ("tabicl", "tabpfn", "fake")
+BACKEND_KINDS: tuple[BackendKind, ...] = ("tabicl", "tabpfn", "tabdpt", "fake")
 KV_CACHE_MODES: tuple[KvCacheMode, ...] = ("kv", "repr", "off")
 
 
@@ -565,13 +566,15 @@ def _build_real_backend(
     # docstrings. Isolated in its own function so the pragma doesn't also
     # exclude the (fully unit-tested) fake-backend and dispatch logic in
     # _build_backend below.
-    if kind == "tabpfn":
+    if kind == "tabdpt":
+        from tabctx.backends.tabdpt import TabDPTBackend
+
+        backend: TabularICLBackend = TabDPTBackend(device=device)
+    elif kind == "tabpfn":
         from tabctx.backends.tabpfn import TabPFNBackend
 
         # TABCTX_KV_CACHE maps onto TabPFN's fit_mode (see backends/tabpfn.py).
-        backend: TabularICLBackend = TabPFNBackend(
-            device=device, cache_mode=settings.kv_cache
-        )
+        backend = TabPFNBackend(device=device, cache_mode=settings.kv_cache)
     else:
         from tabctx.backends.tabicl import TabICLBackend
 

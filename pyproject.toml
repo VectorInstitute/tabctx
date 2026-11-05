@@ -39,6 +39,9 @@ tabicl = ["tabicl>=2.2.0", "torch"]
 # TabPFN v8+ weights are license-gated by PriorLabs: register at
 # https://ux.priorlabs.ai, accept the license, export TABPFN_TOKEN.
 tabpfn = ["tabpfn", "torch"]
+# TabDPT (Layer 6): Apache-2.0 code and weights; the weights download from
+# Hugging Face on first use.
+tabdpt = ["tabdpt>=1.3", "torch"]
 # ray>=2.58 is required for the consistent-hash request router that makes
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).
 # jinja2 is imported unconditionally by ray.serve's haproxy module but
