@@ -18,7 +18,7 @@ typically well under a second, for many tables and many users, on
 hardware you control.
 
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
-[How it works](how-it-works.md){ .md-button }
+[Why a server](why-tabctx.md){ .md-button }
 [GitHub](https://github.com/VectorInstitute/tabctx){ .md-button }
 
 </div>
@@ -36,7 +36,7 @@ clf.fit(X_train, y_train)      # encodes the table once, on the server
 clf.predict_proba(X_test)      # reuses the cached context
 ```
 
-## Why tabctx
+## What tabctx does
 
 [TabPFN](https://github.com/PriorLabs/TabPFN) and
 [TabICL](https://github.com/soda-inria/tabicl) often beat gradient
@@ -44,6 +44,7 @@ boosting with no training loop: the training table is the model's input.
 Encoding that table is the expensive part, and it is the same work on
 every prediction. tabctx encodes each table once and serves predictions
 against the result.
+[Why a server, need by need →](why-tabctx.md)
 
 <figure markdown>
 ![Fit time grows with the training table; predict time against the cached context stays near 0.3 s](assets/fit-vs-predict-light.svg#only-light)

@@ -119,6 +119,7 @@ nav:
       - Kubernetes: kubernetes.md
       - Coding agents: coding-agents.md
   - Concepts:
+      - Why a server: why-tabctx.md
       - How it works: how-it-works.md
       - Benchmarks: benchmarks.md
   - Reference:
