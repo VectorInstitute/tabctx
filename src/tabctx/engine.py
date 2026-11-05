@@ -10,8 +10,11 @@ import contextlib
 import dataclasses
 import gc
 import inspect
+import logging
 import threading
+import time
 import uuid
+import weakref
 from collections.abc import Callable, Iterator, Sequence
 
 from tabctx import timing
@@ -31,6 +34,8 @@ from tabctx.memory.host import HostMemoryGuard
 from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 from tabctx.uncertainty import check_quantiles
+
+logger = logging.getLogger(__name__)
 
 # Predicts of at most this many test rows against a resident context run
 # beside a fit on the same device instead of waiting for it (head-of-line,
@@ -168,6 +173,28 @@ def _check_quantiles_supported(task: Task, backend: TabularICLBackend) -> None:
         )
 
 
+def _start_expiry_sweep(engine: TabctxEngine, interval_s: float) -> threading.Thread:
+    """A daemon thread calling engine.expire() every interval_s. It holds the
+    engine weakly, so it never keeps one alive, and stops once it is gone."""
+    ref = weakref.ref(engine)
+
+    def sweep() -> None:
+        while True:
+            time.sleep(interval_s)
+            current = ref()
+            if current is None:
+                return
+            try:
+                current.expire()
+            except Exception:  # noqa: BLE001 -- a failed sweep tries again
+                logger.exception("expiring contexts failed")
+            current = None
+
+    thread = threading.Thread(target=sweep, name="tabctx-expiry", daemon=True)
+    thread.start()
+    return thread
+
+
 class TabctxEngine:
     """Orchestrates one or more backends over a single shared context
     cache and GPU budget. Multi-backend serving (e.g. TabICL and TabPFN
@@ -189,6 +216,7 @@ class TabctxEngine:
         host_guard: HostMemoryGuard | None = None,
         device_baseline_bytes: int = 0,
         device_available: Callable[[], int | None] | None = None,
+        expiry_sweep_s: float | None = None,
     ) -> None:
         """Single-backend form: TabctxEngine(backend=, cache=, estimator=).
         Multi-backend form: TabctxEngine(backends={name: b}, cache=,
@@ -250,6 +278,13 @@ class TabctxEngine:
         # workspaces) -- on a 22 GB L4 an admitted fit OOMed beside 18 GB
         # the books didn't fully see.
         self._device_available = device_available
+        # Retention limits: an expired context is deleted when next used,
+        # and by this sweep (every expiry_sweep_s) even if it never is.
+        self._expiry_thread = (
+            None
+            if expiry_sweep_s is None
+            else _start_expiry_sweep(self, expiry_sweep_s)
+        )
 
     @property
     def backend_names(self) -> list[str]:
@@ -322,10 +357,15 @@ class TabctxEngine:
         dataset_id: str | None = None,
         backend: str | None = None,
         schema: TableSchema | None = None,
+        expires_at: float | None = None,
     ) -> str:
         """Encode and cache a training context. Returns a dataset_id to pass
         to predict() -- generated automatically unless the caller supplies
         one (e.g. to reuse a stable, caller-known identifier).
+
+        expires_at (unix time): when the context is deleted, from every
+        tier, whatever else happens (a retention limit); None keeps it until
+        evicted or deleted.
 
         schema (optional) records how the training table's columns were
         encoded (tabctx.schema) on the cached context, for callers that
@@ -406,6 +446,7 @@ class TabctxEngine:
                     payload=payload,
                     est_bytes=est_bytes,
                     schema=schema,
+                    expires_at=expires_at,
                 )
                 self._cache.put(context)
         return resolved_id
@@ -611,11 +652,31 @@ class TabctxEngine:
             if restored is None:
                 raise _not_found(dataset_id)
 
+    def expire(self, now: float | None = None) -> list[str]:
+        """Delete every context whose retention limit has passed, from every
+        tier; returns their ids."""
+        now = time.time() if now is None else now
+        expired = self._cache.expired_ids(now)
+        for dataset_id in expired:
+            self.evict(dataset_id)
+        return expired
+
+    def _check_not_expired(self, dataset_id: str) -> None:
+        """Delete the context now if its retention limit has passed (the
+        sweep may not have reached it), and answer as if it were gone."""
+        if self._cache.is_expired(dataset_id, time.time()):
+            self.evict(dataset_id)
+            raise DatasetNotFoundError(
+                f"no cached context for dataset_id={dataset_id!r} -- its "
+                "retention limit has passed and it was deleted"
+            )
+
     def schema(self, dataset_id: str) -> TableSchema | None:
         """The schema recorded at fit() for a cached context (None if it
         was fit without one). Reloads a spilled context as a side effect,
         exactly as predict() would; raises DatasetNotFoundError, as
         predict() would, when there is no such context."""
+        self._check_not_expired(dataset_id)
         if self._cache.peek(dataset_id) is None:
             self._restore(dataset_id)
         context = self._cache.peek(dataset_id)
@@ -644,6 +705,7 @@ class TabctxEngine:
         device's fits, and a spilled context is restored first.
         """
         levels = check_quantiles(quantiles)
+        self._check_not_expired(dataset_id)
         exclusive = len(X_test) > LIGHT_PREDICT_ROWS
         with self._cache.pinned(dataset_id), timing.counting_compiles():
             for _ in range(_PREDICT_ATTEMPTS):

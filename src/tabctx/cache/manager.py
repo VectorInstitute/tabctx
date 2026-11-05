@@ -50,6 +50,12 @@ class CachedContext:
     # meaningless outside this process). Travels through the spill tier;
     # None for contexts spilled before it was recorded.
     fitted_at: float | None = field(default_factory=time.time)
+    # Wall-clock time this context is deleted at (a retention limit; see
+    # TabctxEngine.expire), or None to keep it until evicted or deleted.
+    expires_at: float | None = None
+
+    def expired(self, now: float) -> bool:
+        return self.expires_at is not None and self.expires_at <= now
 
     def info(self, location: Location = "resident") -> ContextInfo:
         return ContextInfo(
@@ -61,6 +67,7 @@ class CachedContext:
             bytes=self.est_bytes,
             location=location,
             fitted_at=self.fitted_at,
+            expires_at=self.expires_at,
         )
 
 
@@ -307,6 +314,21 @@ class ContextCacheManager:
             spilled = self._spill is not None and self._spill.delete(dataset_id)
             removed = self._remove(dataset_id)
         return removed, removed is not None or spilled
+
+    def is_expired(self, dataset_id: str, now: float) -> bool:
+        """Whether this id's retention limit has passed (resident or spilled)."""
+        entry = self._entries.get(dataset_id)
+        if entry is not None:
+            return entry.expired(now)
+        return self._spill is not None and self._spill.expires_by(dataset_id, now)
+
+    def expired_ids(self, now: float) -> list[str]:
+        """Ids whose retention limit has passed, resident or spilled."""
+        with self._lock:
+            ids = [i for i, e in self._entries.items() if e.expired(now)]
+        if self._spill is not None:
+            ids += [i for i in self._spill.expired_ids(now) if i not in ids]
+        return ids
 
     def contexts(self) -> list[ContextInfo]:
         """Every context here, resident and spilled: metadata only. A

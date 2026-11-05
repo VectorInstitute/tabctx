@@ -23,6 +23,12 @@ Flags take `1`/`true` or `0`/`false`.
 | `TABCTX_KV_PRECISION` | `int8` | TabICL's cached keys and values: `int8` (about half the memory; identical labels and metrics on 7 datasets, probabilities within 0.01), `fp16`, `native`. |
 | `TABCTX_OFFLOAD_DIR` | `<spill dir>/offload` | Where TabICL may stage a very large fit's intermediate results on disk. |
 
+## Retention
+
+| Variable | Default | |
+|---|---|---|
+| `TABCTX_MAX_CONTEXT_AGE_S` | no limit | No fitted table is kept longer than this after its fit: it is deleted from device memory, host memory and the disk tier. A fit can ask for less with `ttl_s`. |
+
 ## TabDPT
 
 | Variable | Default | |

@@ -85,14 +85,21 @@ class DiskSpillStore:
         # restart) are indexed at 0.0, i.e. oldest, so they are the
         # first to go under disk pressure.
         self._index: dict[str, float] = {}
+        # dataset_id -> retention deadline (unix time), for spilled contexts
+        # that have one: so expiry needn't read every metadata file.
+        self._expires: dict[str, float] = {}
         for meta_path in self._dir.glob("*.meta.json"):
             # File names are hex-encoded dataset_ids (see _paths); index by
             # the id itself, like entries this process spills.
             stem = meta_path.name[: -len(".meta.json")]
             try:
-                self._index[bytes.fromhex(stem).decode()] = 0.0
+                dataset_id = bytes.fromhex(stem).decode()
             except ValueError:
                 continue  # not one of ours
+            self._index[dataset_id] = 0.0
+            expires = self._meta(dataset_id)
+            if expires is not None and expires.get("expires_at") is not None:
+                self._expires[dataset_id] = float(expires["expires_at"])
 
     def _paths(self, dataset_id: str) -> tuple[Path, Path]:
         # dataset_ids may contain ':' (tenant scoping) -- hex-encode for
@@ -124,6 +131,7 @@ class DiskSpillStore:
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
                         "fitted_at": context.fitted_at,
+                        "expires_at": context.expires_at,
                         "schema": context.schema.to_json() if context.schema else None,
                         # Read by 0.14 and earlier (a rollback keeps names).
                         "feature_names": (
@@ -140,6 +148,8 @@ class DiskSpillStore:
             return False
         with self._lock:
             self._index[context.dataset_id] = time.monotonic()
+            if context.expires_at is not None:
+                self._expires[context.dataset_id] = context.expires_at
         return True
 
     def load(self, dataset_id: str) -> CachedContext | None:
@@ -173,6 +183,7 @@ class DiskSpillStore:
             est_bytes=meta["est_bytes"],
             schema=_schema(meta),
             fitted_at=meta.get("fitted_at"),
+            expires_at=meta.get("expires_at"),
         )
 
     def _meta(self, dataset_id: str) -> dict | None:
@@ -211,6 +222,7 @@ class DiskSpillStore:
                         bytes=int(meta["est_bytes"]),
                         location="spilled",
                         fitted_at=meta.get("fitted_at"),
+                        expires_at=meta.get("expires_at"),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -240,7 +252,16 @@ class DiskSpillStore:
                 pass
         with self._lock:
             found = self._index.pop(dataset_id, None) is not None or found
+            self._expires.pop(dataset_id, None)
         return found
+
+    def expires_by(self, dataset_id: str, now: float) -> bool:
+        at = self._expires.get(dataset_id)
+        return at is not None and at <= now
+
+    def expired_ids(self, now: float) -> list[str]:
+        """Spilled ids whose retention limit has passed."""
+        return [i for i, at in list(self._expires.items()) if at <= now]
 
     def _make_room(self, needed: int) -> None:
         while self.used_bytes + needed > self._capacity_bytes:

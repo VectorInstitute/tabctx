@@ -219,6 +219,13 @@ class FitRequest(BaseModel):
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
     # the deployment's first-listed model.
     model: str | None = None
+    ttl_s: float | None = Field(
+        default=None,
+        gt=0,
+        description="Delete this context after this many seconds, from every "
+        "tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, "
+        "if set, caps it (and applies when this is omitted).",
+    )
 
 
 class UploadResponse(BaseModel):
@@ -235,6 +242,11 @@ class FitResponse(BaseModel):
     )
     n_train: int
     n_features: int
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time the context is deleted at (its retention "
+        "limit), or null if it has none.",
+    )
     # Which replica served this -- lets clients and probes verify that
     # session affinity actually pinned fit() and later predict() calls to
     # the same replica (the multi-replica correctness contract).
@@ -319,6 +331,10 @@ class DatasetInfo(BaseModel):
         default=None,
         description="Unix time of the fit (null for a context spilled by an "
         "older tabctx).",
+    )
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time it is deleted at (its retention limit), or null.",
     )
 
 
@@ -808,6 +824,7 @@ class TabctxService:
             # the cached context so test tables are encoded the same way;
             # it lives and dies with the context, spill included.
             with self._schemas.fitting(scoped_id) as record:
+                expires_at = self._expires_at(req.ttl_s)
                 self._engine.fit(
                     X,
                     y,
@@ -815,6 +832,7 @@ class TabctxService:
                     dataset_id=scoped_id,
                     backend=model_id,
                     schema=schema,
+                    expires_at=expires_at,
                 )
                 if schema is not None:
                     record(schema)
@@ -833,8 +851,16 @@ class TabctxService:
             task=task,
             n_train=n_train,
             n_features=n_features,
+            expires_at=expires_at,
             served_by=_replica_tag(),
         )
+
+    def _expires_at(self, ttl_s: float | None) -> float | None:
+        """When a context fit now is deleted: after the request's ttl_s,
+        capped by the server's maximum age (which applies alone when the
+        request names none); None for neither."""
+        limits = [t for t in (ttl_s, self._settings.max_context_age_s) if t]
+        return time.time() + min(limits) if limits else None
 
     @fastapi_app.post(
         "/v1/tabctx/predict",
