@@ -484,6 +484,10 @@ class MultiDeviceEngine:
             capacity_bytes=sum(s.capacity_bytes for s in per_device),
         )
 
+    def stats_nowait(self) -> EngineStats:
+        """stats(): already lock-free (every device's counters are)."""
+        return self.stats()
+
     def device_stats(self) -> list[EngineStats]:
         """Lock-free: monitoring never waits on a device's GPU work."""
         return [s.stats_nowait() for s in self._shards]

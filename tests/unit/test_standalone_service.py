@@ -515,3 +515,79 @@ class TestOpenApi:
     def test_the_spec_names_the_service_and_its_version(self, app):
         info = app.openapi()["info"]
         assert info["title"] == "tabctx" and info["version"]
+
+
+class TestReadyzNeverWaits:
+    """/readyz answers from measurements it doesn't wait for (#51)."""
+
+    @pytest.fixture()
+    def service(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+        monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+        service = TabctxService()
+        yield service
+        service.close()
+
+    def test_a_stuck_device_measurement_doesnt_hold_it_up(self, service):
+        import threading
+
+        from tabctx.serve.reporting import PeriodicReport
+
+        stuck = threading.Event()
+
+        def measure():
+            stuck.wait(5)  # e.g. torch's allocator lock behind a fit
+            return {"gpu_memory": {}, "spill": None}
+
+        service._local_report.stop()
+        service._local_report = PeriodicReport(measure)
+        app = make_app(service)
+        start = time.monotonic()
+        response = _request(app, "GET", "/readyz")
+        assert response.status_code == 200
+        assert time.monotonic() - start < 1.0
+        stuck.set()
+
+    def test_a_held_host_memory_lock_doesnt_hold_it_up(self, service):
+        from tabctx.memory.host import HostMemoryGuard
+
+        guard = HostMemoryGuard(2**30, lock_timeout_s=30)
+        service._host_guard = guard
+        app = make_app(service)
+        with guard._locked():  # another call holds the guard's lock
+            start = time.monotonic()
+            response = _request(app, "GET", "/readyz")
+        assert response.status_code == 200
+        assert time.monotonic() - start < 1.0
+        assert response.json()["host_memory"]["budget_bytes"] == guard.budget_bytes
+
+    class _Worker:
+        alive = True
+        death_reason = None
+        device = "cuda:1"
+
+        def __init__(self, age):
+            self.age = age
+
+        def close(self):
+            pass
+
+        def latest_report(self):
+            report = {
+                "gpu_memory": {"allocated_mb": 5.0, "reserved_mb": 8.0},
+                "spill": None,
+            }
+            return report, self.age
+
+    def test_worker_reports_and_their_age(self, service):
+        service._workers = (self._Worker(age=3.2),)
+        body = _request(make_app(service), "GET", "/readyz").json()
+        assert body["real_gpu_memory"]["allocated_mb"] == 5.0
+        assert body["device_report_age_s"] >= 3.2
+
+    def test_a_worker_silent_for_too_long_is_not_ready(self, service):
+        from tabctx.serve.reporting import REPORT_STALE_S
+
+        service._workers = (self._Worker(age=REPORT_STALE_S + 1),)
+        response = _request(make_app(service), "GET", "/readyz")
+        assert response.status_code == 503 and "cuda:1" in response.json()["detail"]
