@@ -52,11 +52,27 @@ jobs:
           source .venv/bin/activate
           pre-commit run --all-files
 
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
       - name: Lint and render the Helm chart
         run: |
-          helm lint deploy/helm/tabctx
-          helm template t deploy/helm/tabctx > /dev/null
-          helm template t deploy/helm/tabctx --set gpus=0 --set spill.enabled=false \
-            --set weightsCache.enabled=false > /dev/null
-          # TabPFN without a token must refuse to render.
-          ! helm template t deploy/helm/tabctx --set 'models={tabpfn}' > /dev/null 2>&1
+          set -euo pipefail
+          chart=deploy/helm/tabctx
+          helm lint --strict "$chart"
+          helm template t "$chart" > /dev/null
+          helm template t "$chart" --set gpus=0 --set spill.enabled=true \
+            --set weightsCache.existingClaim=w > /dev/null
+          # Guards that must refuse to render, each with its own message.
+          refuses() {
+            local expected=$1; shift
+            if out=$(helm template t "$chart" "$@" 2>&1); then
+              echo "rendered, but should have refused: $*" >&2; exit 1
+            fi
+            grep -q "$expected" <<<"$out" || { echo "$out" >&2; exit 1; }
+          }
+          refuses "set existingTabpfnSecret or tabpfnToken" --set 'models={tabpfn}'
+          refuses "replicaCount > 1" --set replicaCount=2
+          refuses "sizeGi must be" --set spill.enabled=true --set spill.sizeGi=0

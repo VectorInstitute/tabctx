@@ -1,5 +1,6 @@
 tabctx is starting: serving {{ join ", " .Values.models }} on {{ if gt (int .Values.gpus) 0 }}{{ .Values.gpus }} GPU(s){{ else }}the CPU{{ end }}.
-The first start downloads model weights; `kubectl get pods -w` until Ready.
+The first start downloads the model weights and compiles kernels (minutes);
+`kubectl get pods -w` until Ready. A restart drops every fitted table: clients fit again.
 
 Try it:
 

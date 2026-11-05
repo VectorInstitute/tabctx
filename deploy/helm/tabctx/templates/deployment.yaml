@@ -1,6 +1,16 @@
-{{- if and (has "tabpfn" .Values.models) (not (include "tabctx.tabpfnSecret" .)) }}
-{{- fail "models includes tabpfn: set tabpfnToken or existingTabpfnSecret (TabPFN's weights need a Prior Labs token)" }}
+{{- if and (has "tabpfn" .Values.models) (not (include "tabctx.tabpfnSecret" .)) (not .Values.tabpfnWithoutToken) }}
+{{- fail "models includes tabpfn: set existingTabpfnSecret or tabpfnToken (TabPFN's weights need a Prior Labs token), or tabpfnWithoutToken if they are already in the weights volume" }}
 {{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (or .Values.spill.enabled .Values.weightsCache.enabled) }}
+{{- fail "replicaCount > 1 can't share the chart's ReadWriteOnce volumes, and a context lives in one pod: keep replicaCount 1 (give the pod more GPUs for capacity)" }}
+{{- end }}
+{{- range $name, $volume := dict "spill" .Values.spill "weightsCache" .Values.weightsCache }}
+{{- if and $volume.enabled (not $volume.existingClaim) (lt (int $volume.sizeGi) 1) }}
+{{- fail (printf "%s.sizeGi must be a whole number of GiB, at least 1" $name) }}
+{{- end }}
+{{- end }}
+{{- $extraNames := list }}
+{{- range .Values.extraEnv }}{{ $extraNames = append $extraNames .name }}{{ end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -27,6 +37,7 @@ spec:
       # No Service environment variables: a release named "tabctx" would
       # inject TABCTX_PORT and friends into tabctx's own settings namespace.
       enableServiceLinks: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -43,48 +54,40 @@ spec:
             - name: http
               containerPort: 8000
           env:
-            - name: TABCTX_BACKEND
-              value: {{ join "," .Values.models | quote }}
-            - name: TABCTX_REQUIRE_TENANT
-              value: {{ .Values.requireTenant | quote }}
-            - name: TABCTX_GPU_MEMORY_FRACTION
-              value: {{ .Values.gpuMemoryFraction | quote }}
-            - name: TABCTX_MAX_ONGOING_REQUESTS
-              value: {{ .Values.maxOngoingRequests | quote }}
-            - name: TABCTX_MAX_QUEUED_REQUESTS
-              value: {{ .Values.maxQueuedRequests | quote }}
-            {{- if .Values.spill.enabled }}
-            - name: TABCTX_SPILL_DIR
-              value: /data/spill
-            - name: TABCTX_SPILL_CAPACITY_BYTES
-              # 90% of the volume.
-              value: {{ mul (int .Values.spill.sizeGi) 966367641 | quote }}
+            {{- range $name, $value := (include "tabctx.env" . | fromYaml) }}
+            {{- if not (has $name $extraNames) }}
+            - name: {{ $name }}
+              value: {{ $value | toString | quote }}
             {{- end }}
-            {{- if .Values.weightsCache.enabled }}
-            - name: HF_HOME
-              value: /cache/huggingface
-            - name: TABPFN_MODEL_CACHE_DIR
-              value: /cache/tabpfn
             {{- end }}
             {{- with (include "tabctx.tabpfnSecret" .) }}
+            {{- if not (has "TABPFN_TOKEN" $extraNames) }}
             - name: TABPFN_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ . }}
                   key: TABPFN_TOKEN
             {{- end }}
-            {{- with .Values.extraEnv }}
-            {{- toYaml . | nindent 12 }}
             {{- end }}
-          # Starting downloads and loads the weights; then /livez fails only
-          # on what a restart fixes (a dead GPU worker) and /readyz also on
-          # transient pressure.
+            {{- range .Values.extraEnv }}
+            - name: {{ .name }}
+              {{- if hasKey . "valueFrom" }}
+              valueFrom:
+                {{- toYaml .valueFrom | nindent 16 }}
+              {{- else }}
+              value: {{ .value | toString | quote }}
+              {{- end }}
+            {{- end }}
+          # Starting loads each model's weights (the first time, downloads
+          # them) and compiles kernels before the server answers. Then
+          # /livez fails only on what a restart fixes (a dead GPU worker);
+          # /readyz also on transient pressure.
           startupProbe:
             httpGet:
               path: /livez
               port: http
             periodSeconds: 10
-            failureThreshold: {{ div (int .Values.startupSeconds) 10 }}
+            failureThreshold: {{ max 1 (div (int .Values.startupSeconds) 10) }}
           livenessProbe:
             httpGet:
               path: /livez
@@ -96,11 +99,11 @@ spec:
             httpGet:
               path: /readyz
               port: http
-            periodSeconds: 10
-            timeoutSeconds: 10
-            failureThreshold: 3
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.readinessProbe.failureThreshold }}
           resources:
-            {{- $resources := deepCopy .Values.resources }}
+            {{- $resources := deepCopy (.Values.resources | default dict) }}
             {{- if gt (int .Values.gpus) 0 }}
             {{- $limits := default (dict) $resources.limits }}
             {{- $_ := set $limits "nvidia.com/gpu" (int .Values.gpus) }}
@@ -118,19 +121,26 @@ spec:
             - name: weights
               mountPath: /cache
             {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
-        # Uploads and request tables are streamed here, then deleted.
+        # Uploaded tables (deleted once read) and large fits' staging.
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: {{ .Values.tmp.sizeLimit }}
         {{- if .Values.spill.enabled }}
         - name: spill
           persistentVolumeClaim:
-            claimName: {{ include "tabctx.fullname" . }}-spill
+            claimName: {{ include "tabctx.claim" (list . .Values.spill "spill") }}
         {{- end }}
         {{- if .Values.weightsCache.enabled }}
         - name: weights
           persistentVolumeClaim:
-            claimName: {{ include "tabctx.fullname" . }}-weights
+            claimName: {{ include "tabctx.claim" (list . .Values.weightsCache "weights") }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

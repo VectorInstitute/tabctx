@@ -2,8 +2,9 @@ apiVersion: v2
 name: tabctx
 description: The serving engine for tabular foundation models (TabICL, TabPFN, TabDPT) on your own GPUs.
 type: application
-# Released with tabctx at the same version (the release workflow sets
-# both); appVersion is the tabctx image it deploys.
+# Released with tabctx, at the same version: a release bumps both with
+# pyproject.toml (tests/unit/test_helm_chart.py checks). appVersion is
+# the image the chart deploys.
 version: 0.18.0
 appVersion: "0.18.0"
 home: https://vectorinstitute.github.io/tabctx/
