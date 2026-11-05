@@ -26,9 +26,10 @@ const STEPS = [
   ["what_if", "What-if"],
 ];
 // A task with a "clean" step (its agent cleans raw files first) shows it as
-// the first progress step, done once the agent runs code.
+// the first progress step, done once the agent writes or runs something
+// named for cleaning (clean.py, a clean_*.csv), not on its first `ls`.
 const CLEAN = ["clean", "Clean"];
-const SHELL_TOOLS = new Set(["Bash", "bash", "shell", "run_shell_command"]);
+const CLEANING = /clean/i;
 const hasClean = () => (state.setup?.dataset?.steps || []).some(([tool]) => tool === "clean");
 const TITLES = {
   inspect_table: "Inspect",
@@ -359,7 +360,7 @@ function handle(ev, info) {
     } else {
       el.className = "minor";
       el.innerHTML = minorCall(ev.tool, ev.args);
-      if (SHELL_TOOLS.has(ev.tool) && hasClean()) {
+      if (hasClean() && CLEANING.test(JSON.stringify(ev.args || {}))) {
         state.used.add(CLEAN[0]);
         renderSteps();
       }

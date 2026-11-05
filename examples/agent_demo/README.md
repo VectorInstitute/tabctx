@@ -13,7 +13,6 @@ Two scenarios, each a question about a table, in [`scenarios/`](scenarios/):
 
 ## Readmission
 
-
 A coding agent gets two CSVs and a hospital's question: which patients
 being discharged now are most likely to be back within 30 days, and what
 could lower that? The answer needs a prediction from a table, which an
@@ -73,9 +72,10 @@ with spaces, four date formats, amounts as `$1,234.50`, `1234.50` and
 `CAD 1,235`, a province spelled five ways, yes/no as Y, 1 and TRUE,
 blanks as N/A or `-`, impossible ages, rows exported twice, six internal
 test policies and a totals row. Its first step is to write `clean.py`,
-run it, and list every fix in its report, so the task gives each agent
-its shell (`SHELL` in `task.py`): Claude Code's Bash runs in its
-sandbox, Codex in its own, Gemini CLI and pi without one.
+run it, and list every fix in its report. A "clean" step in the task's
+steps gives each agent its shell: Claude Code's Bash runs in its
+sandbox, Codex in its own, and Gemini CLI and pi without one (see the
+tools by agent, below).
 
 ```bash
 export DEMO_SCENARIO=insurance
@@ -112,7 +112,7 @@ without running anything. Hover over any mark for its numbers. The page
 has light and dark themes, and listens on 127.0.0.1 only, since it
 starts agents on this machine.
 
-The UI reads the same `runs/<agent>/transcript.jsonl` files that
+The UI reads the same `runs/<scenario>/<agent>/transcript.jsonl` files that
 `run.sh` writes. `ui/transcripts.py` turns each agent's format into one
 stream of events.
 
@@ -145,11 +145,13 @@ nothing secret.
 - **Limits:** 3 runs at once, one per visitor, each stopped after 15
   minutes. Sign-in attempts are rate-limited.
 
-The task is in [`PROMPT.md`](PROMPT.md). Each run gets its own copy of
-the data in `runs/<agent>/` and leaves `report.md` and
+The task is in each scenario's `PROMPT.md` (readmission's:
+[`scenarios/readmission/PROMPT.md`](scenarios/readmission/PROMPT.md)).
+Each run gets its own copy of the data in `runs/<scenario>/<agent>/` and leaves `report.md` and
 `transcript.jsonl` there.
 
-Tools by agent:
+Tools by agent (readmission; for a task with a "clean" step, such as
+insurance, see below):
 
 - **Claude Code** gets the tabctx MCP tools plus file tools. It has no shell.
 - **Codex** gets the MCP tools plus its sandboxed shell.
@@ -157,6 +159,15 @@ Tools by agent:
 - **pi** has no MCP. The extension from `tabctx-mcp pi-extension`
   registers the same tools as pi tools. It also gets file tools, and no
   bash.
+
+When the task has a "clean" step, the agent must run code:
+
+- **Claude Code** also gets Bash, only inside its sandbox
+  (`allowUnsandboxedCommands: false`). It can't write outside its run
+  folder or read `answers/`.
+- **Gemini CLI** and **pi** get their shells with no sandbox, as you, so
+  they could read `answers/`. Treat their scores on such a task as
+  unchecked, or run them as another user.
 
 The agent's LLM:
 

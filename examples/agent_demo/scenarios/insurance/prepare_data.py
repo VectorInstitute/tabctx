@@ -9,7 +9,7 @@ report: a premium increase at renewal, missed payments and paying by
 cheque raise the chance of cancelling; years as a customer, more products
 and contact with an advisor lower it. An advisor's check-in also halves
 the effect of a premium increase, so the what-if step has a real lever to
-find. About one policyholder in seven cancels.
+find. About one policyholder in six cancels.
 
 The agent gets the tables as a policy system exports them, with the mess
 real exports have: header names with spaces, dates and amounts in several
@@ -264,10 +264,7 @@ def export(clean: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
         raw[task.TARGET] = _spell(
             rng,
             clean[task.TARGET],
-            {
-                "Yes": ["Cancelled", "LAPSED", "cxl"],
-                "No": ["Renewed", "RENEWED", "Active"],
-            },
+            {k: list(v) for k, v in task.SPELLINGS.items()},
         )
     return raw.rename(columns=HEADERS)
 
@@ -298,24 +295,30 @@ def _amount(text: str) -> float:
     return float(str(text).replace("CAD", "").replace("$", "").replace(",", ""))
 
 
-def build(seed: int = SEED) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def build(
+    seed: int = SEED,
+    history_rows: int = HISTORY_ROWS,
+    current_rows: int = CURRENT_ROWS,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """(history export, current export, current outcomes)."""
     rng = np.random.default_rng(seed)
-    history = book(HISTORY_ROWS, HISTORY_RENEWALS, rng)
-    current = book(CURRENT_ROWS, CURRENT_RENEWALS, rng)
+    history = book(history_rows, HISTORY_RENEWALS, rng)
+    current = book(current_rows, CURRENT_RENEWALS, rng)
     ids = rng.choice(
-        np.arange(100_000, 1_000_000), HISTORY_ROWS + CURRENT_ROWS, replace=False
+        np.arange(100_000, 1_000_000), history_rows + current_rows, replace=False
     )
-    history.insert(0, task.ID, [f"MM-{i}" for i in ids[:HISTORY_ROWS]])
-    current.insert(0, task.ID, [f"MM-{i}" for i in ids[HISTORY_ROWS:]])
+    ids = [f"{task.POLICY_PREFIX}{i}" for i in ids]
+    history.insert(0, task.ID, ids[:history_rows])
+    current.insert(0, task.ID, ids[history_rows:])
     answers = current[[task.ID, task.TARGET]]
     history_raw = _with_junk(_duplicate(rng, export(history, rng), 0.02), rng)
     current_raw = _duplicate(rng, export(current.drop(columns=task.TARGET), rng), 0.01)
     return history_raw, current_raw, answers
 
 
-def main(scenario: Scenario) -> None:
-    history, current, answers = build()
+def main(scenario: Scenario, **sizes: int) -> None:
+    """Write the scenario's data; sizes are build()'s row counts."""
+    history, current, answers = build(**sizes)
     scenario.workspace.mkdir(parents=True, exist_ok=True)
     scenario.answers.mkdir(parents=True, exist_ok=True)
     history.to_csv(scenario.workspace / task.HISTORY, index=False)
@@ -323,7 +326,7 @@ def main(scenario: Scenario) -> None:
     answers.to_csv(scenario.answers / task.ANSWERS, index=False)
     rate = (answers[task.TARGET] == task.POSITIVE).mean()
     print(
-        f"{len(history)} raw history rows ({task.positive_rate(history):.1%} cancelled), "
+        f"{len(history)} raw history rows ({scenario.positive_rate(history):.1%} cancelled), "
         f"{len(current)} raw current rows for {len(answers)} policies "
         f"({rate:.1%} will cancel) -> {scenario.workspace}"
     )

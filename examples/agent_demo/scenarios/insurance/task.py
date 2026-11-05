@@ -1,6 +1,6 @@
 """The insurance scenario: which policyholders whose renewal is coming up
 will cancel, and what might keep them? The agent gets two raw exports
-that need cleaning first, so it gets a shell (SHELL). The files, the id
+that need cleaning first (the "clean" step, so it gets a shell). The files, the id
 and outcome columns, and how the page names them (see ../../scenario.py).
 """
 
@@ -14,18 +14,24 @@ TARGET = "cancelled"
 POSITIVE = "Yes"
 NEGATIVE = "No"
 PROBA = f"p_{TARGET}={POSITIVE}"  # the column predict writes
-SHELL = True  # the agent writes and runs a cleaning script
 
 # The raw exports' own names for the id and the outcome.
 RAW_ID = "Policy ID"
 RAW_TARGET = "Status at Renewal"
-CANCELLED = ("cancelled", "lapsed", "cxl")  # how the export spells it
+# How the export spells each outcome (prepare_data.py writes these).
+SPELLINGS = {
+    POSITIVE: ("Cancelled", "LAPSED", "cxl"),
+    NEGATIVE: ("Renewed", "RENEWED", "Active"),
+}
+POLICY_PREFIX = "MM-"  # real policies; the export also has test rows and a total
 
 
 def positive_rate(history) -> float:
-    """The share cancelled in the raw history (a pandas DataFrame)."""
-    status = history[RAW_TARGET].astype(str).str.strip().str.lower()
-    return float(status.isin(CANCELLED).mean())
+    """The share cancelled in the raw history (a pandas DataFrame), over
+    its real policies, each counted once."""
+    policies = history[history[RAW_ID].astype(str).str.startswith(POLICY_PREFIX)]
+    status = policies.drop_duplicates(RAW_ID)[RAW_TARGET].astype(str).str.strip()
+    return float(status.isin(SPELLINGS[POSITIVE]).mean())
 
 
 # For the page: what a row is, what the positive outcome is called, and

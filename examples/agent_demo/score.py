@@ -17,26 +17,17 @@ from sklearn.metrics import roc_auc_score
 
 
 def score(run_dir: Path, scenario: scenarios.Scenario | None = None) -> dict:
-    scenario = scenario or scenarios.load()
+    """Score a run's predictions; the scenario is the run folder's
+    (runs/<scenario>/<agent>) unless given."""
+    scenario = scenario or scenarios.of_run(run_dir)
     task = scenario.task
-    # The newest CSV with the probability column: the tools' default output
-    # (*.predictions.csv) or wherever the agent asked predict to write.
-    files = sorted(run_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime)
-    files = [f for f in files if task.PROBA in pd.read_csv(f, nrows=0).columns]
-    if not files:
-        raise SystemExit(
-            f"no predictions CSV with a {task.PROBA!r} column in {run_dir}"
-        )
-    # One row per id: a raw table can list a row twice; its copies match.
-    predicted = pd.read_csv(files[-1]).drop_duplicates(task.ID)
     truth = pd.read_csv(scenario.answers / task.ANSWERS)
+    predicted, name = _predictions(run_dir, task, set(truth[task.ID]))
     merged = truth.merge(predicted[[task.ID, task.PROBA]], on=task.ID)
-    if len(merged) != len(truth):
-        raise SystemExit(f"{files[-1]} covers {len(merged)} of {len(truth)} rows")
     positive = merged[task.TARGET] == task.POSITIVE
     ranked = merged.sort_values(task.PROBA, ascending=False, kind="stable")
     out = {
-        "file": files[-1].name,
+        "file": name,
         "rows": len(merged),
         "roc_auc": round(roc_auc_score(positive, merged[task.PROBA]), 4),
         "base_rate": round(float(positive.mean()), 3),
@@ -48,6 +39,35 @@ def score(run_dir: Path, scenario: scenarios.Scenario | None = None) -> dict:
     return out
 
 
+def _predictions(run_dir: Path, task, ids: set) -> tuple[pd.DataFrame, str]:
+    """The newest CSV with the probability column that covers every row:
+    the tools' default output (*.predictions.csv) or wherever the agent
+    asked predict to write. Newer partial ones (a what-if table, a subset)
+    are passed over. One row per id: a raw table can list a row twice, and
+    its copies match."""
+    files = sorted(run_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime)
+    files = [f for f in files if task.PROBA in pd.read_csv(f, nrows=0).columns]
+    if not files:
+        raise SystemExit(
+            f"no predictions CSV with a {task.PROBA!r} column in {run_dir}"
+        )
+    best = None
+    for f in reversed(files):
+        table = pd.read_csv(f)
+        if task.ID not in table.columns:
+            raise SystemExit(
+                f"{f.name} has no {task.ID!r} column to match the answers on"
+            )
+        table = table.drop_duplicates(task.ID)
+        covered = len(ids & set(table[task.ID]))
+        if covered == len(ids):
+            return table, f.name
+        best = best or (f.name, covered)
+    raise SystemExit(f"{best[0]} covers {best[1]} of {len(ids)} rows")
+
+
 if __name__ == "__main__":
-    for arg in sys.argv[1:] or ["workspace"]:
+    for arg in sys.argv[1:] or [
+        str(p) for p in sorted(scenarios.load().runs.glob("*"))
+    ]:
         print(arg, score(Path(arg)))

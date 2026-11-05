@@ -9,9 +9,12 @@
 #   uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/insurance/claude
 #
 # Each run works in its own copy of the workspace (runs/<scenario>/<agent>/)
-# and leaves transcript.jsonl and report.md there. A scenario whose task
-# has the agent run code (task.SHELL, e.g. to clean a table) gives each
-# agent its shell; the others get file tools and the tabctx tools only. Claude Code, Codex and
+# and leaves transcript.jsonl and report.md there. Codex always has its
+# sandboxed shell. Claude Code, Gemini CLI and pi get file tools and the
+# tabctx tools only, unless the task has the agent run code (a "clean"
+# step): then Claude Code gets Bash in its sandbox (no reads of answers/,
+# no writes outside the run folder), and Gemini CLI and pi get their
+# shells without a sandbox. Claude Code, Codex and
 # Gemini CLI get the tools over MCP. pi has no MCP, so it gets the same
 # tools as the tabctx-mcp command plus the tabctx skill (SKILL.md).
 #
@@ -22,7 +25,7 @@
 # (CLAUDE_MODEL picks its model).
 #
 # The hosted demo (ui/, Dockerfile) sets: TABCTX_MCP_BIN (the tabctx-mcp
-# command), DEMO_WORKSPACE (the data), RUN_DIR (this run's folder),
+# command), RUN_DIR (this run's folder),
 # ISOLATE_HOME=1 (the agent gets HOME inside RUN_DIR, so no state is shared
 # between visitors) and CODEX_SANDBOX.
 set -euo pipefail
@@ -42,15 +45,17 @@ GATEWAY=${TABCTX_BASE_URL%/}
 SERVER=${TABCTX_MCP_BIN:-$REPO/.venv/bin/tabctx-mcp}
 [[ -x $SERVER ]] || { echo "no $SERVER: run 'uv sync --extra mcp' in $REPO" >&2; exit 1; }
 export TABCTX_MCP_BIN=$SERVER
-ask() { python3 "$HERE/scenario.py" "$1"; }  # what the scenario says
-WORKSPACE=$(ask workspace) || exit 1
-read -r -a FILES <<<"$(ask files)"  # history, current
-SHELL_TOOLS=$(ask shell)  # 1: the task has the agent run code
-SCENARIO=$(basename "$(dirname "$(ask prompt)")")
+# SCENARIO_NAME, _HISTORY, _CURRENT, _PROMPT, _WORKSPACE, _ANSWERS and
+# _SHELL_TOOLS (1: the task has the agent run code).
+env_lines=$(python3 "$HERE/scenario.py" env) || exit 1
+eval "$env_lines"
+WORKSPACE=$SCENARIO_WORKSPACE
+FILES=("$SCENARIO_HISTORY" "$SCENARIO_CURRENT")
+SHELL_TOOLS=$SCENARIO_SHELL_TOOLS
 [[ -f $WORKSPACE/${FILES[0]} ]] || {
   echo "no demo data in $WORKSPACE: run prepare_data.py first" >&2; exit 1; }
 
-RUN=${RUN_DIR:-$HERE/runs/$SCENARIO/$AGENT}
+RUN=${RUN_DIR:-$HERE/runs/$SCENARIO_NAME/$AGENT}
 rm -rf "$RUN"
 mkdir -p "$RUN"
 for f in "${FILES[@]}"; do cp "$WORKSPACE/$f" "$RUN"/; done
@@ -61,7 +66,7 @@ if [[ ${ISOLATE_HOME:-0} == 1 ]]; then
 fi
 # python with pandas, and the tabctx-mcp command, for the agent's shell.
 export PATH="$(dirname "$SERVER"):$PATH"
-PROMPT=$(cat "${PROMPT_FILE:-$(ask prompt)}")  # the UI passes an edited prompt
+PROMPT=$(cat "${PROMPT_FILE:-$SCENARIO_PROMPT}")  # the UI passes an edited prompt
 cd "$RUN"
 
 case $AGENT in
@@ -73,15 +78,18 @@ claude)
   config=$(printf '{"mcpServers": {"tabctx": {"command": "%s"}}}' "$SERVER")
   model=()
   [[ -n ${CLAUDE_MODEL:-} ]] && model=(--model "$CLAUDE_MODEL")
-  tools=Read,Write,Edit,Glob,Grep settings=()
+  allowed=Read,Write,Edit,Glob,Grep tools=$allowed settings=()
   if [[ $SHELL_TOOLS == 1 ]]; then
-    # Bash in Claude Code's sandbox: writes stay in this run's folder.
+    # Bash only in Claude Code's sandbox, never outside it: writes stay in
+    # this run's folder, and the answers can't be read. Sandboxed commands
+    # are allowed by the sandbox setting, so Bash is not in --allowedTools
+    # (which would also allow an unsandboxed retry).
     tools+=,Bash
-    settings=(--settings '{"sandbox": {"enabled": true, "autoAllowBashIfSandboxed": true}}')
+    settings=(--settings "$(printf '{"sandbox": {"enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false}, "permissions": {"deny": ["Read(/%s/**)"]}}' "$SCENARIO_ANSWERS")")
   fi
   # ${a[@]+...}: an empty array is "unbound" to macOS's bash 3.2 under set -u.
   claude -p "$PROMPT" ${model[@]+"${model[@]}"} ${settings[@]+"${settings[@]}"} --mcp-config "$config" --strict-mcp-config \
-    --tools "$tools" --allowedTools mcp__tabctx ${tools//,/ } \
+    --tools "$tools" --allowedTools mcp__tabctx ${allowed//,/ } \
     --output-format stream-json --verbose >transcript.jsonl
   ;;
 codex)

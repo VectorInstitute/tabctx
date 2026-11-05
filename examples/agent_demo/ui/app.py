@@ -204,7 +204,6 @@ def dataset() -> dict | None:
         current = pd.read_csv(WORKSPACE / task.CURRENT)
     except FileNotFoundError:
         return None
-    raw_id = getattr(task, "RAW_ID", task.ID)  # the id's name in these files
     return {
         **task.LABELS,
         "history_file": task.HISTORY,
@@ -214,17 +213,9 @@ def dataset() -> dict | None:
         "target": task.TARGET,
         "positive": task.POSITIVE,
         "negative": task.NEGATIVE,
-        "positive_rate": round(_positive_rate(history), 3),
-        "columns": [c for c in current.columns if c != raw_id],
+        "positive_rate": round(SCENARIO.positive_rate(history), 3),
+        "columns": [c for c in current.columns if c != SCENARIO.raw_id],
     }
-
-
-def _positive_rate(history: pd.DataFrame) -> float:
-    """The outcome's share in the history file. A scenario whose agent gets
-    raw exports says how to read it (task.positive_rate)."""
-    if hasattr(task, "positive_rate"):
-        return task.positive_rate(history)
-    return float((history[task.TARGET] == task.POSITIVE).mean())
 
 
 # ---- signing in (hosted) -----------------------------------------------------------

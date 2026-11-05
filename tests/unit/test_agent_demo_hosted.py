@@ -92,6 +92,9 @@ def hosted(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_HOSTED", "1")
     monkeypatch.setenv("DEMO_RUNS", str(tmp_path / "runs"))
     monkeypatch.delenv("TABCTX_API_KEY", raising=False)
+    # The hosted image's scenario and data, whatever this shell exports.
+    monkeypatch.delenv("DEMO_SCENARIO", raising=False)
+    monkeypatch.delenv("DEMO_WORKSPACE", raising=False)
     for name in ("app", "runner"):
         sys.modules.pop(name, None)
     module = importlib.import_module("app")
