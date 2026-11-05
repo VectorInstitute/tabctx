@@ -10,6 +10,8 @@ curl, see the [HTTP guide](../getting-started/http.md). A running server
 serves the same spec at `/openapi.json` and an interactive version at
 `/docs`.
 
+If the reference below doesn't load, <a href="../openapi.json">download the spec</a> and open it in any OpenAPI viewer.
+
 <div id="redoc-container" class="tx-redoc"></div>
 <script src="https://cdn.jsdelivr.net/npm/redoc@2.1.5/bundles/redoc.standalone.js"></script>
 <script>

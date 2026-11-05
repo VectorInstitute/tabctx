@@ -9,7 +9,7 @@ multi-tenant, evictable, memory-governed resource.
 """
 
 from tabctx.cache.manager import CachedContext, ContextCacheManager
-from tabctx.client import PredictResult, TabctxClient
+from tabctx.client import PredictResult, TabctxBackpressureError, TabctxClient
 from tabctx.engine import TabctxEngine
 from tabctx.errors import (
     AdmissionRejected,
@@ -23,7 +23,7 @@ from tabctx.errors import (
     UploadNotFoundError,
     UploadTooLargeError,
 )
-from tabctx.types import EngineStats, PredictOutcome, Task
+from tabctx.types import ContextInfo, EngineStats, PredictOutcome, Task
 
 # The scikit-learn estimators need scikit-learn, which tabctx itself
 # doesn't: imported on first use (`from tabctx import TabctxClassifier`).
@@ -53,12 +53,14 @@ __all__ = [
     "CacheUnavailableError",
     "CachedContext",
     "ContextCacheManager",
+    "ContextInfo",
     "DatasetNotFoundError",
     "EngineStats",
     "HostMemoryUnavailableError",
     "InvalidInputError",
     "PredictOutcome",
     "PredictResult",
+    "TabctxBackpressureError",
     "TabctxClient",
     "TabctxEngine",
     "TabctxError",

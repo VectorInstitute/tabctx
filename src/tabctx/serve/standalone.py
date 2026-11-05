@@ -24,7 +24,9 @@ Ray host provides and what replaces it here:
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -106,29 +108,55 @@ def make_app(service: TabctxService | None = None) -> FastAPI:
         yield
         service.close()
 
-    app = FastAPI(
-        title=fastapi_app.title,
-        summary=fastapi_app.summary,
-        version=fastapi_app.version,
-        openapi_tags=fastapi_app.openapi_tags,
-        lifespan=lifespan,
-    )
-    for spec in ROUTE_SPECS:
-        app.add_api_route(
-            spec.path,
-            getattr(service, spec.endpoint_name),
-            methods=list(spec.methods),
-            response_model=spec.response_model,
-            openapi_extra=spec.openapi_extra,
-            summary=spec.summary,
-            tags=spec.tags,
-        )
+    app = _routes_app(lambda name: getattr(service, name), lifespan=lifespan)
     app.add_middleware(
         _RequestLimiter,
         max_ongoing=_positive_int_env(MAX_ONGOING_ENV_VAR, DEFAULT_MAX_ONGOING),
         max_queued=_positive_int_env(MAX_QUEUED_ENV_VAR, DEFAULT_MAX_QUEUED),
     )
     return app
+
+
+def _routes_app(endpoint: Callable[[str], Callable], **kwargs) -> FastAPI:
+    """A FastAPI app with every route in ROUTE_SPECS, each handler named by
+    its spec resolved through `endpoint`."""
+    app = FastAPI(
+        title=fastapi_app.title,
+        summary=fastapi_app.summary,
+        version=fastapi_app.version,
+        openapi_tags=fastapi_app.openapi_tags,
+        **kwargs,
+    )
+    for spec in ROUTE_SPECS:
+        app.add_api_route(
+            spec.path,
+            endpoint(spec.endpoint_name),
+            methods=list(spec.methods),
+            response_model=spec.response_model,
+            openapi_extra=spec.openapi_extra,
+            summary=spec.summary,
+            tags=spec.tags,
+        )
+    return app
+
+
+def openapi_spec() -> dict:
+    """The service's OpenAPI spec, without building a service: no engine,
+    no model, nothing read from the environment. The handlers are the
+    class's own, with `self` bound to a placeholder (only their signatures
+    matter here)."""
+    return _routes_app(_unbound).openapi()
+
+
+def _unbound(name: str) -> Callable:
+    """TabctxService.<name> with `self` already given, keeping the name and
+    docstring the spec uses (not via functools.wraps: its __wrapped__
+    would bring `self` back into the signature)."""
+    method = getattr(TabctxService, name)
+    handler = functools.partial(method, None)
+    handler.__name__ = method.__name__
+    handler.__doc__ = method.__doc__
+    return handler
 
 
 def main(argv: list[str] | None = None) -> None:

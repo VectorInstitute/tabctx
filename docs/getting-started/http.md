@@ -1,7 +1,8 @@
 # HTTP API
 
-Every route, with curl. The [reference](../reference/http-api.md) has the
-full request and response schemas, generated from the service itself.
+The routes, with curl for the ones you'll use most. The
+[reference](../reference/http-api.md) has the full request and response
+schemas, generated from the service itself.
 
 | Method | Route | What it does |
 |---|---|---|
@@ -12,7 +13,7 @@ full request and response schemas, generated from the service itself.
 | `POST` | `/v1/tabctx/upload` | Stream a large table ahead of a fit or predict. |
 | `GET` | `/v1/models` | The models served; the default is marked. |
 | `GET` | `/v1/tabctx/limits` | What table shapes the deployment will admit right now. |
-| `GET` | `/v1/tabctx/residency` | Where your contexts are, per GPU. |
+| `GET` | `/v1/tabctx/residency` | Where your contexts are, per GPU (multi-GPU replicas). |
 | `GET` | `/livez`, `/readyz` | Liveness and readiness probes. |
 
 ## Fit and predict
@@ -44,6 +45,20 @@ Text cells are categories, `null` is a missing value, and the task is
 inferred from the labels unless you send `task`. When the training table
 was a file, a test file's columns are matched by name.
 
+## Large tables
+
+A table file sent with the fit or predict is fine up to
+`TABCTX_MAX_UPLOAD_BYTES` (4 GiB by default). To send it ahead, stream
+the CSV as the request body to `/v1/tabctx/upload`, then use the
+returned id once:
+
+```bash
+curl localhost:8000/v1/tabctx/upload -H 'x-session-id: churn' --data-binary @train.csv
+# {"upload_id": "3f2a...", ...}
+curl localhost:8000/v1/tabctx/fit -H 'Content-Type: application/json' \
+  -d '{"dataset_id": "churn", "train_upload_id": "3f2a...", "target": "churned"}'
+```
+
 ## List and delete
 
 ```bash
@@ -55,12 +70,13 @@ curl -X DELETE localhost:8000/v1/tabctx/datasets/churn
 
 | Header | When |
 |---|---|
-| `x-tabctx-tenant-id` | Scopes every dataset id to a tenant. Required when the server runs with `TABCTX_REQUIRE_TENANT=true`. |
+| `x-tabctx-tenant-id` | Scopes every dataset id to a tenant. Required when the server runs with `TABCTX_REQUIRE_TENANT=true`. The server trusts it as sent: put it behind a gateway that sets it (see [tenant isolation](../serving.md#tenant-isolation)). |
 | `x-session-id` | Equal to the dataset id. Routes the request to the replica holding the context when there are several. |
 | `Authorization: Bearer ...` | Through a gateway that needs an API key. |
 
 ## Status codes
 
-`422` malformed request · `404` no such context · `413` too large to
-admit · `503` busy, retry · `507` the model failed on the device · `401`
-tenant required.
+`422` malformed request · `404` no such context or upload · `413` too
+large to admit, or over the upload limit · `503` busy or temporarily
+unable, retry · `507` the model failed on the device · `401` tenant
+required.

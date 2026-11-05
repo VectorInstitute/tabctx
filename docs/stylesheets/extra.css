@@ -56,9 +56,13 @@
   border-color: var(--md-accent-fg-color);
 }
 
-/* Redoc fills the content column. */
+/* Redoc fills the content column, on a light panel: it has no dark theme. */
 .tx-redoc {
-  margin: 0 -0.8rem;
+  margin: 1rem -0.8rem 0;
+  background: #fff;
+  color: #1f2328;
+  border-radius: 0.4rem;
+  overflow: hidden;
 }
 
 /* Buttons: the slate header colour is too dark for them. */
@@ -88,4 +92,15 @@
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   border: 0;
+}
+.tx-redoc h1,
+.tx-redoc h2,
+.tx-redoc h3,
+.tx-redoc h4,
+.tx-redoc h5 {
+  color: #1f2328 !important;
+}
+.tx-redoc a,
+.tx-redoc button {
+  color: #4f46e5;
 }

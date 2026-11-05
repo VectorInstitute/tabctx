@@ -14,8 +14,7 @@ reg = TabctxRegressor(model="tabpfn-3.5", client=client)    # or name one
 ```
 
 - **Input:** DataFrames or arrays. Text columns, categories, dates and
-  missing values are sent as they are, as Parquet when pyarrow is
-  installed.
+  missing values are sent as they are, as Parquet.
 - **Labels** may be strings, ints or bools; `predict` returns them as
   given to `fit`, and `predict_proba`'s columns follow `classes_`.
 - **scikit-learn tools:** they clone and pickle, and work with
@@ -40,7 +39,7 @@ sets the routing and tenant headers for you.
 ```python
 client = TabctxClient("http://localhost:8000", tenant_id="acme")
 
-client.fit(X_train, y_train, dataset_id="churn-v1")            # rows of JSON
+client.fit(X_train, y_train, dataset_id="churn-v1")            # DataFrame, array or rows
 client.fit_file("train.parquet", target="churned", dataset_id="churn-v2")
 result = client.predict("churn-v1", X_test, return_proba=True)
 result.predictions, result.probabilities, result.classes
@@ -56,14 +55,18 @@ the client's `repr`, and is left out when the client is pickled.
 
 ## Errors
 
-Server errors come back as tabctx's own exception types, so code written
-against the in-process engine works against a server too:
+Server errors come back as tabctx exceptions, importable from `tabctx`.
+The in-process engine raises the same types for the same mistakes
+(invalid input, an unknown context, a table too large); conditions that
+are only temporary come back from a server as one retryable type,
+`TabctxBackpressureError`.
 
 | HTTP | Exception | Meaning |
 |---|---|---|
 | 422 | `InvalidInputError` | A malformed request: retry won't help. |
 | 404 | `DatasetNotFoundError` | No such context: never fit, deleted, evicted or lost to a restart. Fit again. |
-| 413 | `AdmissionRejected` | The table is too large for this deployment's memory. |
+| 404 | `UploadNotFoundError` | No such upload: expired, already used, or sent to another replica. |
+| 413 | `AdmissionRejected` | The table is too large for this deployment's memory, or the request for its upload limit. |
 | 503 | `TabctxBackpressureError` | Busy or temporarily unable; the client already retried with backoff. |
 | 507 | `BackendComputeError` | The model failed on the device. |
 | 401/403 | `PermissionError` | Missing tenant or API key. |
@@ -71,8 +74,10 @@ against the in-process engine works against a server too:
 ## The engine in your own process
 
 Without a server, `TabctxEngine` gives you the same cache and admission
-control in one Python process:
+control in one Python process. This example uses the fake model, so it
+runs anywhere; swap in `tabctx.backends.tabicl.TabICLBackend(device="cuda")`
+(with the `tabicl` extra) for real predictions:
 
 ```python
---8<-- "examples/local_fit_predict.py:8:38"
+--8<-- "examples/local_fit_predict.py:8:39"
 ```

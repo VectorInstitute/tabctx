@@ -2,6 +2,7 @@
 
 Run a tabctx server on your laptop, fit a real dataset and predict
 against it. A CPU is enough; the server uses a GPU if it finds one.
+tabctx needs Python 3.12 or newer.
 
 ## 1. Install and start a server
 

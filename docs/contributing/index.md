@@ -10,7 +10,7 @@ and [adding a model](adding-a-model.md).
 
 ```bash
 git clone https://github.com/VectorInstitute/tabctx && cd tabctx
-uv sync --dev --extra mcp
+uv sync --dev --extra serve --extra mcp
 uv run pre-commit install
 ```
 

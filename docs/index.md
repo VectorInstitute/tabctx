@@ -13,9 +13,9 @@ hide:
 
 <p class="tx-tagline">The serving engine for tabular foundation models.</p>
 
-Fit a table once, keep it on the GPU, and answer every later prediction
-in a fraction of a second, for many tables and many users, on hardware
-you control.
+Fit a table once, keep it on the GPU, and answer later predictions
+typically well under a second, for many tables and many users, on
+hardware you control.
 
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
 [How it works](how-it-works.md){ .md-button }
@@ -76,7 +76,8 @@ against the result.
     ---
 
     `tabicl-v2` and `tabpfn-3.5` behind `GET /v1/models`; pick one per
-    request. Adding a model is one class.
+    request. Adding a model is one backend class and a few lines of
+    wiring.
 
     [:octicons-arrow-right-24: Add a model](contributing/adding-a-model.md)
 
