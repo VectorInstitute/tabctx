@@ -85,14 +85,19 @@ class DiskSpillStore:
         # restart) are indexed at 0.0, i.e. oldest, so they are the
         # first to go under disk pressure.
         self._index: dict[str, float] = {}
+        # dataset_id -> (expires_at, fitted_at) of each spilled context, so
+        # retention checks needn't read metadata files.
+        self._retention: dict[str, tuple[float | None, float | None]] = {}
         for meta_path in self._dir.glob("*.meta.json"):
             # File names are hex-encoded dataset_ids (see _paths); index by
             # the id itself, like entries this process spills.
             stem = meta_path.name[: -len(".meta.json")]
             try:
-                self._index[bytes.fromhex(stem).decode()] = 0.0
+                dataset_id = bytes.fromhex(stem).decode()
             except ValueError:
                 continue  # not one of ours
+            self._index[dataset_id] = 0.0
+            self._retention[dataset_id] = _retention_of(self._meta(dataset_id))
 
     def _paths(self, dataset_id: str) -> tuple[Path, Path]:
         # dataset_ids may contain ':' (tenant scoping) -- hex-encode for
@@ -124,6 +129,7 @@ class DiskSpillStore:
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
                         "fitted_at": context.fitted_at,
+                        "expires_at": context.expires_at,
                         "schema": context.schema.to_json() if context.schema else None,
                         # Read by 0.14 and earlier (a rollback keeps names).
                         "feature_names": (
@@ -140,6 +146,10 @@ class DiskSpillStore:
             return False
         with self._lock:
             self._index[context.dataset_id] = time.monotonic()
+            self._retention[context.dataset_id] = (
+                context.expires_at,
+                context.fitted_at,
+            )
         return True
 
     def load(self, dataset_id: str) -> CachedContext | None:
@@ -173,6 +183,7 @@ class DiskSpillStore:
             est_bytes=meta["est_bytes"],
             schema=_schema(meta),
             fitted_at=meta.get("fitted_at"),
+            expires_at=meta.get("expires_at"),
         )
 
     def _meta(self, dataset_id: str) -> dict | None:
@@ -211,6 +222,7 @@ class DiskSpillStore:
                         bytes=int(meta["est_bytes"]),
                         location="spilled",
                         fitted_at=meta.get("fitted_at"),
+                        expires_at=meta.get("expires_at"),
                     )
                 )
             except (KeyError, TypeError, ValueError):
@@ -240,7 +252,17 @@ class DiskSpillStore:
                 pass
         with self._lock:
             found = self._index.pop(dataset_id, None) is not None or found
+            self._retention.pop(dataset_id, None)
         return found
+
+    def retention(self, dataset_id: str) -> tuple[float | None, float | None] | None:
+        """A spilled context's (expires_at, fitted_at), or None if not spilled.
+        Lock-free snapshot."""
+        return self._retention.get(dataset_id)
+
+    def retention_items(self) -> list[tuple[str, tuple[float | None, float | None]]]:
+        """(dataset_id, (expires_at, fitted_at)) of every spilled context."""
+        return list(self._retention.items())
 
     def _make_room(self, needed: int) -> None:
         while self.used_bytes + needed > self._capacity_bytes:
@@ -279,3 +301,22 @@ def _schema(meta: dict) -> TableSchema | None:
     if names is None:
         return None
     return TableSchema((None,) * len(names), tuple(names))
+
+
+def _retention_of(meta: dict | None) -> tuple[float | None, float | None]:
+    """(expires_at, fitted_at) from a spilled context's metadata. A value
+    that can't be read counts as already expired (0.0): retention errs on
+    the side of deleting."""
+    if meta is None:
+        return 0.0, None
+
+    def number(key: str, unreadable: float | None) -> float | None:
+        value = meta.get(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return unreadable
+
+    return number("expires_at", 0.0), number("fitted_at", None)

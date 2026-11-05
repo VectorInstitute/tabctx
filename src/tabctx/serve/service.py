@@ -42,10 +42,12 @@ import dataclasses
 import functools
 import json
 import logging
+import math
 import re
 import time
 import uuid
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
 
@@ -73,7 +75,7 @@ from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
-from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.factory import EXPIRY_SWEEP_S, ServeSettings, build_engine
 from tabctx.serve.files import read_table, read_training_table
 from tabctx.serve.multipart import FILE_FIELD, MAX_FIELD_BYTES, MAX_FIELDS, read_form
 from tabctx.serve.reporting import REPORT_STALE_S, PeriodicReport, spill_stats
@@ -219,6 +221,14 @@ class FitRequest(BaseModel):
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
     # the deployment's first-listed model.
     model: str | None = None
+    ttl_s: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Delete this context after this many seconds, from every "
+        "tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, "
+        "if set, caps it (and applies when this is omitted).",
+    )
 
 
 class UploadResponse(BaseModel):
@@ -235,6 +245,11 @@ class FitResponse(BaseModel):
     )
     n_train: int
     n_features: int
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time the context is deleted at (its retention "
+        "limit), or null if it has none.",
+    )
     # Which replica served this -- lets clients and probes verify that
     # session affinity actually pinned fit() and later predict() calls to
     # the same replica (the multi-replica correctness contract).
@@ -319,6 +334,10 @@ class DatasetInfo(BaseModel):
         default=None,
         description="Unix time of the fit (null for a context spilled by an "
         "older tabctx).",
+    )
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time it is deleted at (its retention limit), or null.",
     )
 
 
@@ -433,22 +452,36 @@ def _request_body(model: type[BaseModel]) -> dict:
 
 def _body_error(e: ValidationError) -> RequestValidationError:
     """FastAPI's own 422 shape for a body it validated: locations under
-    "body"."""
+    "body", and the rejected input shown as text when JSON can't carry it
+    (infinity, NaN), else the error response itself would fail."""
     return RequestValidationError(
-        [{**err, "loc": ("body", *err["loc"])} for err in e.errors()]
+        [
+            {**err, "loc": ("body", *err["loc"]), "input": _json_safe(err.get("input"))}
+            for err in e.errors()
+        ]
     )
 
 
-def _local_report(service: "TabctxService") -> PeriodicReport:
-    """The service's own device report, on a thread that holds the service
-    weakly: it never keeps one alive, and ends once it is gone."""
+def _json_safe(value: object) -> object:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    return value
+
+
+def _weakly(
+    service: "TabctxService",
+    task: Callable[["TabctxService"], object],
+    interval_s: float | None = None,
+) -> PeriodicReport:
+    """task(service) on a timer (a PeriodicReport), on a thread that holds
+    the service weakly: it never keeps one alive, and ends once it is gone."""
     ref = weakref.ref(service)
 
-    def measure() -> object:
+    def run() -> object:
         current = ref()
-        return PeriodicReport.STOP if current is None else current._measure_local()
+        return PeriodicReport.STOP if current is None else task(current)
 
-    return PeriodicReport(measure)
+    return PeriodicReport(run, interval_s=interval_s)
 
 
 def _combine_spill(per_device: list[dict]) -> dict | None:
@@ -522,7 +555,16 @@ class TabctxService:
         # Device measurements /readyz reads without waiting (#51): worker
         # processes send their own; devices served in this process are
         # measured here.
-        self._local_report = None if self._workers else _local_report(self)
+        self._local_report = (
+            None if self._workers else _weakly(self, TabctxService._measure_local)
+        )
+        # Contexts' engines delete them at their retention deadline; their
+        # schemas here (text categories of the training table) go too.
+        self._schema_purge = _weakly(
+            self,
+            lambda service: service._schemas.purge_expired(),
+            interval_s=EXPIRY_SWEEP_S,
+        )
         if "cuda" not in self._device and "fake" not in settings.backends:
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -808,6 +850,7 @@ class TabctxService:
             # the cached context so test tables are encoded the same way;
             # it lives and dies with the context, spill included.
             with self._schemas.fitting(scoped_id) as record:
+                expires_at = self._expires_at(req.ttl_s)
                 self._engine.fit(
                     X,
                     y,
@@ -815,9 +858,10 @@ class TabctxService:
                     dataset_id=scoped_id,
                     backend=model_id,
                     schema=schema,
+                    expires_at=expires_at,
                 )
                 if schema is not None:
-                    record(schema)
+                    record(schema, expires_at)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -833,8 +877,16 @@ class TabctxService:
             task=task,
             n_train=n_train,
             n_features=n_features,
+            expires_at=expires_at,
             served_by=_replica_tag(),
         )
+
+    def _expires_at(self, ttl_s: float | None) -> float | None:
+        """When a context fit now is deleted: after the request's ttl_s,
+        capped by the server's maximum age (which applies alone when the
+        request names none); None for neither."""
+        limits = [t for t in (ttl_s, self._settings.max_context_age_s) if t]
+        return time.time() + min(limits) if limits else None
 
     @fastapi_app.post(
         "/v1/tabctx/predict",
@@ -1022,6 +1074,7 @@ class TabctxService:
         """Stop the per-GPU worker processes, if any. Standalone hosts call
         this at shutdown; a Ray replica's teardown kills its process tree
         (and workers.py's atexit hook backstops both)."""
+        self._schema_purge.stop()
         if self._local_report is not None:
             self._local_report.stop()
         for shard in self._workers:
@@ -1123,6 +1176,9 @@ class TabctxService:
             "admission_headroom_bytes": headroom,
             "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
+            # Retention: no context kept longer than this after its fit
+            # (null: no limit); a fit's ttl_s is capped by it.
+            "max_context_age_s": self._settings.max_context_age_s,
             "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "devices": list(self._devices),
             # Scopes: cache_used_bytes is the replica's total;

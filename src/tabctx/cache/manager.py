@@ -16,6 +16,7 @@ the engine's job (engine.py), so the cache never waits on a backend call.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import threading
 import time
@@ -50,6 +51,9 @@ class CachedContext:
     # meaningless outside this process). Travels through the spill tier;
     # None for contexts spilled before it was recorded.
     fitted_at: float | None = field(default_factory=time.time)
+    # Wall-clock time this context is deleted at (a retention limit; see
+    # TabctxEngine.expire), or None to keep it until evicted or deleted.
+    expires_at: float | None = None
 
     def info(self, location: Location = "resident") -> ContextInfo:
         return ContextInfo(
@@ -61,6 +65,7 @@ class CachedContext:
             bytes=self.est_bytes,
             location=location,
             fitted_at=self.fitted_at,
+            expires_at=self.expires_at,
         )
 
 
@@ -70,6 +75,7 @@ class ContextCacheManager:
         capacity_bytes: int,
         policy: EvictionPolicy | None = None,
         spill_store: Any | None = None,
+        max_age_s: float | None = None,
     ) -> None:
         """spill_store: optional disk tier (cache/spill.py). When set,
         capacity-pressure evictions spill instead of dropping, and get()
@@ -77,6 +83,10 @@ class ContextCacheManager:
         intent, re-fit overwrite) never spills -- and also drops any
         spilled copy, so an evicted context can't resurrect."""
         self._capacity_bytes = capacity_bytes
+        # Retention: no context outlives its fit by more than this (None: no
+        # limit), whatever its own expires_at -- contexts fit before the
+        # limit was set included.
+        self._max_age_s = max_age_s
         self._policy = policy or LRUEvictionPolicy()
         self._entries: dict[str, CachedContext] = {}
         # Maintained incrementally so stats()/free_bytes stay O(1) --
@@ -308,16 +318,82 @@ class ContextCacheManager:
             removed = self._remove(dataset_id)
         return removed, removed is not None or spilled
 
+    # ---- retention ---------------------------------------------------
+
+    def deadline(
+        self, expires_at: float | None, fitted_at: float | None
+    ) -> float | None:
+        """When a context with these times is deleted: its own expiry, capped
+        at fitted_at + max_age_s. Under a limit, a context with no recorded
+        fit time (spilled by tabctx < 0.19) is already due."""
+        if self._max_age_s is None:
+            return expires_at
+        cap = 0.0 if fitted_at is None else fitted_at + self._max_age_s
+        return cap if expires_at is None else min(expires_at, cap)
+
+    def _due(self, dataset_id: str, now: float) -> bool:
+        entry = self._entries.get(dataset_id)
+        if entry is not None:
+            times = (entry.expires_at, entry.fitted_at)
+        else:
+            spilled = self._spill.retention(dataset_id) if self._spill else None
+            if spilled is None:
+                return False
+            times = spilled
+        at = self.deadline(*times)
+        return at is not None and at <= now
+
+    def is_expired(self, dataset_id: str, now: float) -> bool:
+        """Whether this id's retention limit has passed (resident or
+        spilled). Lock-free snapshot: delete_if_expired re-checks."""
+        return self._due(dataset_id, now)
+
+    def expired_ids(self, now: float) -> list[str]:
+        """Ids whose retention limit has passed, resident or spilled."""
+        with self._lock:
+            ids = {i for i in self._entries if self._due(i, now)}
+        if self._spill is not None:
+            ids |= {i for i, _ in self._spill.retention_items() if self._due(i, now)}
+        return sorted(ids)
+
+    def delete_if_expired(
+        self, dataset_id: str, now: float, settle_timeout_s: float = 600.0
+    ) -> tuple[CachedContext | None, bool]:
+        """delete(), only if the context is still past its deadline once any
+        move of it has landed, checked and deleted under one lock: a re-fit
+        that replaced it meanwhile is not deleted. Returns (the resident
+        context removed, whether anything was)."""
+        with self._settled:
+            if not self._settled.wait_for(
+                lambda: dataset_id not in self._in_transit, settle_timeout_s
+            ):
+                raise CacheUnavailableError(
+                    "the context is still moving between cache tiers after "
+                    f"{settle_timeout_s:.0f} s; nothing was deleted, retry"
+                )
+            if not self._due(dataset_id, now):
+                return None, False
+            spilled = self._spill is not None and self._spill.delete(dataset_id)
+            removed = self._remove(dataset_id)
+        return removed, removed is not None or spilled
+
     def contexts(self) -> list[ContextInfo]:
         """Every context here, resident and spilled: metadata only. A
         context moving between tiers right now may be missing."""
         with self._lock:
             resident = [entry.info("resident") for entry in self._entries.values()]
-        if self._spill is None:
-            return resident
-        held = {info.dataset_id for info in resident}
-        spilled = [i for i in self._spill.contexts() if i.dataset_id not in held]
-        return resident + spilled
+        if self._spill is not None:
+            held = {info.dataset_id for info in resident}
+            resident += [i for i in self._spill.contexts() if i.dataset_id not in held]
+        # Listed with their effective deadline; past it, not listed (the
+        # sweep deletes them within EXPIRY_SWEEP_S).
+        now = time.time()
+        out = []
+        for info in resident:
+            at = self.deadline(info.expires_at, info.fitted_at)
+            if at is None or at > now:
+                out.append(dataclasses.replace(info, expires_at=at))
+        return out
 
     # ---- lock-free snapshots ---------------------------------------
     # Readers that only need bookkeeping (a multi-device router choosing a

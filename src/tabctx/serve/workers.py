@@ -669,6 +669,7 @@ class ProcessShard:
         dataset_id: str | None = None,
         backend: str | None = None,
         schema: TableSchema | None = None,
+        expires_at: float | None = None,
     ) -> str:
         return self._call(
             "fit",
@@ -678,6 +679,7 @@ class ProcessShard:
             dataset_id=dataset_id,
             backend=backend,
             schema=schema,
+            expires_at=expires_at,
         )
 
     def predict(

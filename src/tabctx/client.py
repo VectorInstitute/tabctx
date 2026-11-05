@@ -201,19 +201,23 @@ class TabctxClient:
         task: Task | None = None,
         dataset_id: str | None = None,
         model: str | None = None,
+        ttl_s: float | None = None,
     ) -> str:
         """Encode and cache a training context; returns its dataset_id.
 
         Omit task to let the server infer it from y (non-integer numbers
         mean regression). Supply a stable dataset_id when deploying
         multi-replica: a server-generated id can't be used to route the fit
-        itself, so the context would land on an arbitrary replica.
+        itself, so the context would land on an arbitrary replica. ttl_s:
+        have the server delete it after this many seconds (capped by its
+        own retention limit).
         """
         body = _without_none(
             {
                 "train_X": _json_rows(X),
                 "train_y": _json_cells(y),
                 "task": task,
+                "ttl_s": ttl_s,
                 "dataset_id": dataset_id,
                 "model": model,
             }
@@ -249,10 +253,11 @@ class TabctxClient:
         task: Task | None = None,
         target_column: str | None = None,
         model: str | None = None,
+        ttl_s: float | None = None,
     ) -> str:
         """Fit-by-reference: consume a prior upload_csv() of a CSV whose
         columns are the features plus one target column (target_column,
-        default: the last column)."""
+        default: the last column). ttl_s: as for fit()."""
         resp = self._post(
             "/v1/tabctx/fit",
             _without_none(
@@ -260,6 +265,7 @@ class TabctxClient:
                     "train_upload_id": train_upload_id,
                     "target_column": target_column,
                     "task": task,
+                    "ttl_s": ttl_s,
                     "dataset_id": dataset_id,
                     "model": model,
                 }
@@ -275,15 +281,18 @@ class TabctxClient:
         dataset_id: str | None = None,
         model: str | None = None,
         task: Task | None = None,
+        ttl_s: float | None = None,
     ) -> str:
         """fit() from a table file sent with the request: a path (streamed
         from disk) or the file's bytes. Columns are the features plus the
-        label column, `target` (default: the last). Returns the dataset_id."""
+        label column, `target` (default: the last). Returns the dataset_id.
+        ttl_s: as for fit()."""
         fields = {
             "target": target,
             "dataset_id": dataset_id,
             "model": model,
             "task": task,
+            "ttl_s": None if ttl_s is None else repr(float(ttl_s)),
         }
         resp = self._post_file("/v1/tabctx/fit", fields, file, session_id=dataset_id)
         return resp["dataset_id"]

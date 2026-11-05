@@ -46,6 +46,9 @@ TABCTX_GPU_MEMORY_FRACTION: {{ .Values.gpuMemoryFraction | quote }}
 TABCTX_MAX_ONGOING_REQUESTS: {{ .Values.maxOngoingRequests | quote }}
 TABCTX_MAX_QUEUED_REQUESTS: {{ .Values.maxQueuedRequests | quote }}
 TABCTX_OFFLOAD_DIR: "/tmp/offload"
+{{- with .Values.maxContextAgeS }}
+TABCTX_MAX_CONTEXT_AGE_S: {{ . | quote }}
+{{- end }}
 {{- if .Values.spill.enabled }}
 TABCTX_SPILL_DIR: "/data/spill"
 # 90% of the volume.

@@ -51,6 +51,10 @@ Environment variables:
   for capacity-evicted contexts (see cache/spill.py). With several
   devices, each gets its own subdirectory (``cuda_0/``, ...) and an equal
   share of the capacity (the setting is the total for the replica).
+- ``TABCTX_MAX_CONTEXT_AGE_S`` (default unset = no limit): no context is
+  kept longer than this after its fit, in any tier, including contexts fit
+  before it was set; a fit may ask for less with ``ttl_s``. Each engine
+  deletes expired contexts within EXPIRY_SWEEP_S.
 - ``TABCTX_DEVICES``: ``"auto"`` (default: every visible CUDA device, or
   the CPU when there is none) or a comma-separated list such as
   ``cuda:0,cuda:1``. Two or more devices build a MultiDeviceEngine (see
@@ -79,6 +83,7 @@ from __future__ import annotations
 import functools
 import importlib
 import logging
+import math
 import os
 import tempfile
 from dataclasses import dataclass
@@ -126,6 +131,9 @@ WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
 COMPILE_AFTER_WARMUP_ENV_VAR = "TABCTX_COMPILE_AFTER_WARMUP"
 FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
+MAX_CONTEXT_AGE_S_ENV_VAR = "TABCTX_MAX_CONTEXT_AGE_S"
+# How often each engine deletes contexts past their retention limit.
+EXPIRY_SWEEP_S = 30.0
 TABDPT_CONTEXT_SIZE_ENV_VAR = "TABCTX_TABDPT_CONTEXT_SIZE"
 TABDPT_ENSEMBLES_ENV_VAR = "TABCTX_TABDPT_ENSEMBLES"
 
@@ -165,6 +173,9 @@ class ServeSettings:
     # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
     # (backends/yeo_johnson.py).
     fast_preprocessing: bool = True
+    # Retention: no context is kept longer than this after its fit (None:
+    # no limit). A fit may ask for less with ttl_s.
+    max_context_age_s: float | None = None
     # TabDPT: training rows sampled as each predict's context, and the
     # ensemble size (backends/tabdpt.py).
     tabdpt_context_size: int = 2048
@@ -243,6 +254,19 @@ class ServeSettings:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be an int") from e
         if spill_capacity <= 0:
             raise ValueError(f"{SPILL_CAPACITY_ENV_VAR} must be positive")
+        raw_age = os.environ.get(MAX_CONTEXT_AGE_S_ENV_VAR, "").strip()
+        try:
+            max_context_age_s = float(raw_age) if raw_age else None
+        except ValueError as e:
+            raise ValueError(
+                f"{MAX_CONTEXT_AGE_S_ENV_VAR}={raw_age!r} must be a number of seconds"
+            ) from e
+        if max_context_age_s is not None and not (
+            math.isfinite(max_context_age_s) and max_context_age_s > 0
+        ):
+            raise ValueError(
+                f"{MAX_CONTEXT_AGE_S_ENV_VAR} must be a positive number of seconds"
+            )
         devices = _parse_devices(os.environ.get(DEVICES_ENV_VAR, "auto"))
         offload_dir = os.environ.get(OFFLOAD_DIR_ENV_VAR) or None
         return cls(
@@ -253,6 +277,7 @@ class ServeSettings:
             batch_window_ms=batch_window_ms,
             max_upload_bytes=max_upload_bytes,
             upload_ttl_s=upload_ttl_s,
+            max_context_age_s=max_context_age_s,
             spill_dir=spill_dir,
             spill_capacity_bytes=spill_capacity,
             devices=devices,
@@ -751,7 +776,9 @@ def build_shard(
     # ONE cache and budget shared by every model on a device -- the whole
     # point of serving them behind one endpoint (see engine.py).
     cache = ContextCacheManager(
-        capacity_bytes=estimators[default].ceiling_bytes(), spill_store=spill_store
+        capacity_bytes=estimators[default].ceiling_bytes(),
+        spill_store=spill_store,
+        max_age_s=settings.max_context_age_s,
     )
     engine = TabctxEngine(
         backends=backends,
@@ -763,6 +790,7 @@ def build_shard(
         device_available=None
         if fake_only
         else functools.partial(device_available_bytes, device),
+        expiry_sweep_s=EXPIRY_SWEEP_S,
     )
     return Shard(
         engine=engine,

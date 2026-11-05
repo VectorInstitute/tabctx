@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 
@@ -41,40 +42,62 @@ class SchemaCache:
         self._max_entries = max_entries
         self._max_bytes = max_bytes
         self._entries: OrderedDict[str, TableSchema] = OrderedDict()
+        # dataset_id -> the retention deadline of its context (unix time):
+        # the schema holds the training table's text categories, so it goes
+        # when the context does.
+        self._deadlines: dict[str, float] = {}
         self._bytes = 0
         self._lock = threading.Lock()
         self._fits = KeyedLocks()
 
     @contextlib.contextmanager
-    def fitting(self, dataset_id: str) -> Iterator[Callable[[TableSchema], None]]:
+    def fitting(
+        self, dataset_id: str
+    ) -> Iterator[Callable[[TableSchema, float | None], None]]:
         """Around a fit of dataset_id: yields the function that records its
-        schema once the fit succeeds."""
+        schema (and its context's retention deadline, if any) once the fit
+        succeeds."""
         with self._fits.hold(dataset_id):
             self._drop(dataset_id)
-            yield lambda schema: self._put(dataset_id, schema)
+            yield lambda schema, deadline=None: self._put(dataset_id, schema, deadline)
 
     def get(self, dataset_id: str) -> TableSchema | None:
         with self._lock:
+            deadline = self._deadlines.get(dataset_id)
+            if deadline is not None and deadline <= time.time():
+                self._drop_locked(dataset_id)
+                return None
             schema = self._entries.get(dataset_id)
             if schema is not None:
                 self._entries.move_to_end(dataset_id)
             return schema
 
-    def _put(self, dataset_id: str, schema: TableSchema) -> None:
+    def purge_expired(self, now: float | None = None) -> int:
+        """Drop the schemas of contexts past their retention deadline."""
+        now = time.time() if now is None else now
+        with self._lock:
+            due = [i for i, at in self._deadlines.items() if at <= now]
+            for dataset_id in due:
+                self._drop_locked(dataset_id)
+        return len(due)
+
+    def _put(
+        self, dataset_id: str, schema: TableSchema, deadline: float | None = None
+    ) -> None:
         size = schema.approx_bytes
         if size > self._max_bytes:
             return
         with self._lock:
-            old = self._entries.pop(dataset_id, None)
-            if old is not None:
-                self._bytes -= old.approx_bytes
+            self._drop_locked(dataset_id)
             self._entries[dataset_id] = schema
             self._bytes += size
+            if deadline is not None:
+                self._deadlines[dataset_id] = deadline
             while (
                 len(self._entries) > self._max_entries or self._bytes > self._max_bytes
             ):
-                _, old = self._entries.popitem(last=False)
-                self._bytes -= old.approx_bytes
+                oldest = next(iter(self._entries))
+                self._drop_locked(oldest)
 
     @contextlib.contextmanager
     def deleting(self, dataset_id: str) -> Iterator[None]:
@@ -87,6 +110,10 @@ class SchemaCache:
 
     def _drop(self, dataset_id: str) -> None:
         with self._lock:
-            old = self._entries.pop(dataset_id, None)
-            if old is not None:
-                self._bytes -= old.approx_bytes
+            self._drop_locked(dataset_id)
+
+    def _drop_locked(self, dataset_id: str) -> None:
+        old = self._entries.pop(dataset_id, None)
+        if old is not None:
+            self._bytes -= old.approx_bytes
+        self._deadlines.pop(dataset_id, None)
