@@ -364,3 +364,9 @@ class TestPredictQuantiles:
         reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
         deployment.contexts.clear()  # evicted, or the server restarted
         np.testing.assert_allclose(reg.predict_quantiles(X, [0.5])[:, 0], [1.5, 2.5])
+
+
+def test_the_ttl_goes_with_every_fit(tmp_path):
+    deployment = FakeDeployment(tmp_path)
+    TabctxRegressor(client=deployment, ttl_s=60).fit(np.ones((3, 1)), [1.0, 2.0, 3.0])
+    assert deployment.fits[-1]["ttl_s"] == 60

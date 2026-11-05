@@ -354,14 +354,3 @@ class TestServiceRetention:
         app = TestHttp()._app(monkeypatch, max_age=3600)
         limits = TestHttp()._call(app, "GET", "/v1/tabctx/limits").json()
         assert limits["max_context_age_s"] == 3600
-
-
-def test_estimators_pass_their_ttl(tmp_path):
-    import numpy as np
-    from fake_deployment import FakeDeployment
-
-    from tabctx import TabctxRegressor
-
-    deployment = FakeDeployment(tmp_path)
-    TabctxRegressor(client=deployment, ttl_s=60).fit(np.ones((3, 1)), [1.0, 2.0, 3.0])
-    assert deployment.fits[-1]["ttl_s"] == 60
