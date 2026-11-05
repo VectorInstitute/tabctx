@@ -37,7 +37,8 @@ shared lock is a plain lock that waiters poll (a process killed while
 waiting on an mp.Condition would block every later notify forever), and
 every acquire has a timeout: a worker killed while holding it (a window
 of microseconds) makes calls fail with a retryable
-HostMemoryUnavailableError and /readyz report unhealthy, never hang. A
+HostMemoryUnavailableError, never hang (/readyz reads the counters
+without the lock; a worker that died holding it is reported dead). A
 call's release never raises: its result stands, and a reservation that
 can't be returned is logged.
 """
@@ -304,27 +305,38 @@ class HostMemoryGuard:
     def stats(self) -> dict[str, int]:
         """Raises HostMemoryUnavailableError if the shared lock is stuck."""
         with self._locked():
-            blocks = [self._block(o) for o in range(self._owners)]
-            return {
-                "budget_bytes": self.budget_bytes,
-                "reserved_bytes": sum(self._state[b] for b in blocks),
-                "calls_active": sum(self._state[b + 1] for b in blocks),
-                "calls_offloading": sum(self._state[b + 2] for b in blocks),
-                "calls_waiting": sum(
-                    1
-                    for b in blocks
-                    for i in range(b + 3, b + self._block_size)
-                    if self._state[i]
-                ),
-                "large_fit_slots": self.slots,
-            }
+            return self._totals()
+
+    def stats_nowait(self) -> dict[str, int]:
+        """stats() without the lock, for health probes: each number is read
+        as it is now, and they may be from slightly different instants.
+        Never waits (a stuck lock means a worker died holding it, which the
+        probes see as the dead worker)."""
+        return self._totals()
+
+    def _totals(self) -> dict[str, int]:
+        blocks = [self._block(o) for o in range(self._owners)]
+        state = self._state
+        return {
+            "budget_bytes": self.budget_bytes,
+            "reserved_bytes": sum(state[b] for b in blocks),
+            "calls_active": sum(state[b + 1] for b in blocks),
+            "calls_offloading": sum(state[b + 2] for b in blocks),
+            "calls_waiting": sum(
+                1
+                for b in blocks
+                for i in range(b + 3, b + self._block_size)
+                if state[i]
+            ),
+            "large_fit_slots": self.slots,
+        }
 
     # ---- internals (callers hold the lock) ----------------------------
 
     def _release(self, base: int, nbytes: int, offloads: bool) -> None:
         """Return a call's reservation. Never raises: the call itself has
         succeeded (a fit's context may already be cached), so a stuck lock
-        is logged -- and seen by /readyz, whose stats() fails -- rather
+        is logged -- the worker that died holding it is reported dead -- rather
         than turning that result into an error."""
         state = self._state
         try:

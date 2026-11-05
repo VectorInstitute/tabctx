@@ -109,9 +109,15 @@ def test_stats_and_reports(built):
     built.engine.fit(*table(10), dataset_id="s")
     stats = built.engine.stats()
     assert stats.n_cached_contexts >= 1
-    reports = [w.report() for w in built.worker_shards]
-    assert all(r["gpu_memory"] is None for r in reports)  # "cuda:N" fake labels
-    assert all(r["spill"] is not None for r in reports)
+    # Workers send their device reports on their own (the first at start).
+    for w in built.worker_shards:
+        for _ in range(100):
+            report, age = w.latest_report()
+            if report is not None:
+                break
+            threading.Event().wait(0.05)
+        assert report["gpu_memory"] is None  # "cuda:N" are fake labels here
+        assert report["spill"] is not None and age >= 0
 
 
 def test_a_dead_worker_fails_calls_and_is_skipped():
@@ -293,15 +299,17 @@ def test_workers_share_the_pods_cpus_for_compiling(monkeypatch):
     assert os.environ["TORCHINDUCTOR_COMPILE_THREADS"] == "2"
 
 
-def test_report_answers_while_fits_fill_the_workers_pool(monkeypatch):
-    """/readyz asks each worker for a report. With more fits queued on a
-    device than the worker has pool threads, the report must not wait
-    behind them, or readiness fails on a healthy, busy pod."""
+def test_reports_keep_arriving_while_fits_fill_the_workers_pool(monkeypatch):
+    """/readyz reads the device report each worker sends on its own. With
+    more fits queued on a device than the worker has pool threads, reports
+    must keep coming, or readiness fails on a healthy, busy pod."""
     import multiprocessing as mp
 
+    import tabctx.serve.reporting as reporting
     import tabctx.serve.workers as workers
     from tabctx.backends.fake import FakeBackend
 
+    monkeypatch.setattr(reporting, "REPORT_INTERVAL_S", 0.05)
     release = threading.Event()
     real_fit = FakeBackend.fit
 
@@ -311,7 +319,7 @@ def test_report_answers_while_fits_fill_the_workers_pool(monkeypatch):
 
     monkeypatch.setattr(FakeBackend, "fit", blocked_fit)
     parent, child = mp.Pipe()
-    # The worker's own loop, run on a thread so the patched fit applies.
+    # The worker's own loop, run on a thread so the patches apply.
     loop = threading.Thread(
         target=workers._worker_main,
         args=(
@@ -326,20 +334,25 @@ def test_report_answers_while_fits_fill_the_workers_pool(monkeypatch):
         daemon=True,
     )
     loop.start()
+    n_fits = workers._WORKER_THREADS + 4
     try:
         assert isinstance(parent.recv(), workers._Ready)
-        n_fits = workers._WORKER_THREADS + 4
         for i in range(n_fits):
-            parent.send((i, "fit", table(10), {"dataset_id": f"busy{i}"}))
-        parent.send((n_fits, "report", (), {}))
-        assert parent.poll(5), "report waited behind the queued fits"
-        req_id, ok, payload, _, _ = parent.recv()
-        assert (req_id, ok) == (n_fits, True) and payload["gpu_memory"] is None
+            parent.send((i + 1, "fit", table(10), {"dataset_id": f"busy{i}"}))
+        reports = 0
+        while reports < 5:  # every fit is blocked: only reports can arrive
+            assert parent.poll(5), "reports stopped while fits were queued"
+            req_id, ok, payload, _, _ = parent.recv()
+            assert (req_id, ok) == (workers._REPORT_ID, True)
+            assert payload["gpu_memory"] is None
+            reports += 1
     finally:
         release.set()
-        for _ in range(n_fits):  # drain, so the loop can shut down
+        fits = 0
+        while fits < n_fits:  # drain, so the loop can shut down
             assert parent.poll(30)
-            parent.recv()
+            if parent.recv()[0] != workers._REPORT_ID:
+                fits += 1
         parent.send(None)
         loop.join(30)
     assert not loop.is_alive()

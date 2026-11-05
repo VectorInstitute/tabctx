@@ -70,16 +70,23 @@ class _TabctxEstimator(BaseEstimator):
         model: str | None = None,
         client: TabctxClient | None = None,
         max_request_bytes: int | None = MAX_REQUEST_BYTES,
+        ttl_s: float | None = None,
     ) -> None:
         """model: a model id from client.models() ("tabpfn-3.5",
         "tabicl-v2"); default: the deployment's default model, asked at
         fit and kept as model_. client: where to send the tables; default
         TabctxClient(), configured by TABCTX_BASE_URL and TABCTX_API_KEY.
         max_request_bytes: the largest table file to send in one request
-        (the Vector gateway takes 30 MiB bodies); None for no limit."""
+        (the Vector gateway takes 30 MiB bodies); None for no limit.
+        ttl_s: have the server delete the fitted table this many seconds
+        after each fit (capped by its own limit). The estimator keeps its
+        training table and fits again when the server no longer has it,
+        expired or evicted: a later predict re-uploads it, with a new
+        deadline."""
         self.model = model
         self.client = client
         self.max_request_bytes = max_request_bytes
+        self.ttl_s = ttl_s
 
     def __sklearn_tags__(self):
         tags = super().__sklearn_tags__()
@@ -123,12 +130,14 @@ class _TabctxEstimator(BaseEstimator):
         return self
 
     def _send_fit(self) -> None:
+        extra = {} if self.ttl_s is None else {"ttl_s": self.ttl_s}
         self._client().fit_file(
             self._train_file,
             target=_TARGET,
             dataset_id=self.dataset_id_,
             model=self.model_,
             task=self._task,
+            **extra,
         )
 
     # ---- predict -------------------------------------------------------

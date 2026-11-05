@@ -38,7 +38,9 @@ class FakeDeployment:
     default_model = TabctxClient.default_model
     tabular_models = TabctxClient.tabular_models
 
-    def fit_file(self, file, target=None, dataset_id=None, model=None, task=None):
+    def fit_file(
+        self, file, target=None, dataset_id=None, model=None, task=None, ttl_s=None
+    ):
         ids = [m["id"] for m in self.served]
         if model is not None and model not in ids:
             raise InvalidInputError(
@@ -46,7 +48,10 @@ class FakeDeployment:
             )
         features, y = read_training_table(self._path(file), target, task)
         schema, _ = TableSchema.learn(features.columns, features.names)
-        self.fits.append({"dataset_id": dataset_id, "model": model, "task": task})
+        fit = {"dataset_id": dataset_id, "model": model, "task": task}
+        if ttl_s is not None:
+            fit["ttl_s"] = ttl_s
+        self.fits.append(fit)
         classes = sorted(set(y), key=int) if task == "classification" else None
         self.contexts[dataset_id] = (task, schema, classes)
         return dataset_id

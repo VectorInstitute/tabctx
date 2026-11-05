@@ -57,6 +57,7 @@ from typing import Any
 from tabctx import timing
 from tabctx.errors import BackendComputeError
 from tabctx.schema import TableSchema
+from tabctx.serve.reporting import PeriodicReport, spill_stats
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,6 @@ _METHODS = frozenset(
         "contexts",
         "schema",
         "estimate_fit_bytes",
-        "report",
     }
 )
 # Concurrent calls per worker: its engine schedules GPU work itself (see
@@ -78,14 +78,14 @@ _METHODS = frozenset(
 _WORKER_THREADS = 16
 # Calls answered outside that pool. Fits on one device run one at a time,
 # so a backlog of more fits than the pool has threads would leave anything
-# queued behind them for minutes. /readyz asks every worker for a report,
-# on a thread of its own (else readiness fails on a healthy pod). Listings
-# and deletes never take the device, so they get a small pool of their
-# own: a delete may wait for a context's spill write to land, and must not
-# hold up the report meanwhile.
-_REPORT = frozenset({"report"})
+# queued behind them for minutes. Listings and deletes never take the
+# device, so they get a small pool of their own.
 _CATALOG = frozenset({"contexts", "evict"})
 _CATALOG_THREADS = 4
+# The id of the device report a worker sends on its own, every
+# REPORT_INTERVAL_S (calls are numbered from 1). /readyz reads the latest
+# instead of asking: asking waits behind the device's work (#51).
+_REPORT_ID = 0
 
 
 _NEVER_FITS = 1 << 62
@@ -180,10 +180,7 @@ def _report(shard: Any, device: str) -> dict:
             "allocated_mb": torch.cuda.memory_allocated(device) / 1e6,
             "reserved_mb": torch.cuda.memory_reserved(device) / 1e6,
         }
-    return {
-        "spill": shard.spill_store.stats() if shard.spill_store else None,
-        "gpu_memory": gpu,
-    }
+    return {"spill": spill_stats(shard.spill_store), "gpu_memory": gpu}
 
 
 def available_cpus() -> int:
@@ -257,10 +254,7 @@ def _worker_main(
         # serving process can report where a request's time went.
         with timing.collect() as timings:
             try:
-                if method == "report":
-                    result: Any = _report(shard, device)
-                else:
-                    result = getattr(engine, method)(*args, **kwargs)
+                result: Any = getattr(engine, method)(*args, **kwargs)
                 ok, payload = True, result
             except BaseException as e:  # noqa: BLE001 -- returned to the caller
                 ok, payload = False, _portable(e)
@@ -279,36 +273,47 @@ def _worker_main(
                     )
                 )
 
+    def send_report(report: dict) -> None:
+        with send_lock:
+            conn.send((_REPORT_ID, True, report, snapshot(), {}))
+
     conn.send(_Ready(list(engine.backend_names), engine.default_backend, snapshot()))
-    with (
-        ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool,
-        ThreadPoolExecutor(1, thread_name_prefix=f"w-{device}-report") as reports,
-        ThreadPoolExecutor(
-            _CATALOG_THREADS, thread_name_prefix=f"w-{device}-catalog"
-        ) as catalog,
-    ):
-        lanes = {**dict.fromkeys(_REPORT, reports), **dict.fromkeys(_CATALOG, catalog)}
-        while True:
-            try:
-                msg = conn.recv()
-            except (EOFError, OSError):
-                break
-            if msg is None:  # orderly shutdown
-                break
-            req_id, method, args, kwargs = msg
-            if method not in _METHODS:
-                with send_lock:
-                    conn.send(
-                        (
-                            req_id,
-                            False,
-                            ValueError(f"unknown call {method!r}"),
-                            snapshot(),
-                            {},
+    reporter = PeriodicReport(
+        lambda: _report(shard, device), name=f"w-{device}-report", publish=send_report
+    )
+    try:
+        with (
+            ThreadPoolExecutor(
+                _WORKER_THREADS, thread_name_prefix=f"w-{device}"
+            ) as pool,
+            ThreadPoolExecutor(
+                _CATALOG_THREADS, thread_name_prefix=f"w-{device}-catalog"
+            ) as catalog,
+        ):
+            lanes = dict.fromkeys(_CATALOG, catalog)
+            while True:
+                try:
+                    msg = conn.recv()
+                except (EOFError, OSError):
+                    break
+                if msg is None:  # orderly shutdown
+                    break
+                req_id, method, args, kwargs = msg
+                if method not in _METHODS:
+                    with send_lock:
+                        conn.send(
+                            (
+                                req_id,
+                                False,
+                                ValueError(f"unknown call {method!r}"),
+                                snapshot(),
+                                {},
+                            )
                         )
-                    )
-                continue
-            lanes.get(method, pool).submit(handle, req_id, method, args, kwargs)
+                    continue
+                lanes.get(method, pool).submit(handle, req_id, method, args, kwargs)
+    finally:
+        reporter.stop()
 
 
 # ---- serving process -------------------------------------------------------
@@ -353,6 +358,9 @@ class ProcessShard:
         self._backend_names: list[str] = []
         self._default_backend = ""
         self._reader: threading.Thread | None = None
+        # The latest device report the worker sent, and when it arrived.
+        self._report: tuple[dict, float] | None = None
+        self._ready_at: float | None = None
 
     # ---- lifecycle ---------------------------------------------------
 
@@ -374,6 +382,7 @@ class ProcessShard:
             self._exited(5)
             raise first.error
         self._backend_names = first.backend_names
+        self._ready_at = time.monotonic()
         self._default_backend = first.default_backend
         self._snapshot = first.snapshot
         self._reader = threading.Thread(
@@ -510,6 +519,9 @@ class ProcessShard:
                 self._kill()
                 break
             self._apply(snap)
+            if req_id == _REPORT_ID:
+                self._report = (payload, time.monotonic())
+                continue
             with self._state_lock:
                 fut = self._pending.pop(req_id, None)
             if fut is None:
@@ -657,6 +669,7 @@ class ProcessShard:
         dataset_id: str | None = None,
         backend: str | None = None,
         schema: TableSchema | None = None,
+        expires_at: float | None = None,
     ) -> str:
         return self._call(
             "fit",
@@ -666,6 +679,7 @@ class ProcessShard:
             dataset_id=dataset_id,
             backend=backend,
             schema=schema,
+            expires_at=expires_at,
         )
 
     def predict(
@@ -692,6 +706,15 @@ class ProcessShard:
     def contexts(self) -> list[ContextInfo]:
         return self._call("contexts", timeout_s=QUICK_CALL_TIMEOUT_S)
 
-    def report(self) -> dict:
-        """The worker's spill stats and real GPU memory (see _report)."""
-        return self._call("report", timeout_s=QUICK_CALL_TIMEOUT_S)
+    def latest_report(self) -> tuple[dict | None, float | None]:
+        """The worker's latest spill stats and real GPU memory (see _report)
+        and their age in seconds, or (None, None) before the first. Never
+        waits: the worker sends them on its own."""
+        report = self._report
+        if report is None:
+            # None yet: silent since it became ready, which ages like a
+            # report would (a worker that never reports goes stale too).
+            since = self._ready_at
+            return None, None if since is None else time.monotonic() - since
+        value, at = report
+        return value, time.monotonic() - at

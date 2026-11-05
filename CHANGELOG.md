@@ -1,8 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- A 422 for a non-finite number in a request (`Infinity`) no longer becomes a 500: the error echoes the value as text.
+- **`/readyz` no longer waits behind long fits** (#51). It read GPU memory through torch's allocator (which waits for a fit freeing memory), asked each GPU worker for a report (up to 30 s behind its queued calls), took the host-memory guard's cross-process lock and walked the spill directory; on prod, readiness timed out during large fits, so a busy replica looked hung, and with the Helm chart's single replica that would take it out of its Service. Now every one of those is measured on its own thread every 5 s (worker processes send theirs), and `/readyz` reads the latest results and the guard's counters without a lock. It reports how old the device measurements are (`device_report_age_s`), and fails only for a dead worker or one silent for 10 minutes. Polled every 0.2 s during a 49 s TabICL fit on a CPU: median 1 ms, at most 353 ms. `/v1/tabctx/limits` reads the cache's counters without its lock too. A worker that never reports goes stale from its start; a spill tier that can't be read is shown as an error rather than a stuck worker. Not yet verified on a GPU: on a single-GPU replica serving in-process, whether torch releases the interpreter lock while its measuring call waits on the allocator; replicas with GPU worker processes measure in those processes, out of `/readyz`'s way.
 ### Added
 - Predict responses and `PredictResult` expose `cache_outcome`: `hit` for a resident context or `restored` after disk spillover. Coalesced requests share their batch's outcome; older deployments leave the client field as `None`.
+- **Retention limits** (#103). `TABCTX_MAX_CONTEXT_AGE_S` caps how long any fitted table is kept after its fit, including tables fit before it was set (one spilled by an older tabctx, with no recorded fit time, counts as expired); a fit can ask for less with `ttl_s`, counted from when the request arrives (HTTP; `TabctxClient.fit`, `fit_file` and `fit_uploaded`; the scikit-learn estimators, which apply it again on every refit). At that time the context is deleted from device memory, host memory, the disk tier and the server's schema cache, whether or not anyone uses it again: a predict after it is a 404, and each engine sweeps expired contexts every 30 s (in worker processes too), re-checking each under the cache lock so a refit of the same id is never deleted. Fit responses and `GET /v1/tabctx/datasets` show `expires_at` (the listing leaves out expired tables); `/v1/tabctx/limits` shows the server's limit; the Helm chart sets it with `maxContextAgeS`.
+- **"Why a server"**, a docs page for people arriving from the models' own packages: what changes when a model serves many tables, users and programs (repeat predicts, many tables per GPU, out-of-memory, keeping a fit, uncertainty, licensing), what tabctx does at each step, and when not to use it. Each need links to a thread where users of these models raised it.
 - **TabDPT, a third model** (#102): `TABCTX_BACKEND=tabdpt` (or `tabicl,tabdpt`) serves Layer 6's TabDPT as `tabdpt-1.3`. Its code and weights are Apache-2.0, so with TabICLv2 there are now two models a business can serve without a separate license. Install with `pip install "tabctx[tabdpt]"`; the container image includes it.
   - On credit-g (the quickstart's split) it scored 0.768 against TabICL's 0.772; on California housing, R² 0.89, with its 90% interval holding 88.4% of held-out prices (`python examples/prediction_intervals.py --model tabdpt-1.3`), on a CPU. Classification, regression, prediction intervals, list and delete, and the spill tier all work as for the other models.
   - TabDPT keeps no encoding of the training table: its fit stores the table, and each predict samples a context of `TABCTX_TABDPT_CONTEXT_SIZE` rows (2,048) from it, with `TABCTX_TABDPT_ENSEMBLES` (4) ensemble members for both tasks. Left unbounded, as TabDPT's default is, a predict's cost grows with the square of the table (8,000 rows: 45 s on a CPU, against 4 s). tabctx adds serving: one endpoint, admission control, tenancy.
@@ -10,6 +15,16 @@
   - Flash attention on every CUDA device (TabDPT enables it only for the device name "cuda", so a multi-GPU replica's "cuda:1" ran without it).
   - Predicts use a fixed seed, so the same request gives the same answer; the mean is the same with or without quantiles.
   - Numeric labels keep numeric order (1, 2, 10), as with the other models. Bad test rows (an infinite value) are a 422.
+- **A Helm chart** (#105) in `deploy/helm/tabctx`, with a "Deploy on Kubernetes" guide. One tabctx pod with its GPUs:
+  - `/livez` (startup, liveness) and `/readyz` (readiness) probes, with the startup budget covering the first weights download and kernel compilation;
+  - a persistent volume for weights and compiled kernels, and an opt-in one for the disk tier (both kept on uninstall, or bring your own claim);
+  - a TabPFN token from an existing Secret;
+  - the Pod Security "restricted" profile (non-root, no capabilities, RuntimeDefault seccomp);
+  - a 300 s shutdown grace for in-flight fits;
+  - the settings as values, plus `extraEnv` (which replaces a variable the chart sets rather than duplicating it) and extra volumes.
+  - Rendering refuses what would fail at runtime: `tabpfn` without a token, `replicaCount > 1` with ReadWriteOnce volumes, sizes under 1 GiB.
+  - CI lints it and checks those refusals; the chart's version must match the package's (a unit test). Release tags push it to `oci://ghcr.io/vectorinstitute/charts/tabctx`.
+  - Installed on a local kind cluster (CPU, fake model): fit, predict, list and the tenant check worked through the Service, and the non-root user could write its volumes.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;

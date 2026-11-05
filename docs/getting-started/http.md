@@ -62,6 +62,17 @@ curl localhost:8000/v1/tabctx/fit -H 'Content-Type: application/json' \
   -d '{"dataset_id": "churn", "train_upload_id": "3f2a...", "target": "churned"}'
 ```
 
+## Retention
+
+A fit can carry `ttl_s`: the server deletes the context that many seconds
+later, from every tier (capped by the server's `TABCTX_MAX_CONTEXT_AGE_S`,
+which also applies to fits that don't ask). The fit response and the
+listing show `expires_at`.
+
+```bash
+curl localhost:8000/v1/tabctx/fit -F dataset_id=churn -F target=churned -F ttl_s=86400 -F file=@train.csv
+```
+
 ## List and delete
 
 ```bash

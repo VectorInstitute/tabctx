@@ -42,9 +42,12 @@ import dataclasses
 import functools
 import json
 import logging
+import math
 import re
 import time
 import uuid
+import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
 
@@ -72,9 +75,10 @@ from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
-from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.factory import EXPIRY_SWEEP_S, ServeSettings, build_engine
 from tabctx.serve.files import read_table, read_training_table
 from tabctx.serve.multipart import FILE_FIELD, MAX_FIELD_BYTES, MAX_FIELDS, read_form
+from tabctx.serve.reporting import REPORT_STALE_S, PeriodicReport, spill_stats
 from tabctx.serve.schemas import SchemaCache
 from tabctx.serve.tables import encode_rows, learn_rows
 from tabctx.serve.tenancy import (
@@ -84,7 +88,6 @@ from tabctx.serve.tenancy import (
     visible_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
-from tabctx.serve.workers import WorkerDiedError
 from tabctx.uncertainty import MAX_QUANTILES, check_quantiles
 
 logger = logging.getLogger("tabctx.serve")
@@ -218,6 +221,14 @@ class FitRequest(BaseModel):
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
     # the deployment's first-listed model.
     model: str | None = None
+    ttl_s: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Delete this context after this many seconds, from every "
+        "tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, "
+        "if set, caps it (and applies when this is omitted).",
+    )
 
 
 class UploadResponse(BaseModel):
@@ -234,6 +245,11 @@ class FitResponse(BaseModel):
     )
     n_train: int
     n_features: int
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time the context is deleted at (its retention "
+        "limit), or null if it has none.",
+    )
     # Which replica served this -- lets clients and probes verify that
     # session affinity actually pinned fit() and later predict() calls to
     # the same replica (the multi-replica correctness contract).
@@ -323,6 +339,10 @@ class DatasetInfo(BaseModel):
         default=None,
         description="Unix time of the fit (null for a context spilled by an "
         "older tabctx).",
+    )
+    expires_at: float | None = Field(
+        default=None,
+        description="Unix time it is deleted at (its retention limit), or null.",
     )
 
 
@@ -437,10 +457,48 @@ def _request_body(model: type[BaseModel]) -> dict:
 
 def _body_error(e: ValidationError) -> RequestValidationError:
     """FastAPI's own 422 shape for a body it validated: locations under
-    "body"."""
+    "body", and the rejected input shown as text when JSON can't carry it
+    (infinity, NaN), else the error response itself would fail."""
     return RequestValidationError(
-        [{**err, "loc": ("body", *err["loc"])} for err in e.errors()]
+        [
+            {**err, "loc": ("body", *err["loc"]), "input": _json_safe(err.get("input"))}
+            for err in e.errors()
+        ]
     )
+
+
+def _json_safe(value: object) -> object:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    return value
+
+
+def _weakly(
+    service: "TabctxService",
+    task: Callable[["TabctxService"], object],
+    interval_s: float | None = None,
+) -> PeriodicReport:
+    """task(service) on a timer (a PeriodicReport), on a thread that holds
+    the service weakly: it never keeps one alive, and ends once it is gone."""
+    ref = weakref.ref(service)
+
+    def run() -> object:
+        current = ref()
+        return PeriodicReport.STOP if current is None else task(current)
+
+    return PeriodicReport(run, interval_s=interval_s)
+
+
+def _combine_spill(per_device: list[dict]) -> dict | None:
+    """Spill stats summed over devices, with the per-device breakdown."""
+    if not per_device:
+        return None
+    totals: dict = {}
+    for stats in per_device:
+        for key, value in stats.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                totals[key] = totals.get(key, 0) + value
+    return {**totals, "per_device": per_device}
 
 
 def _replica_tag() -> str | None:
@@ -499,6 +557,19 @@ class TabctxService:
         # operators and probes correlate a burst of 404s with a restart
         # instead of chasing a phantom eviction/routing bug.
         self._started_at = time.time()
+        # Device measurements /readyz reads without waiting (#51): worker
+        # processes send their own; devices served in this process are
+        # measured here.
+        self._local_report = (
+            None if self._workers else _weakly(self, TabctxService._measure_local)
+        )
+        # Contexts' engines delete them at their retention deadline; their
+        # schemas here (text categories of the training table) go too.
+        self._schema_purge = _weakly(
+            self,
+            lambda service: service._schemas.purge_expired(),
+            interval_s=EXPIRY_SWEEP_S,
+        )
         if "cuda" not in self._device and "fake" not in settings.backends:
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -784,6 +855,7 @@ class TabctxService:
             # the cached context so test tables are encoded the same way;
             # it lives and dies with the context, spill included.
             with self._schemas.fitting(scoped_id) as record:
+                expires_at = self._expires_at(req.ttl_s)
                 self._engine.fit(
                     X,
                     y,
@@ -791,9 +863,10 @@ class TabctxService:
                     dataset_id=scoped_id,
                     backend=model_id,
                     schema=schema,
+                    expires_at=expires_at,
                 )
                 if schema is not None:
-                    record(schema)
+                    record(schema, expires_at)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -809,8 +882,16 @@ class TabctxService:
             task=task,
             n_train=n_train,
             n_features=n_features,
+            expires_at=expires_at,
             served_by=_replica_tag(),
         )
+
+    def _expires_at(self, ttl_s: float | None) -> float | None:
+        """When a context fit now is deleted: after the request's ttl_s,
+        capped by the server's maximum age (which applies alone when the
+        request names none); None for neither."""
+        limits = [t for t in (ttl_s, self._settings.max_context_age_s) if t]
+        return time.time() + min(limits) if limits else None
 
     @fastapi_app.post(
         "/v1/tabctx/predict",
@@ -1001,6 +1082,9 @@ class TabctxService:
         """Stop the per-GPU worker processes, if any. Standalone hosts call
         this at shutdown; a Ray replica's teardown kills its process tree
         (and workers.py's atexit hook backstops both)."""
+        self._schema_purge.stop()
+        if self._local_report is not None:
+            self._local_report.stop()
         for shard in self._workers:
             shard.close()
 
@@ -1079,7 +1163,7 @@ class TabctxService:
         expensive way. max_admissible_train_rows is derived live from
         the admission gate at representative feature counts, so it
         tightens/loosens as the adaptive estimator learns real costs."""
-        used_bytes = self._engine.stats().used_bytes
+        used_bytes = self._engine.stats_nowait().used_bytes
         # The best any one device offers: a fit lands on a single device.
         headroom = self._engine.admission_headroom_bytes()
         max_rows_by_features = {}
@@ -1100,6 +1184,9 @@ class TabctxService:
             "admission_headroom_bytes": headroom,
             "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
+            # Retention: no context kept longer than this after its fit
+            # (null: no limit); a fit's ttl_s is capped by it.
+            "max_context_age_s": self._settings.max_context_age_s,
             "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "devices": list(self._devices),
             # Scopes: cache_used_bytes is the replica's total;
@@ -1122,46 +1209,40 @@ class TabctxService:
 
     @fastapi_app.get("/readyz", summary="Readiness and cache state", tags=["health"])
     def readyz(self):
+        """Readiness, from measurements it never waits for (#51): the cache's
+        lock-free counters, the host-memory guard's lock-free read, and the
+        device reports measured on their own threads (see
+        serve/reporting.py). 503 for a dead GPU worker, or one silent for
+        REPORT_STALE_S (it is stuck). This process's own report is shown,
+        not judged: its age only says how fresh the numbers are."""
         torch = _torch_or_none()
-
-        stats = self._engine.stats()
+        stats = self._engine.stats_nowait()
         dead = [w.death_reason for w in self._workers if not w.alive]
         if dead:
             raise HTTPException(503, detail="; ".join(r for r in dead if r))
         # Worker processes measure their own device (this process holds no
-        # CUDA context and must not create one on every GPU).
-        try:
-            reports = [w.report() for w in self._workers]
-        except (WorkerDiedError, TimeoutError) as e:
-            raise HTTPException(503, detail=str(e)) from e
-        try:
-            host_memory = self._host_guard.stats() if self._host_guard else None
-        except HostMemoryUnavailableError as e:
-            raise HTTPException(503, detail=str(e)) from e
+        # CUDA context and must not create one on every GPU) and send it.
+        reports = [(w.device, *w.latest_report()) for w in self._workers]
+        stale = [
+            f"{device} ({age:.0f} s)"
+            for device, _, age in reports
+            if age is not None and age > REPORT_STALE_S
+        ]
+        if stale:
+            raise HTTPException(
+                503, detail=f"no device report from {', '.join(stale)}: stuck"
+            )
+        local, local_age = (
+            self._local_report.latest() if self._local_report else (None, None)
+        )
+        per_device: dict[str, dict] = {
+            device: report["gpu_memory"]
+            for device, report, _ in reports
+            if report is not None and report["gpu_memory"] is not None
+        }
+        if local is not None:
+            per_device.update(local["gpu_memory"])
         real_gpu_memory = None
-        per_device: dict[str, dict] = {}
-        if reports:
-            per_device = {
-                w.device: r["gpu_memory"]
-                for w, r in zip(self._workers, reports, strict=True)
-                if r["gpu_memory"] is not None
-            }
-        elif torch is not None and torch.cuda.is_available():
-            # Real device memory, independent of our own byte-accounting --
-            # cache_stats.used_bytes is the estimator's *prediction* for what
-            # cached contexts should cost; this is what the device actually
-            # reports. Comparing the two across a long-running replica is how
-            # you'd catch the estimator drifting from reality or the cache
-            # failing to actually release GPU memory on eviction (Python
-            # dropping a reference doesn't guarantee PyTorch's caching
-            # allocator returns the memory immediately).
-            per_device = {
-                d: {
-                    "allocated_mb": torch.cuda.memory_allocated(d) / 1e6,
-                    "reserved_mb": torch.cuda.memory_reserved(d) / 1e6,
-                }
-                for d in self._cuda_devices()
-            }
         if per_device:
             # Same flat shape as ever (summed over devices when several),
             # plus the per-device breakdown on a multi-GPU replica.
@@ -1171,6 +1252,20 @@ class TabctxService:
             }
             if len(per_device) > 1:
                 real_gpu_memory["per_device"] = per_device
+        ages = [age for _, _, age in reports if age is not None]
+        if local_age is not None:
+            ages.append(local_age)
+        spill = (
+            local["spill"]
+            if local is not None and local["spill"] is not None
+            else _combine_spill(
+                [
+                    report["spill"]
+                    for _, report, _ in reports
+                    if report is not None and report["spill"] is not None
+                ]
+            )
+        )
         return {
             "status": "ready",
             "device": self._device,
@@ -1191,31 +1286,45 @@ class TabctxService:
                 "engine_calls": self._predictor.engine_calls,
             },
             "uploads": self._uploads.stats(),
-            "spill": self._spill_stats([r["spill"] for r in reports]),
+            "spill": spill,
             "real_gpu_memory": real_gpu_memory,
+            # How old the device measurements above are (the oldest).
+            "device_report_age_s": round(max(ages), 1) if ages else None,
             "devices": self._device_breakdown(),
-            "host_memory": host_memory,
+            "host_memory": self._host_guard.stats_nowait()
+            if self._host_guard
+            else None,
         }
+
+    def _measure_local(self) -> dict:
+        """This process's device report: GPU memory torch holds on each
+        device it serves in-process, and its spill tier. Run on the report
+        thread (both can wait: torch's allocator lock, a directory walk)."""
+        torch = _torch_or_none()
+        gpu: dict[str, dict] = {}
+        if torch is not None and torch.cuda.is_available():
+            # Real device memory, independent of our own byte-accounting --
+            # cache_stats.used_bytes is the estimator's *prediction* for what
+            # cached contexts should cost; this is what the device actually
+            # reports. Comparing the two across a long-running replica is how
+            # you'd catch the estimator drifting from reality or the cache
+            # failing to actually release GPU memory on eviction.
+            gpu = {
+                d: {
+                    "allocated_mb": torch.cuda.memory_allocated(d) / 1e6,
+                    "reserved_mb": torch.cuda.memory_reserved(d) / 1e6,
+                }
+                for d in self._cuda_devices()
+            }
+        spill = spill_stats(self._spill_store)
+        if spill is None and self._spill_stores:
+            spill = _combine_spill([spill_stats(s) for s in self._spill_stores])
+        return {"gpu_memory": gpu, "spill": spill}
 
     def _cuda_devices(self) -> list[str]:
         """The CUDA devices this replica serves from (just "cuda", the
         current device, on an auto single-GPU replica)."""
         return [d for d in self._devices if d.startswith("cuda")]
-
-    def _spill_stats(self, worker_spill: list[dict | None]) -> dict | None:
-        if self._spill_store is not None:
-            return self._spill_store.stats()
-        per_device = [s.stats() for s in self._spill_stores] or [
-            s for s in worker_spill if s is not None
-        ]
-        if not per_device:
-            return None
-        totals: dict = {}
-        for stats in per_device:
-            for key, value in stats.items():
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    totals[key] = totals.get(key, 0) + value
-        return {**totals, "per_device": per_device}
 
     def _device_breakdown(self) -> list[dict] | None:
         """Per-device cache use and activity on a multi-GPU replica (None

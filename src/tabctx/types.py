@@ -88,5 +88,7 @@ class ContextInfo:
     # Unix time of the fit; None for a context spilled by tabctx < 0.19,
     # which didn't record it.
     fitted_at: float | None
+    # Unix time it is deleted at (a retention limit), or None.
+    expires_at: float | None = None
     # Set by a multi-device engine; None on a single device.
     device: str | None = None

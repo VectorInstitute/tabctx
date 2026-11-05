@@ -1,0 +1,133 @@
+# tabctx: one server process per pod, serving every model listed in
+# `models` from one cache. Settings map to the TABCTX_* environment
+# variables documented at
+# https://vectorinstitute.github.io/tabctx/reference/configuration/
+
+image:
+  repository: ghcr.io/vectorinstitute/tabctx
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Models to serve (TABCTX_BACKEND); the first is the default. tabicl and
+# tabdpt are licensed for commercial use (tabdpt is in images after
+# 0.18.0); tabpfn needs a token (below) and is licensed for non-commercial
+# use.
+models: [tabicl]
+
+# Must stay 1 with the chart's volumes: they are ReadWriteOnce, and a
+# context lives in one process (several replicas need a router that sends
+# each dataset to the pod holding it, which this chart doesn't provide).
+replicaCount: 1
+
+# GPUs per pod (an nvidia.com/gpu limit); 0 runs on the CPU. The server
+# uses every GPU it is given, one worker process each.
+gpus: 1
+# Share of each GPU tabctx may use (TABCTX_GPU_MEMORY_FRACTION).
+gpuMemoryFraction: 1.0
+
+# Retention: no fitted table is kept longer than this many seconds after
+# its fit, in any tier (TABCTX_MAX_CONTEXT_AGE_S); a fit may ask for less
+# with ttl_s. Empty: no limit.
+maxContextAgeS: ""
+
+# Every request must name its tenant (x-tabctx-tenant-id, TABCTX_REQUIRE_TENANT).
+# Keep this on in production, behind a gateway that authenticates callers
+# and sets the header itself: tabctx trusts it as sent.
+requireTenant: true
+
+# Disk tier for evicted contexts (TABCTX_SPILL_DIR), on its own volume.
+# Off by default: restoring a large context from network disk can be
+# slower than fitting it again. Turn it on with a fast (local SSD) class.
+spill:
+  enabled: false
+  # The volume's size in GiB; tabctx fills at most 90% of it.
+  sizeGi: 100
+  # "" uses the cluster's default class.
+  storageClass: ""
+  # Use an existing PersistentVolumeClaim instead of creating one.
+  existingClaim: ""
+
+# Model weights and compiled kernels, kept across restarts (the first start
+# downloads the weights; later starts load them and reuse the kernels).
+weightsCache:
+  enabled: true
+  sizeGi: 20
+  storageClass: ""
+  # An existing claim, e.g. with the weights already in it (offline
+  # clusters: also set HF_HUB_OFFLINE=1 in extraEnv).
+  existingClaim: ""
+
+# TabPFN's weights need a token from https://ux.priorlabs.ai after you
+# accept Prior Labs' terms. Prefer an existing Secret with a TABPFN_TOKEN
+# key; a token given here is stored in the release.
+existingTabpfnSecret: ""
+tabpfnToken: ""
+# Serve tabpfn without a token (its weights already in the weights volume).
+tabpfnWithoutToken: false
+
+# Requests served at once and waiting (TABCTX_MAX_ONGOING_REQUESTS /
+# TABCTX_MAX_QUEUED_REQUESTS); beyond that, 503.
+maxOngoingRequests: 8
+maxQueuedRequests: 16
+
+# Scratch space: uploaded tables (TABCTX_MAX_UPLOAD_BYTES each, 4 GiB by
+# default) and TabICL's staging of very large fits (TABCTX_OFFLOAD_DIR).
+tmp:
+  sizeLimit: 50Gi
+
+# Any other TABCTX_* setting, or library settings such as HF_HUB_OFFLINE.
+# A name the chart also sets is replaced by yours.
+extraEnv: []
+#  - name: TABCTX_KV_PRECISION
+#    value: "int8"
+extraVolumes: []
+extraVolumeMounts: []
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# Host memory: requests equal limits, because tabctx budgets large fits
+# against the limit. Size it for the largest tables you will fit: see
+# "Sizing" in the Kubernetes guide.
+resources:
+  requests:
+    cpu: "4"
+    memory: 64Gi
+    ephemeral-storage: 20Gi
+  limits:
+    memory: 64Gi
+
+# Starting loads (first time: downloads) each model's weights and compiles
+# kernels before the server answers. Raise it for several models.
+startupSeconds: 1200
+# In-flight fits and uploads get this long to finish on shutdown.
+terminationGracePeriodSeconds: 300
+
+readinessProbe:
+  # /readyz answers from measurements it doesn't wait for, but a busy
+  # host (a CPU-bound fit) can slow any reply.
+  timeoutSeconds: 10
+  periodSeconds: 15
+  failureThreshold: 6
+
+nodeSelector: {}
+#  cloud.google.com/gke-accelerator: nvidia-l4
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]

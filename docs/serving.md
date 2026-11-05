@@ -271,6 +271,16 @@ What a delete covers:
 - **Uploaded tables** are already gone: an upload is deleted as soon as
   the fit or predict that used it has read it, and unused uploads
   expire after `TABCTX_UPLOAD_TTL_S`.
+- **Retention.** A fit can set `ttl_s` (`client.fit(..., ttl_s=3600)`),
+  counted from when the fit request arrives, and the server can cap every
+  table with `TABCTX_MAX_CONTEXT_AGE_S` (tables fit before it was set
+  included). At that time the context is deleted from every tier, with
+  its recorded schema, used or not: a predict after it is a 404, and a
+  sweep every 30 s deletes contexts nobody asks for. Fit responses and
+  the listing show `expires_at`; the listing leaves out expired tables.
+  The scikit-learn estimators take `ttl_s` too; they keep their training
+  table and fit again when the server no longer has it, expired or
+  evicted, so a later predict re-uploads the table under a new deadline.
 - **One tenant's ids only.** Another tenant's context of the same name
   is untouched. Callers without a tenant id never see scoped contexts,
   and can't name one: ids starting with `t:` are reserved for them

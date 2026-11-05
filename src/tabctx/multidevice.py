@@ -111,6 +111,7 @@ class Shard(Protocol):
         dataset_id: str | None = None,
         backend: str | None = None,
         schema: TableSchema | None = None,
+        expires_at: float | None = None,
     ) -> str: ...
 
     def predict(
@@ -262,8 +263,18 @@ class MultiDeviceEngine:
         dataset_id: str | None = None,
         backend: str | None = None,
         schema: TableSchema | None = None,
+        expires_at: float | None = None,
     ) -> str:
-        return self._fit(X, y, task, dataset_id, backend, schema, announce=True)
+        return self._fit(
+            X,
+            y,
+            task,
+            dataset_id,
+            backend,
+            schema,
+            announce=True,
+            expires_at=expires_at,
+        )
 
     def _fit(
         self,
@@ -274,6 +285,7 @@ class MultiDeviceEngine:
         backend: str | None,
         schema: TableSchema | None,
         announce: bool,
+        expires_at: float | None = None,
     ) -> str:
         """fit(); `announce` emits residency events (not for fit_predict's
         throwaway contexts, which would flood subscribers)."""
@@ -284,7 +296,7 @@ class MultiDeviceEngine:
         if dataset_id is None:
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, None, name, schema)
+            resolved = self._fit_on(index, X, y, task, None, name, schema, expires_at)
             if announce:
                 self._emit("placed", resolved, index, name)
             return resolved
@@ -293,7 +305,9 @@ class MultiDeviceEngine:
                 held.enter_context(self._id_locks.hold(dataset_id))
             with timing.phase("place"):
                 index = self._place(request)
-            resolved = self._fit_on(index, X, y, task, dataset_id, name, schema)
+            resolved = self._fit_on(
+                index, X, y, task, dataset_id, name, schema, expires_at
+            )
             if announce:
                 self._emit("placed", resolved, index, name)
             # Only now that the new context is in place: drop copies on
@@ -372,7 +386,9 @@ class MultiDeviceEngine:
             ResidencyEvent(kind, dataset_id, self._devices[index], backend)
         )
 
-    def _fit_on(self, index, X, y, task, dataset_id, backend, schema) -> str:
+    def _fit_on(
+        self, index, X, y, task, dataset_id, backend, schema, expires_at=None
+    ) -> str:
         with self._active(index):
             return self._shards[index].fit(
                 X,
@@ -381,6 +397,7 @@ class MultiDeviceEngine:
                 dataset_id=dataset_id,
                 backend=backend,
                 schema=schema,
+                expires_at=expires_at,
             )
 
     def predict(
@@ -483,6 +500,10 @@ class MultiDeviceEngine:
             free_bytes=sum(s.free_bytes for s in per_device),
             capacity_bytes=sum(s.capacity_bytes for s in per_device),
         )
+
+    def stats_nowait(self) -> EngineStats:
+        """stats(): already lock-free (every device's counters are)."""
+        return self.stats()
 
     def device_stats(self) -> list[EngineStats]:
         """Lock-free: monitoring never waits on a device's GPU work."""
