@@ -48,7 +48,7 @@ engine = TabctxEngine(backend=TabICLBackend(), cache=cache, estimator=estimator)
 # task is inferred from y_train when omitted (non-integer numbers, or many
 # distinct whole numbers such as prices, mean regression); pass
 # task="classification" or "regression" to be explicit. Missing values
-# (NaN, or null in JSON) are fine: both models handle them.
+# (NaN, or null in JSON) are fine: every model handles them.
 dataset_id = engine.fit(X_train, y_train)
 result = engine.predict(dataset_id, X_test, return_proba=True)
 

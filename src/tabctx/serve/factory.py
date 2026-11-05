@@ -10,7 +10,8 @@ Environment variables:
 - ``TABCTX_BACKEND``: comma-separated list of models to serve behind the
   one endpoint (requests pick one via their ``model`` field; the FIRST
   listed is the default). Known kinds: ``"tabicl"`` (default; requires
-  torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"fake"``
+  torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"tabdpt"``
+  (requires torch + tabdpt), ``"fake"``
   (deterministic stand-in, no GPU/torch -- what makes serving testable
   on a laptop or in CI). E.g. ``TABCTX_BACKEND=tabicl,tabpfn`` serves
   both models over one shared cache and GPU budget.
@@ -125,12 +126,14 @@ WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
 COMPILE_AFTER_WARMUP_ENV_VAR = "TABCTX_COMPILE_AFTER_WARMUP"
 FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
+TABDPT_CONTEXT_SIZE_ENV_VAR = "TABCTX_TABDPT_CONTEXT_SIZE"
+TABDPT_ENSEMBLES_ENV_VAR = "TABCTX_TABDPT_ENSEMBLES"
 
 logger = logging.getLogger(__name__)
 
-BackendKind = Literal["tabicl", "tabpfn", "fake"]
+BackendKind = Literal["tabicl", "tabpfn", "tabdpt", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
-BACKEND_KINDS: tuple[BackendKind, ...] = ("tabicl", "tabpfn", "fake")
+BACKEND_KINDS: tuple[BackendKind, ...] = ("tabicl", "tabpfn", "tabdpt", "fake")
 KV_CACHE_MODES: tuple[KvCacheMode, ...] = ("kv", "repr", "off")
 
 
@@ -162,6 +165,10 @@ class ServeSettings:
     # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
     # (backends/yeo_johnson.py).
     fast_preprocessing: bool = True
+    # TabDPT: training rows sampled as each predict's context, and the
+    # ensemble size (backends/tabdpt.py).
+    tabdpt_context_size: int = 2048
+    tabdpt_ensembles: int = 4
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -258,7 +265,24 @@ class ServeSettings:
             fast_preprocessing=_env_flag(
                 FAST_PREPROCESSING_ENV_VAR, cls.fast_preprocessing
             ),
+            tabdpt_context_size=_positive_int(
+                TABDPT_CONTEXT_SIZE_ENV_VAR, cls.tabdpt_context_size
+            ),
+            tabdpt_ensembles=_positive_int(
+                TABDPT_ENSEMBLES_ENV_VAR, cls.tabdpt_ensembles
+            ),
         )
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{name}={raw!r} must be a positive integer")
+    return value
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -565,13 +589,19 @@ def _build_real_backend(
     # docstrings. Isolated in its own function so the pragma doesn't also
     # exclude the (fully unit-tested) fake-backend and dispatch logic in
     # _build_backend below.
-    if kind == "tabpfn":
+    if kind == "tabdpt":
+        from tabctx.backends.tabdpt import TabDPTBackend
+
+        backend: TabularICLBackend = TabDPTBackend(
+            device=device,
+            context_size=settings.tabdpt_context_size,
+            n_ensembles=settings.tabdpt_ensembles,
+        )
+    elif kind == "tabpfn":
         from tabctx.backends.tabpfn import TabPFNBackend
 
         # TABCTX_KV_CACHE maps onto TabPFN's fit_mode (see backends/tabpfn.py).
-        backend: TabularICLBackend = TabPFNBackend(
-            device=device, cache_mode=settings.kv_cache
-        )
+        backend = TabPFNBackend(device=device, cache_mode=settings.kv_cache)
     else:
         from tabctx.backends.tabicl import TabICLBackend
 

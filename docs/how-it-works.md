@@ -140,7 +140,8 @@ what is still missing.
   and test files are matched to its columns by name.
 - *Select an application* = `predict(<app>, ...)` with the same tenant
   header. Many applications coexist in one deployment under one memory
-  budget; both models can be mixed (`model="tabicl-v2"` / `"tabpfn-3.5"`).
+  budget; the models can be mixed (`model="tabicl-v2"`, `"tabdpt-1.3"`,
+  `"tabpfn-3.5"`).
 - *Save the kv cache to disk* = the spill tier (`TABCTX_SPILL_DIR`).
   Contexts evicted under memory pressure are serialized (TabICL's shared
   backbone excluded) and reload transparently on the next predict, and a

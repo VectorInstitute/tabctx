@@ -4,12 +4,12 @@ then ask for each house's 5th, 50th and 95th percentile and check how often
 the 90% interval holds the real price.
 
     TABCTX_BACKEND=tabicl python -m tabctx.serve      # in another shell
-    python examples/prediction_intervals.py [http://127.0.0.1:8000]
+    python examples/prediction_intervals.py [--url URL] [--model MODEL]
 
 Needs `pip install "tabctx[client]"` (scikit-learn downloads the data).
 """
 
-import sys
+import argparse
 
 import numpy as np
 from sklearn.datasets import fetch_california_housing
@@ -18,12 +18,12 @@ from sklearn.model_selection import train_test_split
 from tabctx import TabctxClient, TabctxRegressor
 
 
-def main(url: str) -> None:
+def main(url: str, model: str | None) -> None:
     X, y = fetch_california_housing(return_X_y=True, as_frame=True)
     X, y = X[:3000], y[:3000]
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=0)
 
-    reg = TabctxRegressor(client=TabctxClient(url)).fit(X_train, y_train)
+    reg = TabctxRegressor(model=model, client=TabctxClient(url)).fit(X_train, y_train)
     q = reg.predict_quantiles(X_test, quantiles=[0.05, 0.5, 0.95])
     low, median, high = q[:, 0], q[:, 1], q[:, 2]
 
@@ -38,4 +38,8 @@ def main(url: str) -> None:
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8000")
+    parser = argparse.ArgumentParser(description="Check prediction intervals.")
+    parser.add_argument("--url", default="http://127.0.0.1:8000")
+    parser.add_argument("--model", help="a model id; default: the server's default")
+    args = parser.parse_args()
+    main(args.url, args.model)

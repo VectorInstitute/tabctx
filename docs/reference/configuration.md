@@ -7,7 +7,7 @@ Flags take `1`/`true` or `0`/`false`.
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `fake` (no GPU or weights; for tests). The first is the default model. `tabicl,tabpfn` serves both from one cache. |
+| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `tabdpt`, `fake` (no GPU or weights; for tests). The first is the default model. `tabicl,tabdpt` serves both from one cache. |
 | `TABCTX_DEVICES` | `auto` | `auto`: every visible GPU, else the CPU. Or a list such as `cuda:0,cuda:1`. Two or more devices place each table on one GPU. |
 | `TABCTX_WORKER_PROCESSES` | `1` | With several GPUs, one worker process per GPU (`0`: threads of one process). |
 | `TABCTX_GPU_MEMORY_FRACTION` | `1.0` | The share of each GPU this server may use, in (0, 1]. Lower it when replicas share a GPU. |
@@ -22,6 +22,15 @@ Flags take `1`/`true` or `0`/`false`.
 | `TABCTX_KV_CACHE` | `kv` | TabICL's context: `kv` (fastest predicts), `repr` (much less memory per context), `off` (re-encode on every predict). |
 | `TABCTX_KV_PRECISION` | `int8` | TabICL's cached keys and values: `int8` (about half the memory; identical labels and metrics on 7 datasets, probabilities within 0.01), `fp16`, `native`. |
 | `TABCTX_OFFLOAD_DIR` | `<spill dir>/offload` | Where TabICL may stage a very large fit's intermediate results on disk. |
+
+## TabDPT
+
+| Variable | Default | |
+|---|---|---|
+| `TABCTX_TABDPT_CONTEXT_SIZE` | `2048` | Training rows sampled as each predict's context. TabDPT keeps no encoding of the table, so a predict's cost grows with this, not with the table. |
+| `TABCTX_TABDPT_ENSEMBLES` | `4` | Ensemble members per predict. |
+
+The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
 
 ## Requests
 

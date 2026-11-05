@@ -37,16 +37,17 @@ categories and missing values go as they are.
 
 ## 3. On a GPU server
 
-The container image includes TabICL and TabPFN; weights download on
-first use.
+The container image includes TabICL, TabPFN and TabDPT; each
+model's weights download when the server starts.
 
 ```bash
 docker run --gpus all -p 8000:8000 -e TABCTX_BACKEND=tabicl ghcr.io/vectorinstitute/tabctx
 ```
 
-`TABCTX_BACKEND=tabicl,tabpfn` serves both models from one cache; a fit
-picks one with `model=`. TabPFN's weights need you to accept Prior Labs'
-terms first (set `TABPFN_TOKEN`) and are licensed for non-commercial use.
+`TABCTX_BACKEND=tabicl,tabdpt` serves two models from one cache; a fit
+picks one with `model=`. Both are licensed for commercial use. `tabpfn`
+is a third choice, but its weights need you to accept Prior Labs' terms
+first (set `TABPFN_TOKEN`) and are licensed for non-commercial use.
 
 ## 4. Without Python
 
