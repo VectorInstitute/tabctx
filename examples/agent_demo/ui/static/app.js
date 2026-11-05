@@ -25,6 +25,11 @@ const STEPS = [
   ["explain", "Explain"],
   ["what_if", "What-if"],
 ];
+// A task with a "clean" step (its agent cleans raw files first) shows it as
+// the first progress step, done once the agent runs code.
+const CLEAN = ["clean", "Clean"];
+const SHELL_TOOLS = new Set(["Bash", "bash", "shell", "run_shell_command"]);
+const hasClean = () => (state.setup?.dataset?.steps || []).some(([tool]) => tool === "clean");
 const TITLES = {
   inspect_table: "Inspect",
   evaluate: "Evaluate",
@@ -42,6 +47,7 @@ const ICONS = {
   explain: '<path d="M5 6h14M5 12h9M5 18h5" />',
   what_if: '<path d="M7 7h10l-3-3M17 17H7l3 3" />',
   list_models: '<path d="M5 6h14M5 12h14M5 18h14" />',
+  clean: '<path d="M14 4l6 6M4 20l6-1 9-9-5-5-9 9z" /><path d="M8 14l2 2" />',
 };
 const svg = (paths, size = 15) =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
@@ -353,6 +359,10 @@ function handle(ev, info) {
     } else {
       el.className = "minor";
       el.innerHTML = minorCall(ev.tool, ev.args);
+      if (SHELL_TOOLS.has(ev.tool) && hasClean()) {
+        state.used.add(CLEAN[0]);
+        renderSteps();
+      }
     }
     tl.appendChild(el);
     state.calls.set(ev.id, { el, tool: ev.tool, args: ev.args, t0: performance.now() });
@@ -420,7 +430,7 @@ function updateMeta(info, final = false) {
 }
 
 function renderSteps() {
-  $("#steps").innerHTML = STEPS.map(([tool, label]) => `<div class="step ${state.used.has(tool) ? "on" : ""}"><i></i>${label}</div>`).join("");
+  $("#steps").innerHTML = (hasClean() ? [CLEAN, ...STEPS] : STEPS).map(([tool, label]) => `<div class="step ${state.used.has(tool) ? "on" : ""}"><i></i>${label}</div>`).join("");
 }
 
 const scrollDown = () => {

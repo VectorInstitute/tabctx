@@ -4,6 +4,8 @@ logs at start, with local paths made relative and the login name masked), the re
 score against the real outcomes (so the predictions file isn't needed).
 
     uv run --extra mcp python examples/agent_demo/make_showcase.py claude codex pi
+
+DEMO_SCENARIO picks the scenario (runs/<scenario>/ -> showcase/<scenario>/).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import shutil
 import sys
 from pathlib import Path
 
+import scenario as scenarios
 from score import score
 
 HERE = Path(__file__).resolve().parent
@@ -47,9 +50,10 @@ def sanitize(agent: str, line: str, run_dir: Path) -> str | None:
 
 
 def main(agents: list[str]) -> None:
+    scenario = scenarios.load()
     for agent in agents:
-        run_dir = HERE / "runs" / agent
-        out = HERE / "showcase" / agent
+        run_dir = scenario.runs / agent
+        out = scenario.showcase / agent
         shutil.rmtree(out, ignore_errors=True)
         out.mkdir(parents=True)
         lines = (run_dir / "transcript.jsonl").read_text().splitlines()
@@ -60,7 +64,9 @@ def main(agents: list[str]) -> None:
         ]
         (out / "transcript.jsonl").write_text("\n".join(kept) + "\n")
         shutil.copy(run_dir / "report.md", out / "report.md")
-        (out / "score.json").write_text(json.dumps(score(run_dir), indent=2) + "\n")
+        (out / "score.json").write_text(
+            json.dumps(score(run_dir, scenario), indent=2) + "\n"
+        )
         print(agent, len(kept), "events ->", out)
 
 

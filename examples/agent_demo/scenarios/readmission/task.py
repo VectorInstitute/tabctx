@@ -1,12 +1,9 @@
-"""What the demo is about, in one place: the files, the id and outcome
-columns, and how the page names them. prepare_data.py, score.py, run.sh
-(through `python task.py files`) and the web page all read it, so another
-dataset means changing this file, prepare_data.py and PROMPT.md.
+"""The readmission scenario: which diabetic patients being discharged now
+will be back in hospital within 30 days? The files, the id and outcome
+columns, and how the page names them (see ../../scenario.py).
 """
 
 from __future__ import annotations
-
-import sys
 
 HISTORY = "patients_history.csv"  # past patients, with the outcome
 CURRENT = "patients_current.csv"  # current patients, outcome withheld
@@ -33,6 +30,3 @@ LABELS = {
         ["report", "Report", "Write report.md"],
     ],
 }
-
-if __name__ == "__main__" and sys.argv[1:] == ["files"]:
-    print(HISTORY, CURRENT)

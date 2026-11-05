@@ -1,4 +1,18 @@
-# Readmission demo: a coding agent with tabular foundation models
+# Agent demo: a coding agent with tabular foundation models
+
+Two scenarios, each a question about a table, in [`scenarios/`](scenarios/):
+
+- **readmission** (the default, and the hosted demo): which hospital
+  patients will be back within 30 days? Public data, below.
+- **insurance**: which policyholders will cancel at renewal, and what
+  might keep them? The agent first cleans two messy raw exports with a
+  script it writes, then does the same steps. Synthetic data, see
+  [Insurance scenario](#insurance-scenario).
+
+`DEMO_SCENARIO=insurance` picks the second for every command below.
+
+## Readmission
+
 
 A coding agent gets two CSVs and a hospital's question: which patients
 being discharged now are most likely to be back within 30 days, and what
@@ -25,19 +39,55 @@ the current set healthier than the history. 33 features: demographics,
 admission and discharge, prior visits, diagnoses, lab tests, diabetes
 medication.
 
-`task.py` names the files and columns, the outcome's labels and the
-task's steps (the page's step icons; keep them in line with
-`PROMPT.md`). A different dataset means changing `task.py`,
-`prepare_data.py` and `PROMPT.md`; the runner, scoring and web page read
-the rest from `task.py`.
+Each scenario is a folder in `scenarios/` with three files: `task.py`
+names the files and columns, the outcome's labels and the task's steps
+(the page's step icons; keep them in line with `PROMPT.md`),
+`prepare_data.py` builds the data, and `PROMPT.md` is the agent's task.
+A new scenario is a new folder; the runner, scoring and web page find it
+through [`scenario.py`](scenario.py). Its data goes in
+`workspace/<scenario>/` (what the agent gets) and `answers/<scenario>/`
+(what it never sees), its runs in `runs/<scenario>/<agent>/`.
 
 ```bash
 uv sync --extra mcp
 uv run --extra mcp python examples/agent_demo/prepare_data.py
 export TABCTX_API_KEY=vp_...                       # Vector gateway key
 examples/agent_demo/run.sh claude                  # or codex, gemini, pi
-uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/claude
+uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/readmission/claude
 ```
+
+## Insurance scenario
+
+Maple Mutual, a made-up Canadian insurer, wants to know which
+policyholders whose renewal is due in the next three months will cancel,
+and what might keep them. `scenarios/insurance/prepare_data.py` makes a
+synthetic book: 6,000 of last year's renewals with the outcome (about
+16% cancelled) and 1,200 renewals due. The patterns follow what insurers
+report: a premium increase, missed payments and paying by cheque raise
+the chance of cancelling; years as a customer, more products and
+contact with an advisor lower it, and an advisor's check-in halves the
+effect of an increase.
+
+The agent gets both tables as a policy system exports them: headers
+with spaces, four date formats, amounts as `$1,234.50`, `1234.50` and
+`CAD 1,235`, a province spelled five ways, yes/no as Y, 1 and TRUE,
+blanks as N/A or `-`, impossible ages, rows exported twice, six internal
+test policies and a totals row. Its first step is to write `clean.py`,
+run it, and list every fix in its report, so the task gives each agent
+its shell (`SHELL` in `task.py`): Claude Code's Bash runs in its
+sandbox, Codex in its own, Gemini CLI and pi without one.
+
+```bash
+export DEMO_SCENARIO=insurance
+uv run --extra mcp python examples/agent_demo/prepare_data.py
+examples/agent_demo/run.sh claude
+uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/insurance/claude
+```
+
+A laptop is enough: run a tabctx server with TabICL
+(`TABCTX_BACKEND=tabicl python -m tabctx.serve`) and point the tools at
+it (`TABCTX_BASE_URL=http://127.0.0.1:8000`, any `TABCTX_API_KEY`). A
+Claude Code run there takes about five minutes.
 
 ## Web UI
 
@@ -74,7 +124,7 @@ The image holds the page, Claude Code, Codex and pi, and `tabctx-mcp`, and
 nothing secret.
 
 - **Anyone with the link** can replay the showcase runs in
-  [`showcase/`](showcase/). These are three real runs, copied by
+  [`showcase/readmission/`](showcase/readmission/). These are three real runs, copied by
   `make_showcase.py` with session details and local paths removed.
 - **To run an agent**, a visitor signs in with their own gateway key. The
   app checks the key's project models (`/admin/me/models`) and gives each

@@ -33,12 +33,11 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-# ui/ (this file's modules) and examples/agent_demo/ (task.py, score.py).
+# ui/ (this file's modules) and examples/agent_demo/ (scenario.py, score.py).
 sys.path[:0] = [
     str(Path(__file__).resolve().parent),
     str(Path(__file__).resolve().parents[1]),
 ]
-import task  # noqa: E402
 from gateway import (  # noqa: E402
     TABULAR,
     RefusedKey,
@@ -48,8 +47,8 @@ from gateway import (  # noqa: E402
 )
 from runner import (  # noqa: E402
     AGENTS,
-    DEMO,
     RUNS,
+    SCENARIO,
     SHOWCASE,
     BusyError,
     Run,
@@ -63,7 +62,9 @@ from transcripts import PARSERS  # noqa: E402
 
 HOSTED = os.environ.get("DEMO_HOSTED") == "1"
 GATEWAY = os.environ.get("TABCTX_BASE_URL", "https://proxy.vectorinstitute.ai")
-WORKSPACE = Path(os.environ.get("DEMO_WORKSPACE", DEMO / "workspace"))
+WORKSPACE = SCENARIO.workspace
+PROMPT = SCENARIO.prompt
+task = SCENARIO.task
 STATIC = Path(__file__).resolve().parent / "static"
 POLL_SECONDS = 0.25
 HOSTED_AGENTS = ("claude", "codex", "pi")  # Gemini CLI can't use the gateway
@@ -186,7 +187,7 @@ def setup(request: Request) -> dict:
         "hosted": HOSTED,
         "signed_in": {"key_id": session.key_id} if session else None,
         "agents": agents_for(session),
-        "prompt": (DEMO / "PROMPT.md").read_text(),
+        "prompt": PROMPT.read_text(),
         "prompt_editable": not HOSTED,
         "dataset": dataset(),
         "gateway": GATEWAY,
@@ -203,6 +204,7 @@ def dataset() -> dict | None:
         current = pd.read_csv(WORKSPACE / task.CURRENT)
     except FileNotFoundError:
         return None
+    raw_id = getattr(task, "RAW_ID", task.ID)  # the id's name in these files
     return {
         **task.LABELS,
         "history_file": task.HISTORY,
@@ -212,11 +214,17 @@ def dataset() -> dict | None:
         "target": task.TARGET,
         "positive": task.POSITIVE,
         "negative": task.NEGATIVE,
-        "positive_rate": round(
-            float((history[task.TARGET] == task.POSITIVE).mean()), 3
-        ),
-        "columns": [c for c in current.columns if c != task.ID],
+        "positive_rate": round(_positive_rate(history), 3),
+        "columns": [c for c in current.columns if c != raw_id],
     }
+
+
+def _positive_rate(history: pd.DataFrame) -> float:
+    """The outcome's share in the history file. A scenario whose agent gets
+    raw exports says how to read it (task.positive_rate)."""
+    if hasattr(task, "positive_rate"):
+        return task.positive_rate(history)
+    return float((history[task.TARGET] == task.POSITIVE).mean())
 
 
 # ---- signing in (hosted) -----------------------------------------------------------
@@ -300,11 +308,11 @@ def start(body: StartRun, request: Request) -> dict:
             "VP_API_KEY": session.key,
             "ISOLATE_HOME": "1",
         }
-        prompt = (DEMO / "PROMPT.md").read_text()
+        prompt = PROMPT.read_text()
     else:
         if not os.environ.get("TABCTX_API_KEY"):
             raise HTTPException(400, "set TABCTX_API_KEY before starting the UI")
-        env, prompt = {}, body.prompt or (DEMO / "PROMPT.md").read_text()
+        env, prompt = {}, body.prompt or PROMPT.read_text()
     if not installed(body.agent):
         raise HTTPException(400, f"{AGENTS[body.agent]['label']} is not installed")
     folder = my_runs(session)

@@ -143,7 +143,7 @@ def test_sign_in_run_and_sign_out(hosted):
     )
     assert r.status_code == 200
     run = started[-1]
-    assert run["prompt"] == (module.DEMO / "PROMPT.md").read_text()  # the task is fixed
+    assert run["prompt"] == module.PROMPT.read_text()  # the task is fixed
     assert run["env"]["TABCTX_API_KEY"] == KEY and run["env"]["VP_API_KEY"] == KEY
     assert (
         run["env"]["ISOLATE_HOME"] == "1"

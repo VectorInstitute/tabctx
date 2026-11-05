@@ -1,8 +1,9 @@
 """Score an agent's predictions against what actually happened to the
-current rows (answers/, which the agent never sees). task.py says which
-files and columns.
+current rows (answers/<scenario>/, which the agent never sees). The
+scenario's task.py says which files and columns (DEMO_SCENARIO picks it;
+see scenario.py).
 
-    python examples/agent_demo/score.py runs/claude
+    python examples/agent_demo/score.py runs/readmission/claude
 """
 
 from __future__ import annotations
@@ -11,13 +12,13 @@ import sys
 from pathlib import Path
 
 import pandas as pd
-import task
+import scenario as scenarios
 from sklearn.metrics import roc_auc_score
 
-HERE = Path(__file__).resolve().parent
 
-
-def score(run_dir: Path) -> dict:
+def score(run_dir: Path, scenario: scenarios.Scenario | None = None) -> dict:
+    scenario = scenario or scenarios.load()
+    task = scenario.task
     # The newest CSV with the probability column: the tools' default output
     # (*.predictions.csv) or wherever the agent asked predict to write.
     files = sorted(run_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime)
@@ -26,8 +27,9 @@ def score(run_dir: Path) -> dict:
         raise SystemExit(
             f"no predictions CSV with a {task.PROBA!r} column in {run_dir}"
         )
-    predicted = pd.read_csv(files[-1])
-    truth = pd.read_csv(HERE / "answers" / task.ANSWERS)
+    # One row per id: a raw table can list a row twice; its copies match.
+    predicted = pd.read_csv(files[-1]).drop_duplicates(task.ID)
+    truth = pd.read_csv(scenario.answers / task.ANSWERS)
     merged = truth.merge(predicted[[task.ID, task.PROBA]], on=task.ID)
     if len(merged) != len(truth):
         raise SystemExit(f"{files[-1]} covers {len(merged)} of {len(truth)} rows")
