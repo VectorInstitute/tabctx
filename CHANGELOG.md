@@ -3,6 +3,13 @@
 ## [Unreleased]
 ### Added
 - Predict responses and `PredictResult` expose `cache_outcome`: `hit` for a resident context or `restored` after disk spillover. Coalesced requests share their batch's outcome; older deployments leave the client field as `None`.
+- **TabDPT, a third model** (#102): `TABCTX_BACKEND=tabdpt` (or `tabicl,tabdpt`) serves Layer 6's TabDPT as `tabdpt-1.3`. Its code and weights are Apache-2.0, so with TabICLv2 there are now two models a business can serve without a separate license. Install with `pip install "tabctx[tabdpt]"`; the container image includes it.
+  - On credit-g (the quickstart's split) it scored 0.768 against TabICL's 0.772; on California housing, R² 0.89, with its 90% interval holding 88.4% of held-out prices (`python examples/prediction_intervals.py --model tabdpt-1.3`), on a CPU. Classification, regression, prediction intervals, list and delete, and the spill tier all work as for the other models.
+  - TabDPT keeps no encoding of the training table: its fit stores the table, and each predict samples a context of `TABCTX_TABDPT_CONTEXT_SIZE` rows (2,048) from it, with `TABCTX_TABDPT_ENSEMBLES` (4) ensemble members for both tasks. Left unbounded, as TabDPT's default is, a predict's cost grows with the square of the table (8,000 rows: 45 s on a CPU, against 4 s). tabctx adds serving: one endpoint, admission control, tenancy.
+  - One network per device, shared by every context and both tasks; the spill tier stores a context without it, tagged with the checkpoint version.
+  - Flash attention on every CUDA device (TabDPT enables it only for the device name "cuda", so a multi-GPU replica's "cuda:1" ran without it).
+  - Predicts use a fixed seed, so the same request gives the same answer; the mean is the same with or without quantiles.
+  - Numeric labels keep numeric order (1, 2, 10), as with the other models. Bad test rows (an infinite value) are a 422.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;

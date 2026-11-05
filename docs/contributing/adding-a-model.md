@@ -6,8 +6,8 @@ class, a **backend**, plus a few lines of wiring. The cache, admission
 control, placement, tenancy and HTTP API come with it: none of them
 import a model, they only use this interface.
 
-Open requests for new models: Mitra and TabDPT
-([#102](https://github.com/VectorInstitute/tabctx/issues/102)).
+`backends/tabdpt.py` is a recent, compact example. Open requests for new
+models: Mitra ([#102](https://github.com/VectorInstitute/tabctx/issues/102)).
 
 ## The interface
 
@@ -64,12 +64,14 @@ version needs none of them:
    tabctx installs without it.
 2. **The server**: in `src/tabctx/serve/factory.py`, add its kind to
    `BackendKind` and `BACKEND_KINDS`, and a branch for it in
-   `_build_real_backend` (today an `if tabpfn / else tabicl`).
+   `_build_real_backend`.
 3. **The client**: add its id to `KNOWN_MODELS` in
    `src/tabctx/client.py`, so the client finds it among a gateway's
    models.
-4. **Packaging**: an extra in `pyproject.toml` (`tabctx[<model>]`), and a
-   row in the README's models table with the **weights license**.
+4. **Packaging**: an extra in `pyproject.toml` (`tabctx[<model>]`), added
+   to the `Dockerfile`'s export and to the image check in
+   `.github/workflows/docker_image.yml`, and a row in the README's models
+   table with the **weights license**.
 
 ## Memory calibration
 

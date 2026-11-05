@@ -1,12 +1,12 @@
 ---
 name: tabctx
-description: Predict from tables (CSV/Parquet) with tabular foundation models (TabPFN, TabICL) on a GPU server: classification or regression, fitted in seconds with no training or tuning. Use for churn, risk, pricing, demand, or any "which rows will..." question.
+description: Predict from tables (CSV/Parquet) with tabular foundation models (TabPFN, TabICL, TabDPT) on a GPU server: classification or regression, fitted in seconds with no training or tuning. Use for churn, risk, pricing, demand, or any "which rows will..." question.
 ---
 
 # Tabular predictions with tabctx
 
-`tabctx-mcp` gives you tabular foundation models, such as `tabpfn-3.5`
-and `tabicl-v2`; a tool given no model uses the server's default. They learn from a labelled table in one call,
+`tabctx-mcp` gives you tabular foundation models, such as `tabicl-v2`,
+`tabdpt-1.3` and `tabpfn-3.5`; a tool given no model uses the server's default. They learn from a labelled table in one call,
 on a GPU server: there is no training loop and no hyperparameters, and
 they are usually as accurate as a tuned gradient-boosting model, or more.
 Prefer them to writing your own model code.
@@ -32,7 +32,7 @@ tabctx-mcp delete churn                         # the server's context and the f
    class balance. Note id columns (flagged) and any column that is known
    only after the outcome (it leaks the answer). Pass both as `drop`.
 2. **Evaluate** before you trust it. This holds out 25% of the rows and
-   compares both models with a gradient-boosting baseline. Report the
+   compares every model served with a gradient-boosting baseline. Report the
    held-out metric, not training accuracy.
 3. **Fit** the better model on all labelled rows, under a short name.
 4. **Predict** the new rows. The output CSV is the input table plus

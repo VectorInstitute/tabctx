@@ -51,7 +51,7 @@ jobs:
         # (a missing wheel or broken dependency fails here, on CPU).
         run: |
           docker run --rm --entrypoint python tabctx-under-test -c \
-            "import torch, tabicl, tabpfn, tabctx; print('torch', torch.__version__)"
+            "import torch, tabicl, tabpfn, tabdpt, tabctx; print('torch', torch.__version__)"
 
       - name: Locked versions and a C compiler for Triton
         # Every package but torch's own stack is the uv.lock version, and
@@ -63,7 +63,7 @@ jobs:
             cc --version | head -1
             cd /opt/tabctx
             uv export --frozen --no-dev --no-hashes --no-emit-project \
-              --extra standalone --extra tabicl --extra tabpfn -q -o /tmp/locked.txt
+              --extra standalone --extra tabicl --extra tabpfn --extra tabdpt -q -o /tmp/locked.txt
             python - <<"PY"
           import importlib.metadata as md, os, re, sysconfig
           assert os.path.exists(os.path.join(sysconfig.get_paths()["include"], "Python.h"))
