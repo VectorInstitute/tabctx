@@ -51,6 +51,7 @@ from tabctx.table_files import (
     to_parquet,
 )
 from tabctx.types import Task
+from tabctx.uncertainty import check_quantiles
 
 # The Vector gateway takes request bodies up to 30 MiB; this leaves room
 # for the multipart envelope around the file.
@@ -132,10 +133,15 @@ class _TabctxEstimator(BaseEstimator):
 
     # ---- predict -------------------------------------------------------
 
-    def _predict(self, X, return_proba: bool) -> list[PredictResult]:
+    def _predict(
+        self, X, return_proba: bool, quantiles: tuple[float, ...] | None = None
+    ) -> list[PredictResult]:
         check_is_fitted(self, "dataset_id_")
         cols = self._test_columns(X)
-        return [self._predict_file(data, return_proba) for data in self._files(cols)]
+        return [
+            self._predict_file(data, return_proba, quantiles)
+            for data in self._files(cols)
+        ]
 
     def _test_columns(self, X) -> Columns:
         if is_frame(X) and self._named:
@@ -174,10 +180,21 @@ class _TabctxEstimator(BaseEstimator):
             *self._files(take_rows(cols, half, cols.n_rows)),
         ]
 
-    def _predict_file(self, data: bytes, return_proba: bool) -> PredictResult:
+    def _predict_file(
+        self,
+        data: bytes,
+        return_proba: bool,
+        quantiles: tuple[float, ...] | None = None,
+    ) -> PredictResult:
+        extra = {} if quantiles is None else {"quantiles": quantiles}
+
         def send():
             return self._client().predict_file(
-                self.dataset_id_, data, return_proba=return_proba, model=self.model_
+                self.dataset_id_,
+                data,
+                return_proba=return_proba,
+                model=self.model_,
+                **extra,
             )
 
         try:
@@ -235,6 +252,17 @@ class TabctxRegressor(RegressorMixin, _TabctxEstimator):
             [p for r in self._predict(X, False) for p in r.predictions],
             dtype=np.float64,
         )
+
+    def predict_quantiles(self, X, quantiles=(0.05, 0.5, 0.95)) -> np.ndarray:
+        """Each row's predicted distribution at these levels in (0, 1):
+        shape (n_samples, len(quantiles)), columns in the order given.
+        The default is the median and a 90% interval. TabICL and TabPFN
+        predict a distribution, so this costs the same as predict()."""
+        levels = check_quantiles(quantiles)
+        if levels is None:
+            raise ValueError("quantiles: give at least one level")
+        rows = [q for r in self._predict(X, False, levels) for q in r.quantiles]
+        return np.asarray(rows, dtype=np.float64).reshape(-1, len(levels))
 
 
 def _mixed(y) -> bool:

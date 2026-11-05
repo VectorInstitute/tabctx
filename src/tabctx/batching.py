@@ -62,7 +62,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 
@@ -71,6 +73,7 @@ from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.types import ArrayLike, PredictOutcome
+from tabctx.uncertainty import check_quantiles
 
 
 def _concat_rows(tables: list[ArrayLike]) -> ArrayLike:
@@ -86,6 +89,14 @@ def _concat_rows(tables: list[ArrayLike]) -> ArrayLike:
     for t in tables:
         merged.extend(t)
     return merged
+
+
+class _Key(NamedTuple):
+    """What a batch shares: one context, and the same outputs asked for."""
+
+    dataset_id: str
+    return_proba: bool
+    quantiles: tuple[float, ...] | None
 
 
 @dataclass
@@ -108,7 +119,7 @@ class _Batch:
 class CoalescingPredictor:
     """Wraps TabctxEngine.predict with same-context request coalescing.
 
-    Groups by (dataset_id, return_proba): rows from concurrent requests
+    Groups by (dataset_id, return_proba, quantiles): rows from concurrent requests
     against one context are concatenated into a single engine.predict()
     call and the results split back per request. Correctness contract:
     every caller receives exactly the predictions (and probabilities,
@@ -123,20 +134,25 @@ class CoalescingPredictor:
         self._engine = engine
         self._window_s = window_s
         self._lock = threading.Lock()
-        self._batches: dict[tuple[str, bool], _Batch] = {}
+        self._batches: dict[_Key, _Batch] = {}
         # Observability: how many engine calls were saved by coalescing.
         self.batched_requests = 0
         self.engine_calls = 0
 
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictOutcome:
+        levels = check_quantiles(quantiles)
+        key = _Key(dataset_id, return_proba, levels)
         if self._window_s == 0:
             with self._lock:
                 self.engine_calls += 1
-            return self._engine.predict(dataset_id, X_test, return_proba=return_proba)
+            return self._call(key, X_test)
 
-        key = (dataset_id, return_proba)
         member = _Member(X_test=X_test)
         with self._lock:
             batch = self._batches.get(key)
@@ -182,25 +198,30 @@ class CoalescingPredictor:
         assert member.outcome is not None
         return member.outcome
 
-    def _execute(self, key: tuple[str, bool], batch: _Batch) -> None:
-        dataset_id, return_proba = key
+    def _call(self, key: _Key, X_test: ArrayLike) -> PredictOutcome:
+        return self._engine.predict(
+            key.dataset_id,
+            X_test,
+            return_proba=key.return_proba,
+            quantiles=key.quantiles,
+        )
+
+    def _execute(self, key: _Key, batch: _Batch) -> None:
         members = batch.members
         if len(members) == 1:
-            self._execute_individually(dataset_id, return_proba, members)
+            self._execute_individually(key, members)
             return
 
         merged = _concat_rows([m.X_test for m in members])
         try:
             with self._lock:
                 self.engine_calls += 1
-            outcome = self._engine.predict(
-                dataset_id, merged, return_proba=return_proba
-            )
+            outcome = self._call(key, merged)
         except InvalidInputError:
             # One member's malformed rows (e.g. wrong feature count) can
             # fail the whole merged call -- retry individually so only
             # the guilty member(s) see the error.
-            self._execute_individually(dataset_id, return_proba, members)
+            self._execute_individually(key, members)
             return
         except Exception as e:
             # Context-level failure (evicted, compute error): every
@@ -212,26 +233,14 @@ class CoalescingPredictor:
         offset = 0
         for m in members:
             n = len(m.X_test)
-            m.outcome = PredictOutcome(
-                predictions=outcome.predictions[offset : offset + n],
-                probabilities=(
-                    outcome.probabilities[offset : offset + n]
-                    if return_proba and outcome.probabilities is not None
-                    else None
-                ),
-                classes=outcome.classes if return_proba else None,
-            )
+            m.outcome = outcome.rows(offset, offset + n)
             offset += n
 
-    def _execute_individually(
-        self, dataset_id: str, return_proba: bool, members: list[_Member]
-    ) -> None:
+    def _execute_individually(self, key: _Key, members: list[_Member]) -> None:
         for m in members:
             try:
                 with self._lock:
                     self.engine_calls += 1
-                m.outcome = self._engine.predict(
-                    dataset_id, m.X_test, return_proba=return_proba
-                )
+                m.outcome = self._call(key, m.X_test)
             except Exception as e:  # noqa: BLE001 -- delivered to the caller
                 m.error = e

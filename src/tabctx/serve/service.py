@@ -48,7 +48,7 @@ from typing import Literal, NamedTuple
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from tabctx import (
@@ -82,6 +82,7 @@ from tabctx.serve.tenancy import (
 )
 from tabctx.serve.uploads import UploadStore
 from tabctx.serve.workers import WorkerDiedError
+from tabctx.uncertainty import check_quantiles
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -249,12 +250,42 @@ class TabctxPredictRequest(BaseModel):
     # ignored; otherwise by position.
     test_upload_id: str | None = None
     return_proba: bool = False
+    quantiles: list[float] | None = Field(
+        default=None,
+        description="Regression only: also return each row's predicted "
+        "distribution at these levels in (0, 1), e.g. [0.05, 0.5, 0.95] for "
+        "the median and a 90% interval. In a multipart form, comma-separated.",
+    )
+
+    @field_validator("quantiles", mode="before")
+    @classmethod
+    def _levels_from_form(cls, value: object) -> object:
+        """A form field carries the levels as one string: "0.05,0.95"."""
+        if isinstance(value, str):
+            return [part for part in value.replace(" ", "").split(",") if part]
+        return value
+
+    @field_validator("quantiles")
+    @classmethod
+    def _valid_levels(cls, value: list[float] | None) -> list[float] | None:
+        """Checked with the request, before any table is read."""
+        try:
+            check_quantiles(value)
+        except InvalidInputError as e:
+            raise ValueError(str(e)) from e
+        return value
 
 
 class TabctxPredictResponse(BaseModel):
     predictions: list = Field(description=_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
+    quantiles: list[list[float]] | None = Field(
+        default=None,
+        description="With quantiles requested: one row per test row, the value "
+        "at each requested level, in the order of quantile_levels.",
+    )
+    quantile_levels: list[float] | None = None
     n_test: int
     latency_ms: float
     served_by: str | None = None
@@ -799,7 +830,10 @@ class TabctxService:
             with timing.phase("read_table"):
                 X_test = self._resolve_test_table(req, file, tenant_id, scoped_id)
             outcome = self._predictor.predict(
-                scoped_id, X_test, return_proba=req.return_proba
+                scoped_id,
+                X_test,
+                return_proba=req.return_proba,
+                quantiles=req.quantiles,
             )
         except (
             *_AUTH_ERRORS,
@@ -815,6 +849,8 @@ class TabctxService:
             predictions=outcome.predictions,
             probabilities=outcome.probabilities,
             classes=outcome.classes,
+            quantiles=outcome.quantiles,
+            quantile_levels=req.quantiles if outcome.quantiles is not None else None,
             n_test=len(X_test),
             latency_ms=latency_ms,
             served_by=_replica_tag(),

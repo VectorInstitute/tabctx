@@ -25,6 +25,37 @@ class PredictOutcome:
     predictions: list
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
+    # Regression only, when asked for: one row per test row, the predicted
+    # distribution's value at each requested level (in the order asked).
+    quantiles: list[list[float]] | None = None
+
+    def rows(self, start: int, stop: int) -> PredictOutcome:
+        """The outcome for test rows [start, stop)."""
+        return PredictOutcome(
+            predictions=self.predictions[start:stop],
+            probabilities=_slice(self.probabilities, start, stop),
+            classes=self.classes,
+            quantiles=_slice(self.quantiles, start, stop),
+        )
+
+    @staticmethod
+    def concat(outcomes: Sequence[PredictOutcome]) -> PredictOutcome:
+        """Outcomes for consecutive row ranges, as one."""
+        first = outcomes[0]
+        return PredictOutcome(
+            predictions=[p for o in outcomes for p in o.predictions],
+            probabilities=_join([o.probabilities for o in outcomes]),
+            classes=next((o.classes for o in outcomes if o.classes), first.classes),
+            quantiles=_join([o.quantiles for o in outcomes]),
+        )
+
+
+def _slice(rows: list | None, start: int, stop: int) -> list | None:
+    return None if rows is None else rows[start:stop]
+
+
+def _join(parts: list[list | None]) -> list | None:
+    return None if any(p is None for p in parts) else [r for p in parts for r in p]
 
 
 @dataclass(frozen=True)

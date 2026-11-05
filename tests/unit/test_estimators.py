@@ -326,3 +326,23 @@ def test_the_client_is_importable_from_the_package():
     assert TabctxClient is tabctx.client.TabctxClient
     assert PredictResult is tabctx.client.PredictResult
     assert {"TabctxClient", "PredictResult"} <= set(tabctx.__all__)
+
+
+class TestPredictQuantiles:
+    def test_one_column_per_level_in_the_order_given(self, deployment):
+        X = np.array([[1.0], [2.0], [3.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0, 3.0])
+        out = reg.predict_quantiles(X, quantiles=[0.9, 0.1])
+        assert out.shape == (3, 2)
+        np.testing.assert_allclose(out, [[1.9, 1.1], [2.9, 2.1], [3.9, 3.1]])
+
+    def test_the_default_is_the_median_and_a_90_percent_interval(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        np.testing.assert_allclose(reg.predict_quantiles(X)[0], [1.05, 1.5, 1.95])
+
+    def test_bad_levels(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        with pytest.raises(InvalidInputError):
+            reg.predict_quantiles(X, quantiles=[1.2])

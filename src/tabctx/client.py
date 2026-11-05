@@ -47,7 +47,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
@@ -105,6 +105,8 @@ class PredictResult:
     classes: list[str] | None
     latency_ms: float
     served_by: str | None
+    # Regression with quantiles asked for: per row, the value at each level.
+    quantiles: list[list[float]] | None = None
 
 
 # The tabular models tabctx serves, preferred first. A gateway in front of
@@ -289,9 +291,12 @@ class TabctxClient:
         return_proba: bool = False,
         test_upload_id: str | None = None,
         model: str | None = None,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictResult:
         """model: needed through a gateway, which routes predicts by it;
-        a deployment reached directly knows it from the fit."""
+        a deployment reached directly knows it from the fit. quantiles
+        (regression): also return each row's predicted distribution at
+        these levels in (0, 1), as PredictResult.quantiles."""
         body: dict = _without_none(
             {
                 "dataset_id": dataset_id,
@@ -299,6 +304,7 @@ class TabctxClient:
                 "test_X": None if X_test is None else _json_rows(X_test),
                 "test_upload_id": test_upload_id,
                 "model": model,
+                "quantiles": None if quantiles is None else list(quantiles),
             }
         )
         resp = self._post("/v1/tabctx/predict", body, session_id=dataset_id)
@@ -310,6 +316,7 @@ class TabctxClient:
         file: TableFile,
         return_proba: bool = False,
         model: str | None = None,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictResult:
         """predict() on a table file sent with the request (path or bytes).
         When the training table was a file, columns are matched by name."""
@@ -317,6 +324,9 @@ class TabctxClient:
             "dataset_id": dataset_id,
             "return_proba": "true" if return_proba else "false",
             "model": model,
+            "quantiles": None
+            if quantiles is None
+            else ",".join(repr(float(q)) for q in quantiles),
         }
         resp = self._post_file(
             "/v1/tabctx/predict", fields, file, session_id=dataset_id
@@ -569,6 +579,7 @@ def _predict_result(resp: dict) -> PredictResult:
         classes=resp.get("classes"),
         latency_ms=resp["latency_ms"],
         served_by=resp.get("served_by"),
+        quantiles=resp.get("quantiles"),
     )
 
 

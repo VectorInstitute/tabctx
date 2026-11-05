@@ -58,6 +58,16 @@ def test_fit_predict_round_trip_and_residency_mirror(built):
     assert not any(w.has("rt") for w in built.worker_shards)
 
 
+def test_quantiles_cross_the_process_boundary(built):
+    engine = built.engine
+    engine.fit(
+        [[0.0], [1.0], [2.0]], [1.0, 2.0, 3.0], task="regression", dataset_id="q"
+    )
+    out = engine.predict("q", [[0.0], [1.0]], quantiles=[0.1, 0.9])
+    assert len(out.quantiles) == 2 and out.quantiles[0][0] < out.quantiles[0][1]
+    engine.evict("q")
+
+
 def test_errors_cross_the_process_boundary_with_their_type(built):
     with pytest.raises(DatasetNotFoundError):
         built.engine.predict("never-fit", [[0.0, 0.0]])

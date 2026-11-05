@@ -777,3 +777,41 @@ class TestTablesAsJson:
         assert sent[0]["train_y"] == ["y", "n"]
         TabctxClient("http://x").fit(np.array([[1.0, np.nan]]), np.array([3]))
         assert sent[1]["train_X"] == [[1.0, None]] and sent[1]["train_y"] == [3]
+
+
+class TestQuantiles:
+    def _capture(self, monkeypatch, response):
+        seen: list = []
+
+        def handler(req):
+            seen.append(req)
+            return _json_response(response)
+
+        _install(monkeypatch, handler)
+        return seen
+
+    RESPONSE = {
+        "predictions": [2.0],
+        "quantiles": [[1.0, 3.0]],
+        "quantile_levels": [0.1, 0.9],
+        "n_test": 1,
+        "latency_ms": 1.0,
+    }
+
+    def test_json_body_and_result(self, monkeypatch):
+        seen = self._capture(monkeypatch, self.RESPONSE)
+        result = TabctxClient("http://x").predict("d", [[1.0]], quantiles=(0.1, 0.9))
+        assert json.loads(seen[0].data)["quantiles"] == [0.1, 0.9]
+        assert result.quantiles == [[1.0, 3.0]]
+
+    def test_left_out_unless_asked(self, monkeypatch):
+        seen = self._capture(monkeypatch, {**self.RESPONSE, "quantiles": None})
+        result = TabctxClient("http://x").predict("d", [[1.0]])
+        assert "quantiles" not in json.loads(seen[0].data)
+        assert result.quantiles is None
+
+    def test_a_file_predict_sends_them_as_a_form_field(self, monkeypatch):
+        seen = self._capture(monkeypatch, self.RESPONSE)
+        TabctxClient("http://x").predict_file("d", b"a\n1\n", quantiles=[0.1, 0.9])
+        body = b"".join(seen[0].data)
+        assert b'name="quantiles"\r\n\r\n0.1,0.9\r\n' in body

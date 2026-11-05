@@ -49,7 +49,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
@@ -114,7 +114,11 @@ class Shard(Protocol):
     ) -> str: ...
 
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictOutcome: ...
 
     def schema(self, dataset_id: str) -> TableSchema | None: ...
@@ -380,7 +384,11 @@ class MultiDeviceEngine:
             )
 
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictOutcome:
         tried: set[int] = set()
         # Two passes: a re-fit can move the id to another device between
@@ -394,7 +402,10 @@ class MultiDeviceEngine:
                 try:
                     with self._active(index):
                         return self._shards[index].predict(
-                            dataset_id, X_test, return_proba=return_proba
+                            dataset_id,
+                            X_test,
+                            return_proba=return_proba,
+                            quantiles=quantiles,
                         )
                 except DatasetNotFoundError:
                     # Moved or evicted between the snapshot and the call.

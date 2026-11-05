@@ -7,10 +7,11 @@ This is the one class most callers (including serve/app.py) actually use.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import gc
 import threading
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 
 from tabctx import timing
 from tabctx.backends._cuda import release_cached_device_memory
@@ -28,6 +29,7 @@ from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
 from tabctx.schema import TableSchema
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
+from tabctx.uncertainty import check_quantiles
 
 # Predicts of at most this many test rows against a resident context run
 # beside a fit on the same device instead of waiting for it (head-of-line,
@@ -120,7 +122,11 @@ def _validate_predict_input(X_test: ArrayLike, n_features: int) -> None:
 
 
 def _predict_splitting_on_oom(
-    backend: TabularICLBackend, payload: object, X_test: ArrayLike, return_proba: bool
+    backend: TabularICLBackend,
+    payload: object,
+    X_test: ArrayLike,
+    return_proba: bool,
+    quantiles: tuple[float, ...] | None = None,
 ) -> list[PredictOutcome]:
     """Predict, halving the chunk on a CUDA OOM until it fits (or one row
     still doesn't). Chunk sizing estimates can't see everything on a nearly
@@ -128,16 +134,21 @@ def _predict_splitting_on_oom(
     and a model may pick a single batch with no OOM retry of its own. The
     halves run after the except block, whose traceback would otherwise keep
     the failed attempt's tensors alive."""
+    # Only callers that asked pass quantiles, so a backend without the
+    # argument still serves every other predict.
+    extra = {} if quantiles is None else {"quantiles": quantiles}
     try:
-        return [backend.predict(payload, X_test, return_proba=return_proba)]
+        return [backend.predict(payload, X_test, return_proba=return_proba, **extra)]
     except BackendComputeError:
         if len(X_test) <= 1:
             raise
     gc.collect()
     half = len(X_test) // 2
     return _predict_splitting_on_oom(
-        backend, payload, X_test[:half], return_proba
-    ) + _predict_splitting_on_oom(backend, payload, X_test[half:], return_proba)
+        backend, payload, X_test[:half], return_proba, quantiles
+    ) + _predict_splitting_on_oom(
+        backend, payload, X_test[half:], return_proba, quantiles
+    )
 
 
 class TabctxEngine:
@@ -596,10 +607,17 @@ class TabctxEngine:
         return context.schema
 
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictOutcome:
         """Predict against a previously-fit context, reusing its cached
-        training-context encoding. Large test sets are automatically chunked
+        training-context encoding. quantiles (regression only): also return
+        each row's predicted distribution at these levels in (0, 1)
+        (tabctx.uncertainty); InvalidInputError for a classification
+        context. Large test sets are automatically chunked
         (see chunking.py) against the memory ceiling -- this is the one
         thing that must never let a single request take down the replica,
         which the naive one-shot wrapper this library replaces did not do.
@@ -608,6 +626,7 @@ class TabctxEngine:
         rows) runs beside a fit on this device; larger ones wait for the
         device's fits, and a spilled context is restored first.
         """
+        levels = check_quantiles(quantiles)
         exclusive = len(X_test) > LIGHT_PREDICT_ROWS
         with self._cache.pinned(dataset_id), timing.counting_compiles():
             for _ in range(_PREDICT_ATTEMPTS):
@@ -616,7 +635,7 @@ class TabctxEngine:
                         self._restore(dataset_id)
                     timing.count("restores")
                 outcome = self._predict_resident(
-                    dataset_id, X_test, return_proba, exclusive
+                    dataset_id, X_test, return_proba, exclusive, levels
                 )
                 if outcome is not None:
                     return outcome
@@ -627,7 +646,12 @@ class TabctxEngine:
         )
 
     def _predict_resident(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool, exclusive: bool
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool,
+        exclusive: bool,
+        quantiles: tuple[float, ...] | None = None,
     ) -> PredictOutcome | None:
         """Run a predict if the context is resident once this call has the
         device (None if it was evicted meanwhile). Holds no reference to the
@@ -636,6 +660,11 @@ class TabctxEngine:
         if context is None:
             return None
         _validate_predict_input(X_test, context.n_features)
+        if quantiles is not None and context.task != "regression":
+            raise InvalidInputError(
+                "quantiles are for regression; a classification context "
+                "returns class probabilities (return_proba) instead"
+            )
         # Dispatch to whichever backend fit this context (multi-backend
         # deployments serve several models over one cache).
         backend = self._backends.get(context.backend_name)
@@ -662,9 +691,6 @@ class TabctxEngine:
         chunks = split_rows(X_test, chunk_rows) if chunk_rows < n_test else [X_test]
         largest_chunk = max(len(c) for c in chunks)
 
-        all_predictions: list = []
-        all_probabilities: list[list[float]] = []
-        classes: list[str] | None = None
         with contextlib.ExitStack() as device:
             with timing.phase("wait_host_memory"):
                 device.enter_context(
@@ -685,14 +711,9 @@ class TabctxEngine:
                         outcome
                         for chunk in chunks
                         for outcome in _predict_splitting_on_oom(
-                            backend, context.payload, chunk, return_proba
+                            backend, context.payload, chunk, return_proba, quantiles
                         )
                     ]
-                for outcome in outcomes:
-                    all_predictions.extend(outcome.predictions)
-                    if return_proba:
-                        all_probabilities.extend(outcome.probabilities or [])
-                        classes = outcome.classes or classes
             finally:
                 # Still under the predict lock: if the context was evicted
                 # while this ran, its memory is freed now -- atomic with
@@ -701,11 +722,10 @@ class TabctxEngine:
                     self._release(context)
                 context = None
 
-        return PredictOutcome(
-            predictions=all_predictions,
-            probabilities=all_probabilities if return_proba else None,
-            classes=classes,
-        )
+        merged = PredictOutcome.concat(outcomes)
+        if not return_proba:
+            merged = dataclasses.replace(merged, probabilities=None, classes=None)
+        return merged
 
     def fit_predict(
         self,

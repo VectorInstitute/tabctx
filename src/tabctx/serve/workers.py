@@ -46,6 +46,7 @@ import pickle
 import threading
 import time
 import weakref
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -668,9 +669,19 @@ class ProcessShard:
         )
 
     def predict(
-        self, dataset_id: str, X_test: ArrayLike, return_proba: bool = False
+        self,
+        dataset_id: str,
+        X_test: ArrayLike,
+        return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
     ) -> PredictOutcome:
-        return self._call("predict", dataset_id, X_test, return_proba=return_proba)
+        return self._call(
+            "predict",
+            dataset_id,
+            X_test,
+            return_proba=return_proba,
+            quantiles=None if quantiles is None else tuple(quantiles),
+        )
 
     def schema(self, dataset_id: str) -> TableSchema | None:
         return self._call("schema", dataset_id)
