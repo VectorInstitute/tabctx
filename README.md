@@ -14,11 +14,13 @@
   <a href="https://pypi.org/project/tabctx/"><img src="https://img.shields.io/pypi/v/tabctx.svg" alt="PyPI"></a>
   <a href="https://github.com/VectorInstitute/tabctx/actions/workflows/unit_tests.yml"><img src="https://github.com/VectorInstitute/tabctx/actions/workflows/unit_tests.yml/badge.svg" alt="unit tests"></a>
   <a href="https://codecov.io/github/VectorInstitute/tabctx"><img src="https://codecov.io/github/VectorInstitute/tabctx/graph/badge.svg" alt="codecov"></a>
+  <a href="https://vectorinstitute.github.io/tabctx/"><img src="https://img.shields.io/badge/docs-vectorinstitute.github.io%2Ftabctx-4f46e5.svg" alt="docs"></a>
   <img src="https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg" alt="Python ≥ 3.12">
   <a href="https://github.com/VectorInstitute/tabctx/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="license"></a>
 </p>
 
 <p align="center">
+  <a href="https://vectorinstitute.github.io/tabctx/"><b>Docs</b></a> ·
   <a href="#quickstart">Quickstart</a> ·
   <a href="#coding-agents">Coding agents</a> ·
   <a href="https://tabctx-agent-demo-g6svlkvhga-uc.a.run.app">Live demo</a> ·
@@ -153,6 +155,8 @@ TabPFN weights download after you accept Prior Labs' terms (set
 their own license.
 
 ## Learn more
+
+The full documentation lives at **[vectorinstitute.github.io/tabctx](https://vectorinstitute.github.io/tabctx/)**: guides, concepts, and the Python, HTTP and configuration reference.
 
 - [Serving guide](https://github.com/VectorInstitute/tabctx/blob/main/docs/serving.md): install options, Ray Serve or standalone, multi-GPU, table files, tenants
 - [How it works](https://github.com/VectorInstitute/tabctx/blob/main/docs/how-it-works.md): the architecture, the context cache, memory admission

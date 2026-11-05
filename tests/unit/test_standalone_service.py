@@ -488,3 +488,30 @@ class TestDatasetsWithoutTenancy:
         )
         assert fit.status_code == 422 and "reserved" in fit.json()["detail"]
         assert _listed(app, tenant) == ["secret"]
+
+
+class TestOpenApi:
+    def test_the_spec_needs_no_service(self, app, monkeypatch):
+        """The docs build uses openapi_spec(): the same spec as a running
+        server's, with no engine built (a real backend set in the
+        environment must not matter)."""
+        from tabctx.serve.standalone import openapi_spec
+
+        expected = app.openapi()
+        monkeypatch.setenv(BACKEND_ENV_VAR, "tabicl")  # would need torch
+        assert openapi_spec() == expected
+
+    def test_every_route_has_a_summary_and_one_known_tag(self, app):
+        from tabctx.serve.service import OPENAPI_TAGS
+
+        spec = app.openapi()
+        assert spec["tags"] == OPENAPI_TAGS
+        known = {t["name"] for t in OPENAPI_TAGS}
+        for path, methods in spec["paths"].items():
+            for op in methods.values():
+                assert op.get("summary"), path
+                assert len(op["tags"]) == 1 and op["tags"][0] in known, path
+
+    def test_the_spec_names_the_service_and_its_version(self, app):
+        info = app.openapi()["info"]
+        assert info["title"] == "tabctx" and info["version"]

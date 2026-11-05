@@ -754,3 +754,26 @@ def test_multipart_bodies_from_bytes_like_files(make):
     form = _Multipart({"dataset_id": "d"}, make(b"a,b\n1,2\n"))
     body = b"".join(form.chunks())
     assert len(body) == form.length and b"a,b\n1,2\n" in body
+
+
+class TestTablesAsJson:
+    """fit and predict take DataFrames and numpy arrays, not just lists."""
+
+    def test_dataframes_and_arrays_become_rows_with_nulls(self, monkeypatch):
+        pd = pytest.importorskip("pandas")
+        np = pytest.importorskip("numpy")
+        sent = []
+
+        def handler(req):
+            sent.append(json.loads(req.data))
+            return _json_response({"dataset_id": "d"})
+
+        _install(monkeypatch, handler)
+        X = pd.DataFrame(
+            {"a": [1.5, np.nan], "b": ["x", None], "c": pd.array([1, pd.NA], "Int64")}
+        )
+        TabctxClient("http://x").fit(X, pd.Series(["y", "n"]), dataset_id="d")
+        assert sent[0]["train_X"] == [[1.5, "x", 1], [None, None, None]]
+        assert sent[0]["train_y"] == ["y", "n"]
+        TabctxClient("http://x").fit(np.array([[1.0, np.nan]]), np.array([3]))
+        assert sent[1]["train_X"] == [[1.0, None]] and sent[1]["train_y"] == [3]

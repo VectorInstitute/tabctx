@@ -86,7 +86,36 @@ from tabctx.serve.workers import WorkerDiedError
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
 
-fastapi_app = FastAPI(title="tabctx Serve API")
+
+def _version() -> str:
+    try:
+        from importlib.metadata import version
+
+        return version("tabctx")
+    except Exception:  # noqa: BLE001 -- a source checkout without metadata
+        return "dev"
+
+
+# Tags group the routes in the OpenAPI docs, in this order.
+OPENAPI_TAGS = [
+    {
+        "name": "contexts",
+        "description": "Fit a table, predict against it, list and delete.",
+    },
+    {"name": "deployment", "description": "What this deployment serves and admits."},
+    {"name": "health", "description": "Liveness and readiness probes."},
+    {
+        "name": "legacy",
+        "description": "One-shot fit and predict, kept for old callers.",
+    },
+]
+
+fastapi_app = FastAPI(
+    title="tabctx",
+    summary="The serving engine for tabular foundation models.",
+    version=_version(),
+    openapi_tags=OPENAPI_TAGS,
+)
 
 
 def _torch_or_none():
@@ -402,7 +431,12 @@ class TabctxService:
 
     # ---- legacy one-shot endpoint (regression-compatible with the old app.py) ----
 
-    @fastapi_app.post("/v1/tabicl/predict", response_model=LegacyPredictResponse)
+    @fastapi_app.post(
+        "/v1/tabicl/predict",
+        response_model=LegacyPredictResponse,
+        summary="Fit, predict once and discard",
+        tags=["legacy"],
+    )
     async def legacy_predict(self, req: LegacyPredictRequest) -> LegacyPredictResponse:
         return await run_in_threadpool(self._legacy_predict_sync, req)
 
@@ -475,7 +509,12 @@ class TabctxService:
 
     # ---- new tabctx-native endpoints: the actual capability this library adds ----
 
-    @fastapi_app.post("/v1/tabctx/upload", response_model=UploadResponse)
+    @fastapi_app.post(
+        "/v1/tabctx/upload",
+        response_model=UploadResponse,
+        summary="Upload a table ahead of a fit or predict",
+        tags=["contexts"],
+    )
     async def tabctx_upload(self, request: Request) -> UploadResponse:
         """Streamed CSV upload for fit/predict-by-reference. Send the raw
         CSV as the request body. In multi-replica deployments the request
@@ -587,6 +626,8 @@ class TabctxService:
     @fastapi_app.post(
         "/v1/tabctx/fit",
         response_model=FitResponse,
+        summary="Fit a table into a context",
+        tags=["contexts"],
         openapi_extra=_request_body(FitRequest),
     )
     async def tabctx_fit(self, request: Request) -> FitResponse:
@@ -691,6 +732,8 @@ class TabctxService:
     @fastapi_app.post(
         "/v1/tabctx/predict",
         response_model=TabctxPredictResponse,
+        summary="Predict against a context",
+        tags=["contexts"],
         openapi_extra=_request_body(TabctxPredictRequest),
     )
     async def tabctx_predict(self, request: Request) -> TabctxPredictResponse:
@@ -779,7 +822,12 @@ class TabctxService:
 
     # ---- the caller's contexts: list and delete ----
 
-    @fastapi_app.get("/v1/tabctx/datasets", response_model=DatasetList)
+    @fastapi_app.get(
+        "/v1/tabctx/datasets",
+        response_model=DatasetList,
+        summary="List your contexts",
+        tags=["contexts"],
+    )
     def datasets(self, request: Request) -> DatasetList:
         """The contexts this replica holds for the caller's tenant, resident
         or spilled: metadata only, never their contents. With several
@@ -801,7 +849,10 @@ class TabctxService:
         return DatasetList(data=data, served_by=_replica_tag())
 
     @fastapi_app.delete(
-        "/v1/tabctx/datasets/{dataset_id:path}", response_model=DeleteResponse
+        "/v1/tabctx/datasets/{dataset_id:path}",
+        response_model=DeleteResponse,
+        summary="Delete a context",
+        tags=["contexts"],
     )
     def delete_dataset(self, dataset_id: str, request: Request) -> DeleteResponse:
         """Delete a context: from device memory, host memory and the disk
@@ -843,7 +894,7 @@ class TabctxService:
         each context itself)."""
         return None if isinstance(self._engine, MultiDeviceEngine) else self._device
 
-    @fastapi_app.get("/healthz")
+    @fastapi_app.get("/healthz", summary="Process is up", tags=["health"])
     def healthz(self):
         return {"status": "ok"}
 
@@ -862,7 +913,7 @@ class TabctxService:
         for shard in self._workers:
             shard.close()
 
-    @fastapi_app.get("/livez")
+    @fastapi_app.get("/livez", summary="Liveness probe", tags=["health"])
     def livez(self):
         """check_health as an HTTP route, for hosts without Ray (e.g. a
         Kubernetes livenessProbe): 503 only on the condition a restart
@@ -875,7 +926,9 @@ class TabctxService:
             raise HTTPException(503, detail=str(e)) from e
         return {"status": "alive"}
 
-    @fastapi_app.get("/v1/models")
+    @fastapi_app.get(
+        "/v1/models", summary="List the models served", tags=["deployment"]
+    )
     def models(self):
         """Which models this deployment serves: pass one of these ids
         as `model` in fit requests.
@@ -891,7 +944,9 @@ class TabctxService:
             ]
         }
 
-    @fastapi_app.get("/v1/tabctx/residency")
+    @fastapi_app.get(
+        "/v1/tabctx/residency", summary="Where your contexts are", tags=["contexts"]
+    )
     def residency(self, request: Request):
         """Where the caller's contexts are now, per device, and the router's
         latest placements and removals of them (multi-GPU replicas). Scoped
@@ -923,7 +978,9 @@ class TabctxService:
             "events": events,
         }
 
-    @fastapi_app.get("/v1/tabctx/limits")
+    @fastapi_app.get(
+        "/v1/tabctx/limits", summary="Table shapes it admits now", tags=["deployment"]
+    )
     def limits(self):
         """Capability discovery (inspired by PriorLabs' get_model_limits):
         what will this deployment admit? Lets clients validate table
@@ -972,7 +1029,7 @@ class TabctxService:
             ),
         }
 
-    @fastapi_app.get("/readyz")
+    @fastapi_app.get("/readyz", summary="Readiness and cache state", tags=["health"])
     def readyz(self):
         torch = _torch_or_none()
 
@@ -1102,6 +1159,8 @@ class RouteSpec(NamedTuple):
     endpoint_name: str
     response_model: object | None
     openapi_extra: dict | None
+    summary: str | None
+    tags: list
 
 
 ROUTE_SPECS: tuple[RouteSpec, ...] = tuple(
@@ -1111,6 +1170,8 @@ ROUTE_SPECS: tuple[RouteSpec, ...] = tuple(
         endpoint_name=route.endpoint.__name__,
         response_model=route.response_model,
         openapi_extra=route.openapi_extra,
+        summary=route.summary,
+        tags=list(route.tags),
     )
     for route in fastapi_app.routes
     if isinstance(route, APIRoute)

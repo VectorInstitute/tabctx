@@ -590,8 +590,10 @@ def _build_real_backend(
             fast_preprocessing=settings.fast_preprocessing,
         )
     # Weights load at replica start, not inside (and charged to) the first
-    # tenant's fit.
-    backend.warmup()
+    # tenant's fit. Optional, like every hook beyond the protocol.
+    warmup = getattr(backend, "warmup", None)
+    if callable(warmup):
+        warmup()
     return backend
 
 

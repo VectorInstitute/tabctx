@@ -70,7 +70,7 @@ the platform's liveness probe at `GET /livez` and its readiness probe at
 `GET /readyz`. `serve/standalone.py` documents what else the Ray host
 provided and what replaces it.
 
-**Talk to a deployment** as a scikit-learn model (see the [Quickstart](../README.md#quickstart)), or with the bundled client (pure stdlib, sets the
+**Talk to a deployment** as a scikit-learn model (see the [Quickstart](getting-started/quickstart.md)), or with the bundled client (pure stdlib, sets the
 routing/tenancy headers for you, raises the same tabctx exceptions the
 in-process engine does):
 

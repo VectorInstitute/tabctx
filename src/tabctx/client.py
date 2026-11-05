@@ -205,8 +205,8 @@ class TabctxClient:
         """
         body = _without_none(
             {
-                "train_X": X,
-                "train_y": y,
+                "train_X": _json_rows(X),
+                "train_y": _json_cells(y),
                 "task": task,
                 "dataset_id": dataset_id,
                 "model": model,
@@ -296,7 +296,7 @@ class TabctxClient:
             {
                 "dataset_id": dataset_id,
                 "return_proba": return_proba,
-                "test_X": X_test,
+                "test_X": None if X_test is None else _json_rows(X_test),
                 "test_upload_id": test_upload_id,
                 "model": model,
             }
@@ -337,9 +337,9 @@ class TabctxClient:
             "/v1/tabicl/predict",
             _without_none(
                 {
-                    "train_X": X,
-                    "train_y": y,
-                    "test_X": X_test,
+                    "train_X": _json_rows(X),
+                    "train_y": _json_cells(y),
+                    "test_X": _json_rows(X_test),
                     "task": task,
                     "return_proba": return_proba,
                 }
@@ -529,6 +529,37 @@ class TabctxClient:
         if code == 503:
             return TabctxBackpressureError(detail)
         return TabctxError(f"HTTP {code}: {detail}")
+
+
+def _json_cells(values: ArrayLike) -> list:
+    """A column (list, numpy array or pandas Series) as JSON cells: numpy
+    scalars become Python numbers and missing values (NaN, None, pandas
+    NA) become null."""
+    if hasattr(values, "tolist"):  # numpy and pandas, without importing them
+        values = values.tolist()
+    return [_json_cell(v) for v in values]
+
+
+def _json_rows(X: ArrayLike) -> list:
+    """A table (rows of cells, a 2-D numpy array or a pandas DataFrame) as
+    JSON rows; see _json_cells."""
+    if hasattr(X, "to_numpy"):  # a DataFrame: by position, any dtypes
+        X = X.to_numpy(dtype=object)
+    if hasattr(X, "tolist"):
+        X = X.tolist()
+    return [_json_cells(row) for row in X]
+
+
+def _json_cell(value: object) -> object:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return None if value != value else value  # NaN
+    if hasattr(value, "item"):  # a numpy scalar
+        return _json_cell(value.item())
+    if type(value).__name__ in ("NAType", "NaTType"):  # pandas' missing values
+        return None
+    return value
 
 
 def _predict_result(resp: dict) -> PredictResult:

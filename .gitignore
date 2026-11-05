@@ -14,3 +14,6 @@ gke-out/
 examples/agent_demo/workspace/
 examples/agent_demo/answers/
 examples/agent_demo/runs/
+
+# mkdocs build output
+site/

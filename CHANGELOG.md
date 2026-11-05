@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 ### Added
+- **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
+  - a landing page;
+  - a quickstart, and guides for Python and scikit-learn and for the HTTP API;
+  - the serving, agents, architecture and benchmark docs;
+  - a reference generated from the code: the Python API from docstrings, the HTTP API from the service's own OpenAPI spec (rendered with Redoc), and configuration;
+  - a guide to adding a model.
+- The OpenAPI spec names the service `tabctx` at its real version, groups routes (contexts, deployment, health, legacy) and gives each a summary.
 - **List and delete contexts** (#103, part 1). `GET /v1/tabctx/datasets` lists the caller's contexts, resident or spilled: id, model, task, shape, size, location, GPU and fit time (metadata only). `DELETE /v1/tabctx/datasets/{dataset_id}` removes one from device memory, host memory and the disk tier on every GPU, or answers 404 if there is none. Both are scoped by tenant like every `/v1/tabctx` route. See "Listing and deleting contexts" in `docs/serving.md`.
   - A delete is atomic with respect to spills and restores: one in progress lands first, so no copy reappears afterwards. If it doesn't land in time, the delete answers 503 having deleted nothing.
   - On a multi-GPU replica the delete asks every GPU at once, not just the ones the residency snapshot lists. It never reports success while a copy may survive: while a GPU worker is down (its spilled copies would come back with it), list and delete answer 503 before touching anything, and a GPU failing mid-delete makes it 503 too. The client retries, and a retry that finds the context gone counts as deleted.

@@ -1,0 +1,76 @@
+name: docs
+
+# Build the docs site on every pull request (strict: a broken link or a
+# missing API symbol fails the build), and publish it to GitHub Pages
+# (the gh-pages branch) on every push to main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only by default: the build runs the PR's own Python (the docs hook,
+# mkdocstrings). Only the deploy job, which runs on main, can write.
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  # Supersede stale PR builds, but never cut a deploy off mid-push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the docs dependencies
+        run: uv sync --locked --no-default-groups --group docs
+
+      - name: Build
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+        run: uv run --frozen --no-default-groups --group docs mkdocs build --strict
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install the docs dependencies
+        run: uv sync --locked --no-default-groups --group docs
+
+      - name: Publish to GitHub Pages
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          uv run --frozen --no-default-groups --group docs mkdocs gh-deploy --strict --force --no-history

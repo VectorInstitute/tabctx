@@ -1,0 +1,106 @@
+/* tabctx brand: indigo primary, amber accent (the headline figure's palette). */
+:root {
+  --md-primary-fg-color: #4f46e5;
+  --md-primary-fg-color--light: #6366f1;
+  --md-primary-fg-color--dark: #4338ca;
+  --md-accent-fg-color: #d97706;
+  --md-typeset-a-color: #4f46e5;
+}
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #312e81;
+  --md-primary-fg-color--light: #4338ca;
+  --md-primary-fg-color--dark: #1e1b4b;
+  --md-accent-fg-color: #f59e0b;
+  --md-typeset-a-color: #a5b4fc;
+  --md-default-bg-color: #0d1117;
+}
+
+/* Landing page hero */
+.tx-hero {
+  text-align: center;
+  padding: 2.5rem 0 1.5rem;
+}
+.tx-hero .tx-hero-logo {
+  width: 320px;
+  max-width: 80%;
+}
+.tx-hero .tx-tagline {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.2rem auto 0.6rem;
+  max-width: none;
+  color: var(--md-default-fg-color);
+}
+.tx-hero p {
+  max-width: 40rem;
+  margin-left: auto;
+  margin-right: auto;
+  font-size: 0.95rem;
+  color: var(--md-default-fg-color--light);
+}
+.tx-hero .md-button {
+  margin: 0.4rem 0.25rem;
+}
+@media screen and (max-width: 44.9375em) {
+  .tx-hero .tx-tagline {
+    font-size: 1.25rem;
+  }
+}
+
+/* Cards: a quiet lift on hover. */
+.md-typeset .grid.cards > ul > li {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.md-typeset .grid.cards > ul > li:hover {
+  border-color: var(--md-accent-fg-color);
+}
+
+/* Redoc fills the content column, on a light panel: it has no dark theme. */
+.tx-redoc {
+  margin: 1rem -0.8rem 0;
+  background: #fff;
+  color: #1f2328;
+  border-radius: 0.4rem;
+  overflow: hidden;
+}
+
+/* Buttons: the slate header colour is too dark for them. */
+.md-typeset .md-button--primary {
+  background-color: #4f46e5;
+  border-color: #4f46e5;
+  color: #fff;
+}
+[data-md-color-scheme="slate"] .md-typeset .md-button:not(.md-button--primary) {
+  color: #c7d2fe;
+  border-color: #6366f1;
+}
+.md-typeset .md-button:hover,
+.md-typeset .md-button--primary:hover {
+  background-color: #d97706;
+  border-color: #d97706;
+  color: #fff;
+}
+
+/* A heading kept for screen readers and the page title, not shown. */
+.tx-sr-only {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+.tx-redoc h1,
+.tx-redoc h2,
+.tx-redoc h3,
+.tx-redoc h4,
+.tx-redoc h5 {
+  color: #1f2328 !important;
+}
+.tx-redoc a,
+.tx-redoc button {
+  color: #4f46e5;
+}
