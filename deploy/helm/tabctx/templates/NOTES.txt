@@ -1,0 +1,16 @@
+tabctx is starting: serving {{ join ", " .Values.models }} on {{ if gt (int .Values.gpus) 0 }}{{ .Values.gpus }} GPU(s){{ else }}the CPU{{ end }}.
+The first start downloads model weights; `kubectl get pods -w` until Ready.
+
+Try it:
+
+  kubectl port-forward svc/{{ include "tabctx.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  curl localhost:{{ .Values.service.port }}/v1/models
+{{- if .Values.requireTenant }}
+
+Every /v1/tabctx request needs a tenant header (requireTenant=true), e.g.
+  curl localhost:{{ .Values.service.port }}/v1/tabctx/datasets -H 'x-tabctx-tenant-id: acme'
+tabctx trusts that header as sent: put the Service behind a gateway that
+authenticates callers and sets it.
+{{- end }}
+
+Docs: https://vectorinstitute.github.io/tabctx/

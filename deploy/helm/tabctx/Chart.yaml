@@ -1,0 +1,16 @@
+apiVersion: v2
+name: tabctx
+description: The serving engine for tabular foundation models (TabICL, TabPFN, TabDPT) on your own GPUs.
+type: application
+# Released with tabctx at the same version (the release workflow sets
+# both); appVersion is the tabctx image it deploys.
+version: 0.18.0
+appVersion: "0.18.0"
+home: https://vectorinstitute.github.io/tabctx/
+sources:
+  - https://github.com/VectorInstitute/tabctx
+icon: https://raw.githubusercontent.com/VectorInstitute/tabctx/main/docs/assets/icon.svg
+keywords: [tabular, foundation-models, tabpfn, tabicl, serving, gpu]
+maintainers:
+  - name: Vector Institute AI Engineering
+    url: https://github.com/VectorInstitute/tabctx

@@ -116,6 +116,7 @@ nav:
       - HTTP API: getting-started/http.md
   - Guides:
       - Serving: serving.md
+      - Kubernetes: kubernetes.md
       - Coding agents: coding-agents.md
   - Concepts:
       - How it works: how-it-works.md

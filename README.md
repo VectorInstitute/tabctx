@@ -102,6 +102,13 @@ weights downloaded when the server starts):
 docker run --gpus all -p 8000:8000 -e TABCTX_BACKEND=tabicl ghcr.io/vectorinstitute/tabctx
 ```
 
+On Kubernetes, the Helm chart in `deploy/helm/tabctx` runs it with a GPU,
+probes and persistent volumes ([guide](https://vectorinstitute.github.io/tabctx/kubernetes/)):
+
+```bash
+helm install tabctx ./deploy/helm/tabctx
+```
+
 Prefer plain HTTP? Every client is a thin wrapper over two calls:
 
 ```bash

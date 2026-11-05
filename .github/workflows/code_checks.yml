@@ -16,6 +16,7 @@ on:
       - '**.py'
       - uv.lock
       - pyproject.toml
+      - 'deploy/**'
   pull_request:
     branches: [main]
     paths:
@@ -24,6 +25,7 @@ on:
       - '**.py'
       - uv.lock
       - pyproject.toml
+      - 'deploy/**'
 
 jobs:
   run-code-check:
@@ -49,3 +51,12 @@ jobs:
         run: |
           source .venv/bin/activate
           pre-commit run --all-files
+
+      - name: Lint and render the Helm chart
+        run: |
+          helm lint deploy/helm/tabctx
+          helm template t deploy/helm/tabctx > /dev/null
+          helm template t deploy/helm/tabctx --set gpus=0 --set spill.enabled=false \
+            --set weightsCache.enabled=false > /dev/null
+          # TabPFN without a token must refuse to render.
+          ! helm template t deploy/helm/tabctx --set 'models={tabpfn}' > /dev/null 2>&1

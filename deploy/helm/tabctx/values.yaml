@@ -1,0 +1,89 @@
+# tabctx: one server process per pod, serving every model listed in
+# `models` from one cache. Settings map to the TABCTX_* environment
+# variables documented at
+# https://vectorinstitute.github.io/tabctx/reference/configuration/
+
+image:
+  repository: ghcr.io/vectorinstitute/tabctx
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Models to serve (TABCTX_BACKEND); the first is the default.
+# tabicl and tabdpt are licensed for commercial use; tabpfn needs
+# tabpfnToken and is licensed for non-commercial use.
+models: [tabicl]
+
+# One replica. tabctx's cache lives in its process: with several replicas,
+# requests for a dataset must reach the pod that holds it, which a plain
+# Service doesn't do (use Ray Serve, or a router that pins x-session-id).
+replicaCount: 1
+
+# GPUs per pod. 0 runs on the CPU (small tables, trying it out).
+gpus: 1
+# Share of each GPU tabctx may use (TABCTX_GPU_MEMORY_FRACTION).
+gpuMemoryFraction: 1.0
+
+# Every request must name its tenant (x-tabctx-tenant-id). Keep this on in
+# production, behind a gateway that authenticates callers and sets the
+# header itself: tabctx trusts it as sent.
+requireTenant: true
+
+# Disk tier for evicted contexts (TABCTX_SPILL_DIR), on its own volume.
+spill:
+  enabled: true
+  # The volume's size in GiB; tabctx may fill 90% of it.
+  sizeGi: 100
+  storageClass: ""
+
+# Model weights, downloaded on first start and kept across restarts.
+weightsCache:
+  enabled: true
+  sizeGi: 20
+  storageClass: ""
+
+# TabPFN's weights need a token from https://ux.priorlabs.ai after you
+# accept Prior Labs' terms. Give it here, or name an existing Secret with a
+# TABPFN_TOKEN key.
+tabpfnToken: ""
+existingTabpfnSecret: ""
+
+# Requests served at once and waiting (TABCTX_MAX_ONGOING_REQUESTS /
+# TABCTX_MAX_QUEUED_REQUESTS); beyond that, 503.
+maxOngoingRequests: 8
+maxQueuedRequests: 16
+
+# Any other TABCTX_* setting.
+extraEnv: []
+#  - name: TABCTX_KV_PRECISION
+#    value: int8
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 32Gi
+  limits:
+    memory: 64Gi
+
+# The first start downloads weights: allow it up to startupSeconds.
+startupSeconds: 900
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]

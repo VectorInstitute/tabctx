@@ -9,6 +9,7 @@
   - Flash attention on every CUDA device (TabDPT enables it only for the device name "cuda", so a multi-GPU replica's "cuda:1" ran without it).
   - Predicts use a fixed seed, so the same request gives the same answer; the mean is the same with or without quantiles.
   - Numeric labels keep numeric order (1, 2, 10), as with the other models. Bad test rows (an infinite value) are a 422.
+- **A Helm chart** (#105) in `deploy/helm/tabctx`: one tabctx pod on a GPU, with `/livez` and `/readyz` probes, a startup probe that allows for the first weights download, persistent volumes for the disk tier and the weights cache (kept on uninstall), an optional TabPFN token Secret, a non-root security context, and the settings as values. Released charts go to `oci://ghcr.io/vectorinstitute/charts/tabctx` with each version tag. CI lints and renders it on every change; installed on a local kind cluster (CPU, fake model), fit, predict, list and the tenant check worked through the Service, and the non-root user could write both volumes. See "Deploy on Kubernetes" in the docs.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;
