@@ -42,10 +42,12 @@ import dataclasses
 import functools
 import json
 import logging
+import math
 import re
 import time
 import uuid
 import weakref
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
 
@@ -73,7 +75,7 @@ from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
-from tabctx.serve.factory import ServeSettings, build_engine
+from tabctx.serve.factory import EXPIRY_SWEEP_S, ServeSettings, build_engine
 from tabctx.serve.files import read_table, read_training_table
 from tabctx.serve.multipart import FILE_FIELD, MAX_FIELD_BYTES, MAX_FIELDS, read_form
 from tabctx.serve.reporting import REPORT_STALE_S, PeriodicReport, spill_stats
@@ -450,22 +452,36 @@ def _request_body(model: type[BaseModel]) -> dict:
 
 def _body_error(e: ValidationError) -> RequestValidationError:
     """FastAPI's own 422 shape for a body it validated: locations under
-    "body"."""
+    "body", and the rejected input shown as text when JSON can't carry it
+    (infinity, NaN), else the error response itself would fail."""
     return RequestValidationError(
-        [{**err, "loc": ("body", *err["loc"])} for err in e.errors()]
+        [
+            {**err, "loc": ("body", *err["loc"]), "input": _json_safe(err.get("input"))}
+            for err in e.errors()
+        ]
     )
 
 
-def _local_report(service: "TabctxService") -> PeriodicReport:
-    """The service's own device report, on a thread that holds the service
-    weakly: it never keeps one alive, and ends once it is gone."""
+def _json_safe(value: object) -> object:
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    return value
+
+
+def _weakly(
+    service: "TabctxService",
+    task: Callable[["TabctxService"], object],
+    interval_s: float | None = None,
+) -> PeriodicReport:
+    """task(service) on a timer (a PeriodicReport), on a thread that holds
+    the service weakly: it never keeps one alive, and ends once it is gone."""
     ref = weakref.ref(service)
 
-    def measure() -> object:
+    def run() -> object:
         current = ref()
-        return PeriodicReport.STOP if current is None else current._measure_local()
+        return PeriodicReport.STOP if current is None else task(current)
 
-    return PeriodicReport(measure)
+    return PeriodicReport(run, interval_s=interval_s)
 
 
 def _combine_spill(per_device: list[dict]) -> dict | None:
@@ -539,7 +555,16 @@ class TabctxService:
         # Device measurements /readyz reads without waiting (#51): worker
         # processes send their own; devices served in this process are
         # measured here.
-        self._local_report = None if self._workers else _local_report(self)
+        self._local_report = (
+            None if self._workers else _weakly(self, TabctxService._measure_local)
+        )
+        # Contexts' engines delete them at their retention deadline; their
+        # schemas here (text categories of the training table) go too.
+        self._schema_purge = _weakly(
+            self,
+            lambda service: service._schemas.purge_expired(),
+            interval_s=EXPIRY_SWEEP_S,
+        )
         if "cuda" not in self._device and "fake" not in settings.backends:
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -1049,6 +1074,7 @@ class TabctxService:
         """Stop the per-GPU worker processes, if any. Standalone hosts call
         this at shutdown; a Ray replica's teardown kills its process tree
         (and workers.py's atexit hook backstops both)."""
+        self._schema_purge.stop()
         if self._local_report is not None:
             self._local_report.stop()
         for shard in self._workers:

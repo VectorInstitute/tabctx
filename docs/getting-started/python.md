@@ -83,7 +83,7 @@ are only temporary come back from a server as one retryable type,
 | HTTP | Exception | Meaning |
 |---|---|---|
 | 422 | `InvalidInputError` | A malformed request: retry won't help. |
-| 404 | `DatasetNotFoundError` | No such context: never fit, deleted, evicted or lost to a restart. Fit again. |
+| 404 | `DatasetNotFoundError` | No such context: never fit, deleted, evicted, past its retention limit, or lost to a restart. Fit again. |
 | 404 | `UploadNotFoundError` | No such upload: expired, already used, or sent to another replica. |
 | 413 | `AdmissionRejected` | The table is too large for this deployment's memory, or the request for its upload limit. |
 | 503 | `TabctxBackpressureError` | Busy or temporarily unable; the client already retried with backoff. |

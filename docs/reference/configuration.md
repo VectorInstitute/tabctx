@@ -27,7 +27,7 @@ Flags take `1`/`true` or `0`/`false`.
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_MAX_CONTEXT_AGE_S` | no limit | No fitted table is kept longer than this after its fit: it is deleted from device memory, host memory and the disk tier. A fit can ask for less with `ttl_s`. |
+| `TABCTX_MAX_CONTEXT_AGE_S` | no limit | No fitted table is kept longer than this after its fit: it is deleted from device memory, host memory and the disk tier, within 30 s. It applies to every table, including those fit before it was set (a table spilled by tabctx < 0.19 has no recorded fit time and counts as expired). A fit can ask for less with `ttl_s`; `GET /v1/tabctx/limits` reports it. |
 
 ## TabDPT
 

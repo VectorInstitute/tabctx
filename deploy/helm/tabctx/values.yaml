@@ -28,6 +28,11 @@ gpus: 1
 # Share of each GPU tabctx may use (TABCTX_GPU_MEMORY_FRACTION).
 gpuMemoryFraction: 1.0
 
+# Retention: no fitted table is kept longer than this many seconds after
+# its fit, in any tier (TABCTX_MAX_CONTEXT_AGE_S); a fit may ask for less
+# with ttl_s. Empty: no limit.
+maxContextAgeS: ""
+
 # Every request must name its tenant (x-tabctx-tenant-id, TABCTX_REQUIRE_TENANT).
 # Keep this on in production, behind a gateway that authenticates callers
 # and sets the header itself: tabctx trusts it as sent.

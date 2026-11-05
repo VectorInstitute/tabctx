@@ -228,6 +228,7 @@ def test_works_with_sklearn_model_selection(deployment):
         "model": "tabicl-v2",
         "client": client,
         "max_request_bytes": 29 * 1024 * 1024,
+        "ttl_s": None,
     }
 
 
