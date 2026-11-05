@@ -14,6 +14,8 @@ repos:
       - id: detect-private-key
       - id: check-yaml
         args: [--unsafe]
+        # Helm templates are Go templates, not YAML (CI renders them).
+        exclude: ^deploy/helm/.*/templates/
       - id: check-toml
 
   - repo: https://github.com/astral-sh/uv-pre-commit

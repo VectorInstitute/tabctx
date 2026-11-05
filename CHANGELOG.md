@@ -9,6 +9,16 @@
   - Flash attention on every CUDA device (TabDPT enables it only for the device name "cuda", so a multi-GPU replica's "cuda:1" ran without it).
   - Predicts use a fixed seed, so the same request gives the same answer; the mean is the same with or without quantiles.
   - Numeric labels keep numeric order (1, 2, 10), as with the other models. Bad test rows (an infinite value) are a 422.
+- **A Helm chart** (#105) in `deploy/helm/tabctx`, with a "Deploy on Kubernetes" guide. One tabctx pod with its GPUs:
+  - `/livez` (startup, liveness) and `/readyz` (readiness) probes, with the startup budget covering the first weights download and kernel compilation;
+  - a persistent volume for weights and compiled kernels, and an opt-in one for the disk tier (both kept on uninstall, or bring your own claim);
+  - a TabPFN token from an existing Secret;
+  - the Pod Security "restricted" profile (non-root, no capabilities, RuntimeDefault seccomp);
+  - a 300 s shutdown grace for in-flight fits;
+  - the settings as values, plus `extraEnv` (which replaces a variable the chart sets rather than duplicating it) and extra volumes.
+  - Rendering refuses what would fail at runtime: `tabpfn` without a token, `replicaCount > 1` with ReadWriteOnce volumes, sizes under 1 GiB.
+  - CI lints it and checks those refusals; the chart's version must match the package's (a unit test). Release tags push it to `oci://ghcr.io/vectorinstitute/charts/tabctx`.
+  - Installed on a local kind cluster (CPU, fake model): fit, predict, list and the tenant check worked through the Service, and the non-root user could write its volumes.
 - **A documentation site** at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from `main` by `.github/workflows/docs.yml`. Pull requests build it with `--strict`, so broken links and missing API symbols fail. It has:
   - a landing page;
   - a quickstart, and guides for Python and scikit-learn and for the HTTP API;

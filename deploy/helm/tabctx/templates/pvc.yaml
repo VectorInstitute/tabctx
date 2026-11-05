@@ -1,0 +1,23 @@
+{{- range $name, $volume := dict "spill" .Values.spill "weights" .Values.weightsCache }}
+{{- if and $volume.enabled (not $volume.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tabctx.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "tabctx.labels" $ | nindent 4 }}
+  annotations:
+    # Kept on uninstall: spilled contexts and downloaded weights. A failed
+    # install leaves them too; delete them by hand if unwanted.
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $volume.storageClass }}
+  storageClassName: {{ if eq . "-" }}""{{ else }}{{ . }}{{ end }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ printf "%dGi" (int $volume.sizeGi) }}
+{{- end }}
+{{- end }}
