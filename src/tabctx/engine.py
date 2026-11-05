@@ -25,6 +25,7 @@ from tabctx.chunking import MAX_CHUNK_ROWS, choose_chunk_rows, split_rows
 from tabctx.errors import (
     AdmissionRejected,
     BackendComputeError,
+    CacheUnavailableError,
     DatasetNotFoundError,
     InvalidInputError,
 )
@@ -52,6 +53,9 @@ _PREDICT_ATTEMPTS = 3
 # smaller fits' prepared copies are too small to limit.
 _PREPARED_AHEAD = 1
 GATED_FIT_CELLS = 1_000_000
+# How long the expiry sweep waits for one context's move between tiers
+# before leaving it for the next sweep.
+_EXPIRY_SETTLE_S = 1.0
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -654,18 +658,32 @@ class TabctxEngine:
 
     def expire(self, now: float | None = None) -> list[str]:
         """Delete every context whose retention limit has passed, from every
-        tier; returns their ids."""
+        tier; returns the ids deleted. Each is re-checked as it is deleted
+        (a re-fit of the id meanwhile is kept), and one still moving between
+        tiers is left for the next sweep rather than waited for."""
         now = time.time() if now is None else now
-        expired = self._cache.expired_ids(now)
-        for dataset_id in expired:
-            self.evict(dataset_id)
-        return expired
+        deleted = []
+        for dataset_id in self._cache.expired_ids(now):
+            try:
+                if self._release_deleted(
+                    *self._cache.delete_if_expired(
+                        dataset_id, now, settle_timeout_s=_EXPIRY_SETTLE_S
+                    )
+                ):
+                    deleted.append(dataset_id)
+            except CacheUnavailableError:
+                continue  # mid-move: the next sweep
+            except Exception:  # noqa: BLE001 -- the others still go
+                logger.exception("expiring %s failed", dataset_id)
+        return deleted
 
     def _check_not_expired(self, dataset_id: str) -> None:
         """Delete the context now if its retention limit has passed (the
         sweep may not have reached it), and answer as if it were gone."""
-        if self._cache.is_expired(dataset_id, time.time()):
-            self.evict(dataset_id)
+        now = time.time()
+        if not self._cache.is_expired(dataset_id, now):
+            return
+        if self._release_deleted(*self._cache.delete_if_expired(dataset_id, now)):
             raise DatasetNotFoundError(
                 f"no cached context for dataset_id={dataset_id!r} -- its "
                 "retention limit has passed and it was deleted"
@@ -832,7 +850,12 @@ class TabctxEngine:
         # Holding `removed` keeps the memory alive until it is dropped under
         # the lock: freed before a fit starts measuring or after it is done
         # (see _measuring).
-        removed, existed = self._cache.delete(dataset_id)
+        return self._release_deleted(*self._cache.delete(dataset_id))
+
+    def _release_deleted(self, removed: CachedContext | None, existed: bool) -> bool:
+        """Free a deleted context's memory now, or park it while a fit
+        measures itself; returns `existed`. The caller passes its only
+        reference."""
         with self._release_lock:
             if removed is not None and self._fitting:
                 self._parked.append(removed)

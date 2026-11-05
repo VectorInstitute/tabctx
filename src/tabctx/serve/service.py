@@ -222,6 +222,7 @@ class FitRequest(BaseModel):
     ttl_s: float | None = Field(
         default=None,
         gt=0,
+        allow_inf_nan=False,
         description="Delete this context after this many seconds, from every "
         "tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, "
         "if set, caps it (and applies when this is omitted).",
@@ -835,7 +836,7 @@ class TabctxService:
                     expires_at=expires_at,
                 )
                 if schema is not None:
-                    record(schema)
+                    record(schema, expires_at)
         except (
             *_AUTH_ERRORS,
             *_INVALID_INPUT_ERRORS,
@@ -1149,6 +1150,9 @@ class TabctxService:
             "admission_headroom_bytes": headroom,
             "cache_used_bytes": used_bytes,
             "gpu_memory_fraction": self._settings.gpu_memory_fraction,
+            # Retention: no context kept longer than this after its fit
+            # (null: no limit); a fit's ttl_s is capped by it.
+            "max_context_age_s": self._settings.max_context_age_s,
             "gpu_capacity_bytes": self._gpu_capacity_bytes,
             "devices": list(self._devices),
             # Scopes: cache_used_bytes is the replica's total;

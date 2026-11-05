@@ -85,9 +85,9 @@ class DiskSpillStore:
         # restart) are indexed at 0.0, i.e. oldest, so they are the
         # first to go under disk pressure.
         self._index: dict[str, float] = {}
-        # dataset_id -> retention deadline (unix time), for spilled contexts
-        # that have one: so expiry needn't read every metadata file.
-        self._expires: dict[str, float] = {}
+        # dataset_id -> (expires_at, fitted_at) of each spilled context, so
+        # retention checks needn't read metadata files.
+        self._retention: dict[str, tuple[float | None, float | None]] = {}
         for meta_path in self._dir.glob("*.meta.json"):
             # File names are hex-encoded dataset_ids (see _paths); index by
             # the id itself, like entries this process spills.
@@ -97,9 +97,7 @@ class DiskSpillStore:
             except ValueError:
                 continue  # not one of ours
             self._index[dataset_id] = 0.0
-            expires = self._meta(dataset_id)
-            if expires is not None and expires.get("expires_at") is not None:
-                self._expires[dataset_id] = float(expires["expires_at"])
+            self._retention[dataset_id] = _retention_of(self._meta(dataset_id))
 
     def _paths(self, dataset_id: str) -> tuple[Path, Path]:
         # dataset_ids may contain ':' (tenant scoping) -- hex-encode for
@@ -148,8 +146,10 @@ class DiskSpillStore:
             return False
         with self._lock:
             self._index[context.dataset_id] = time.monotonic()
-            if context.expires_at is not None:
-                self._expires[context.dataset_id] = context.expires_at
+            self._retention[context.dataset_id] = (
+                context.expires_at,
+                context.fitted_at,
+            )
         return True
 
     def load(self, dataset_id: str) -> CachedContext | None:
@@ -252,16 +252,17 @@ class DiskSpillStore:
                 pass
         with self._lock:
             found = self._index.pop(dataset_id, None) is not None or found
-            self._expires.pop(dataset_id, None)
+            self._retention.pop(dataset_id, None)
         return found
 
-    def expires_by(self, dataset_id: str, now: float) -> bool:
-        at = self._expires.get(dataset_id)
-        return at is not None and at <= now
+    def retention(self, dataset_id: str) -> tuple[float | None, float | None] | None:
+        """A spilled context's (expires_at, fitted_at), or None if not spilled.
+        Lock-free snapshot."""
+        return self._retention.get(dataset_id)
 
-    def expired_ids(self, now: float) -> list[str]:
-        """Spilled ids whose retention limit has passed."""
-        return [i for i, at in list(self._expires.items()) if at <= now]
+    def retention_items(self) -> list[tuple[str, tuple[float | None, float | None]]]:
+        """(dataset_id, (expires_at, fitted_at)) of every spilled context."""
+        return list(self._retention.items())
 
     def _make_room(self, needed: int) -> None:
         while self.used_bytes + needed > self._capacity_bytes:
@@ -300,3 +301,22 @@ def _schema(meta: dict) -> TableSchema | None:
     if names is None:
         return None
     return TableSchema((None,) * len(names), tuple(names))
+
+
+def _retention_of(meta: dict | None) -> tuple[float | None, float | None]:
+    """(expires_at, fitted_at) from a spilled context's metadata. A value
+    that can't be read counts as already expired (0.0): retention errs on
+    the side of deleting."""
+    if meta is None:
+        return 0.0, None
+
+    def number(key: str, unreadable: float | None) -> float | None:
+        value = meta.get(key)
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return unreadable
+
+    return number("expires_at", 0.0), number("fitted_at", None)
