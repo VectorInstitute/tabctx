@@ -810,6 +810,27 @@ class TestQuantiles:
         assert "quantiles" not in json.loads(seen[0].data)
         assert result.quantiles is None
 
+    def test_numpy_levels_are_sent_as_plain_floats(self, monkeypatch):
+        np = pytest.importorskip("numpy")
+        seen = self._capture(monkeypatch, self.RESPONSE)
+        levels = np.array([0.1, 0.9])
+        result = TabctxClient("http://x").predict("d", [[1.0]], quantiles=levels)
+        assert json.loads(seen[0].data)["quantiles"] == [0.1, 0.9]
+        assert result.quantile_levels == [0.1, 0.9]
+
+    @pytest.mark.parametrize("levels", [0.5, "0.5", [1.5]])
+    def test_bad_levels_fail_before_sending(self, monkeypatch, levels):
+        seen = self._capture(monkeypatch, self.RESPONSE)
+        with pytest.raises(InvalidInputError):
+            TabctxClient("http://x").predict("d", [[1.0]], quantiles=levels)
+        assert seen == []
+
+    def test_a_server_without_quantiles_is_an_error_not_silence(self, monkeypatch):
+        old = {k: v for k, v in self.RESPONSE.items() if not k.startswith("quantile")}
+        self._capture(monkeypatch, old)
+        with pytest.raises(TabctxError, match="returned no quantiles"):
+            TabctxClient("http://x").predict("d", [[1.0]], quantiles=[0.5])
+
     def test_a_file_predict_sends_them_as_a_form_field(self, monkeypatch):
         seen = self._capture(monkeypatch, self.RESPONSE)
         TabctxClient("http://x").predict_file("d", b"a\n1\n", quantiles=[0.1, 0.9])

@@ -14,6 +14,7 @@ from typing import Any
 
 import numpy as np
 
+from tabctx.errors import BackendComputeError
 from tabctx.types import ArrayLike, PredictOutcome
 
 
@@ -31,3 +32,22 @@ def classification_outcome(
     return PredictOutcome(
         predictions=predictions, probabilities=np.asarray(proba).tolist(), classes=names
     )
+
+
+def regression_outcome(
+    mean: ArrayLike, quantiles: ArrayLike | None = None, n_levels: int = 0
+) -> PredictOutcome:
+    """A regression predict's outcome: the mean per test row and, when
+    asked for, a (rows, levels) array of quantiles. Its orientation is
+    checked, never reshaped into place: a (levels, rows) array from a
+    model would otherwise be silently scrambled."""
+    means = np.asarray(mean, dtype=float).ravel()
+    if quantiles is None:
+        return PredictOutcome(predictions=means.tolist())
+    values = np.asarray(quantiles, dtype=float)
+    if values.shape != (len(means), n_levels):
+        raise BackendComputeError(
+            f"the model returned quantiles of shape {values.shape}, expected "
+            f"{(len(means), n_levels)} (rows, levels)"
+        )
+    return PredictOutcome(predictions=means.tolist(), quantiles=values.tolist())

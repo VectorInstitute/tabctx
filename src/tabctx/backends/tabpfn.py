@@ -45,7 +45,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends._outcome import classification_outcome
+from tabctx.backends._outcome import classification_outcome, regression_outcome
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.labels import regression_hint
 from tabctx.types import ArrayLike, PredictOutcome, Task
@@ -207,13 +207,12 @@ class TabPFNBackend(QuiescedMeasurement):
             proba = model.predict_proba(X_arr)
             return classification_outcome(proba, model.classes_, return_proba)
         if quantiles is None:
-            return PredictOutcome(predictions=model.predict(X_arr).tolist())
-        # "main": the mean and the quantiles (one array per level) from one
-        # pass over the cached context.
+            return regression_outcome(model.predict(X_arr))
+        # "main": the mean and the quantiles (one array per level, in the
+        # order asked) from one pass over the cached context.
         out = model.predict(X_arr, output_type="main", quantiles=list(quantiles))
-        return PredictOutcome(
-            predictions=np.asarray(out["mean"]).tolist(),
-            quantiles=np.stack(out["quantiles"], axis=1).astype(float).tolist(),
+        return regression_outcome(
+            out["mean"], np.stack(out["quantiles"], axis=1), len(quantiles)
         )
 
     # ---- spillover serialization (see cache/spill.py) ----------------

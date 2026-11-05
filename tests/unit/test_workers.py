@@ -63,9 +63,13 @@ def test_quantiles_cross_the_process_boundary(built):
     engine.fit(
         [[0.0], [1.0], [2.0]], [1.0, 2.0, 3.0], task="regression", dataset_id="q"
     )
-    out = engine.predict("q", [[0.0], [1.0]], quantiles=[0.1, 0.9])
-    assert len(out.quantiles) == 2 and out.quantiles[0][0] < out.quantiles[0][1]
-    engine.evict("q")
+    try:
+        out = engine.predict("q", [[0.0], [1.0]], quantiles=[0.9, 0.1])
+        # The fake's quantiles: a normal around the mean, in the order asked.
+        assert len(out.quantiles) == 2
+        assert out.quantiles[0][0] > out.quantiles[0][1]
+    finally:
+        engine.evict("q")
 
 
 def test_errors_cross_the_process_boundary_with_their_type(built):

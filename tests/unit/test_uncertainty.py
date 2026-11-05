@@ -33,6 +33,29 @@ def engine_with(backend=None) -> TabctxEngine:
     )
 
 
+class RowTagged(FakeBackend):
+    """Each row's value and quantiles carry its first feature, so a
+    misaligned row shows; optionally OOMs above `max_rows` rows."""
+
+    def __init__(self, max_rows: int | None = None) -> None:
+        super().__init__()
+        self.max_rows = max_rows
+
+    def predict(self, payload, X_test, return_proba=False, quantiles=None):
+        if self.max_rows is not None and len(X_test) > self.max_rows:
+            raise BackendComputeError("CUDA OOM")
+        return PredictOutcome(
+            predictions=[row[0] for row in X_test],
+            quantiles=None
+            if quantiles is None
+            else [[row[0] + q for q in quantiles] for row in X_test],
+        )
+
+
+def tagged(rows, levels):
+    return [[row[0] + q for q in levels] for row in rows]
+
+
 @pytest.fixture
 def engine():
     e = engine_with()
@@ -48,7 +71,18 @@ class TestCheckQuantiles:
 
     @pytest.mark.parametrize(
         "levels",
-        [[], [0.0], [1.0], [-0.1], [1.5], [float("nan")], [0.5, 0.5], ["x"]],
+        [
+            [],
+            [0.0],
+            [1.0],
+            [-0.1],
+            [1.5],
+            [float("nan")],
+            [0.5, 0.5],
+            ["x"],
+            "0.5",
+            0.5,
+        ],
     )
     def test_rejects(self, levels):
         with pytest.raises(InvalidInputError):
@@ -97,22 +131,38 @@ class TestEngine:
     def test_rows_stay_aligned_when_a_device_oom_splits_them(self):
         """A device OOM halves the rows until they fit; the halves'
         quantiles must come back in row order."""
-
-        class OomOverTwoRows(FakeBackend):
-            def predict(self, payload, X_test, return_proba=False, quantiles=None):
-                if len(X_test) > 2:
-                    raise BackendComputeError("CUDA OOM")
-                # Each row's values carry its first feature, to check order.
-                return PredictOutcome(
-                    predictions=[row[0] for row in X_test],
-                    quantiles=[[row[0], row[0] + 1] for row in X_test],
-                )
-
-        e = engine_with(OomOverTwoRows())
+        e = engine_with(RowTagged(max_rows=2))
         e.fit(X, Y, task="regression", dataset_id="price")
         rows = [[float(i), 1.0] for i in range(7)]
-        out = e.predict("price", rows, quantiles=[0.1, 0.9])
-        assert out.quantiles == [[float(i), float(i) + 1] for i in range(7)]
+        out = e.predict("price", rows, quantiles=[0.9, 0.1])
+        assert out.quantiles == tagged(rows, [0.9, 0.1])
+
+    def test_rows_stay_aligned_across_chunks(self, monkeypatch):
+        monkeypatch.setattr("tabctx.engine.choose_chunk_rows", lambda *a: 3)
+        e = engine_with(RowTagged())
+        e.fit(X, Y, task="regression", dataset_id="price")
+        rows = [[float(i), 1.0] for i in range(8)]
+        out = e.predict("price", rows, quantiles=[0.5])
+        assert out.quantiles == tagged(rows, [0.5])
+
+    def test_a_model_without_quantiles_is_invalid_input(self):
+        """A backend whose predict has no quantiles argument still serves
+        plain predicts, and answers a request for quantiles with a 422."""
+
+        class PointOnly(FakeBackend):
+            def predict(self, payload, X_test, return_proba=False):
+                return super().predict(payload, X_test, return_proba)
+
+        e = engine_with(PointOnly())
+        e.fit(X, Y, task="regression", dataset_id="price")
+        assert e.predict("price", [[0.0, 1.0]]).predictions
+        with pytest.raises(InvalidInputError, match="single value"):
+            e.predict("price", [[0.0, 1.0]], quantiles=[0.5])
+
+    def test_regression_asked_for_probabilities_has_an_empty_list(self, engine):
+        assert (
+            engine.predict("price", [[0.0, 1.0]], return_proba=True).probabilities == []
+        )
 
 
 class TestCoalescing:
@@ -142,16 +192,17 @@ class TestCoalescing:
         ]
         assert results["none"].quantiles is None
 
-    def test_merged_requests_each_get_their_own_rows(self, engine):
-        predictor = CoalescingPredictor(engine, window_s=0.05)
+    def test_merged_requests_each_get_their_own_rows(self):
+        e = engine_with(RowTagged())
+        e.fit(X, Y, task="regression", dataset_id="price")
+        predictor = CoalescingPredictor(e, window_s=0.3)
         start = threading.Barrier(4)
+        rows = {i: [[float(10 * i + j), 1.0] for j in range(i + 1)] for i in range(4)}
         results = {}
 
         def call(i):
             start.wait()
-            results[i] = predictor.predict(
-                "price", [[float(i), 1.0]] * (i + 1), quantiles=[0.5]
-            )
+            results[i] = predictor.predict("price", rows[i], quantiles=[0.1, 0.9])
 
         threads = [threading.Thread(target=call, args=(i,)) for i in range(4)]
         for t in threads:
@@ -159,7 +210,7 @@ class TestCoalescing:
         for t in threads:
             t.join(5)
         for i, out in results.items():
-            assert len(out.quantiles) == i + 1
+            assert out.quantiles == tagged(rows[i], [0.1, 0.9])
         assert predictor.engine_calls < 4  # they did share calls
 
 
@@ -171,6 +222,27 @@ def test_the_router_passes_quantiles_to_the_device():
     router.fit(X, Y, task="regression", dataset_id="price")
     out = router.predict("price", [[0.0, 1.0]], quantiles=[0.5])
     assert out.quantiles == [[pytest.approx(DIST.mean)]]
+
+
+class TestRegressionOutcome:
+    def test_rows_by_levels(self):
+        from tabctx.backends._outcome import regression_outcome
+
+        out = regression_outcome([1.0, 2.0], [[0.5, 1.5], [1.5, 2.5]], 2)
+        assert out.predictions == [1.0, 2.0]
+        assert out.quantiles == [[0.5, 1.5], [1.5, 2.5]]
+
+    def test_levels_by_rows_is_refused_not_scrambled(self):
+        """3 rows x 2 levels arriving as (2, 3) would reshape silently."""
+        from tabctx.backends._outcome import regression_outcome
+
+        with pytest.raises(BackendComputeError, match="shape"):
+            regression_outcome([1.0, 2.0, 3.0], np.zeros((2, 3)), 2)
+
+    def test_point_only(self):
+        from tabctx.backends._outcome import regression_outcome
+
+        assert regression_outcome(np.array([1.0])).quantiles is None
 
 
 def test_tabpfn_returns_the_mean_and_stacks_its_quantiles():
@@ -251,7 +323,44 @@ class TestHttp:
     def test_bad_levels_fail_before_the_table_is_looked_up(self, app):
         body = {"dataset_id": "never-fit", "test_X": [[0.0]], "quantiles": [2]}
         response = self._post(app, "/v1/tabctx/predict", json=body)
-        assert response.status_code == 422 and "between 0 and 1" in response.text
+        assert response.status_code == 422 and "quantiles" in response.text
+
+    @pytest.mark.parametrize(
+        "value", ["0.1,0.9", "0.1 0.9", "[0.1, 0.9]", " 0.1 , 0.9 "]
+    )
+    def test_form_spellings(self, app, value):
+        self._fit(app)
+        out = self._post(
+            app,
+            "/v1/tabctx/predict",
+            data={"dataset_id": "price", "quantiles": value},
+            files={"file": ("t.csv", b"a,b\n0,1\n", "text/csv")},
+        ).json()
+        assert out["quantile_levels"] == [0.1, 0.9]
+
+    def test_a_repeated_form_field_says_how_to_send_a_list(self, app):
+        self._fit(app)
+        response = self._post(
+            app,
+            "/v1/tabctx/predict",
+            data={"dataset_id": "price", "quantiles": ["0.1", "0.9"]},
+            files={"file": ("t.csv", b"a,b\n0,1\n", "text/csv")},
+        )
+        assert response.status_code == 422 and "0.05,0.95" in response.text
+
+    def test_json_takes_a_list_only(self, app):
+        self._fit(app)
+        body = {"dataset_id": "price", "test_X": [[0.0, 1.0]], "quantiles": "0.1,0.9"}
+        assert self._post(app, "/v1/tabctx/predict", json=body).status_code == 422
+
+    def test_the_form_schema_documents_one_value(self, app):
+        body = app.openapi()["paths"]["/v1/tabctx/predict"]["post"]["requestBody"]
+        form = body["content"]["multipart/form-data"]["schema"]["properties"]
+        assert form["quantiles"]["type"] == "string"
+        json_levels = body["content"]["application/json"]["schema"]["properties"]
+        assert any(
+            alt.get("type") == "array" for alt in json_levels["quantiles"]["anyOf"]
+        )
 
     def test_none_unless_asked(self, app):
         self._fit(app)

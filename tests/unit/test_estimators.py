@@ -341,8 +341,25 @@ class TestPredictQuantiles:
         reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
         np.testing.assert_allclose(reg.predict_quantiles(X)[0], [1.05, 1.5, 1.95])
 
-    def test_bad_levels(self, deployment):
+    def test_bad_levels_are_a_value_error(self, deployment):
         X = np.array([[1.0], [2.0]])
         reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
-        with pytest.raises(InvalidInputError):
-            reg.predict_quantiles(X, quantiles=[1.2])
+        for bad in ([1.2], [], "0.5"):
+            with pytest.raises(ValueError):
+                reg.predict_quantiles(X, quantiles=bad)
+
+    def test_a_test_table_over_several_requests(self, deployment):
+        # Random values, which Parquet can't compress below the limit.
+        X = np.random.default_rng(0).normal(size=(2000, 1))
+        reg = TabctxRegressor(client=deployment, max_request_bytes=6_000)
+        reg.fit(X[:10], np.arange(10.0))
+        out = reg.predict_quantiles(X, quantiles=[0.5])
+        assert len(deployment.predict_calls) > 1  # split into several files
+        # Tables reach the model as float32.
+        np.testing.assert_allclose(out[:, 0], X[:, 0] + 0.5, atol=1e-6)
+
+    def test_a_context_lost_on_the_server_is_fit_again(self, deployment):
+        X = np.array([[1.0], [2.0]])
+        reg = TabctxRegressor(client=deployment).fit(X, [1.0, 2.0])
+        deployment.contexts.clear()  # evicted, or the server restarted
+        np.testing.assert_allclose(reg.predict_quantiles(X, [0.5])[:, 0], [1.5, 2.5])

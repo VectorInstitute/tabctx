@@ -41,7 +41,7 @@ from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_is_fitted, column_or_1d
 
 from tabctx.client import PredictResult, TabctxClient
-from tabctx.errors import DatasetNotFoundError
+from tabctx.errors import DatasetNotFoundError, InvalidInputError
 from tabctx.table_files import (
     Columns,
     _missing,
@@ -254,11 +254,15 @@ class TabctxRegressor(RegressorMixin, _TabctxEstimator):
         )
 
     def predict_quantiles(self, X, quantiles=(0.05, 0.5, 0.95)) -> np.ndarray:
-        """Each row's predicted distribution at these levels in (0, 1):
-        shape (n_samples, len(quantiles)), columns in the order given.
-        The default is the median and a 90% interval. TabICL and TabPFN
-        predict a distribution, so this costs the same as predict()."""
-        levels = check_quantiles(quantiles)
+        """Each row's predicted distribution at these levels in (0, 1): a
+        numpy array of shape (n_samples, len(quantiles)), columns in the
+        order given. The default is the median and a 90% interval
+        (columns 0.05, 0.5, 0.95). TabICL and TabPFN predict a
+        distribution, so this costs the same as predict()."""
+        try:
+            levels = check_quantiles(quantiles)
+        except InvalidInputError as e:  # scikit-learn convention
+            raise ValueError(str(e)) from e
         if levels is None:
             raise ValueError("quantiles: give at least one level")
         rows = [q for r in self._predict(X, False, levels) for q in r.quantiles]

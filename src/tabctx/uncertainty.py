@@ -23,12 +23,16 @@ def check_quantiles(levels: Sequence[float] | None) -> tuple[float, ...] | None:
     or more than MAX_QUANTILES."""
     if levels is None:
         return None
+    if isinstance(levels, (str, bytes)) or not hasattr(levels, "__iter__"):
+        raise InvalidInputError(
+            f"quantiles must be a list of levels, e.g. [0.05, 0.95]; got {levels!r}"
+        )
     try:
         values = tuple(float(q) for q in levels)
     except (TypeError, ValueError) as e:
         raise InvalidInputError(f"quantiles must be numbers: {e}") from e
     if not values:
-        raise InvalidInputError("quantiles: ask for at least one level, or none")
+        raise InvalidInputError("quantiles: give at least one level")
     if len(values) > MAX_QUANTILES:
         raise InvalidInputError(
             f"quantiles: at most {MAX_QUANTILES} levels, got {len(values)}"

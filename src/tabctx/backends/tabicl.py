@@ -64,7 +64,7 @@ from tabctx.backends._cuda import (
     ensure_initialized,
     is_cuda,
 )
-from tabctx.backends._outcome import classification_outcome
+from tabctx.backends._outcome import classification_outcome, regression_outcome
 from tabctx.backends.tabicl_kv import KV_PRECISIONS, KVPrecision, compress_icl_cache
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.labels import regression_hint
@@ -578,17 +578,13 @@ class TabICLBackend(QuiescedMeasurement):
             return classification_outcome(proba, model.classes_, return_proba)
         # Regressor: no predict_proba to derive from.
         if quantiles is None:
-            return PredictOutcome(predictions=model.predict(X_test).tolist())
-        # The mean and the quantiles from one pass over the cached context.
+            return regression_outcome(model.predict(X_test))
+        # The mean and the quantiles from one pass over the cached context;
+        # tabicl returns them (rows, levels), in the order asked.
         out = model.predict(
             X_test, output_type=["mean", "quantiles"], alphas=list(quantiles)
         )
-        return PredictOutcome(
-            predictions=np.asarray(out["mean"]).tolist(),
-            quantiles=np.asarray(out["quantiles"], dtype=float)
-            .reshape(len(out["mean"]), len(quantiles))
-            .tolist(),
-        )
+        return regression_outcome(out["mean"], out["quantiles"], len(quantiles))
 
     def warmup(self) -> None:
         """Load the model weights for both tasks now, with throwaway fits,

@@ -39,11 +39,14 @@ serve/tenancy.py) closes the guessable-dataset_id data-leakage gap.
 """
 
 import dataclasses
+import functools
+import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Annotated, Literal, NamedTuple
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -82,7 +85,7 @@ from tabctx.serve.tenancy import (
 )
 from tabctx.serve.uploads import UploadStore
 from tabctx.serve.workers import WorkerDiedError
-from tabctx.uncertainty import check_quantiles
+from tabctx.uncertainty import MAX_QUANTILES, check_quantiles
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -250,20 +253,18 @@ class TabctxPredictRequest(BaseModel):
     # ignored; otherwise by position.
     test_upload_id: str | None = None
     return_proba: bool = False
-    quantiles: list[float] | None = Field(
+    quantiles: (
+        Annotated[
+            list[Annotated[float, Field(gt=0, lt=1)]],
+            Field(min_length=1, max_length=MAX_QUANTILES),
+        ]
+        | None
+    ) = Field(
         default=None,
         description="Regression only: also return each row's predicted "
         "distribution at these levels in (0, 1), e.g. [0.05, 0.5, 0.95] for "
-        "the median and a 90% interval. In a multipart form, comma-separated.",
+        "the median and a 90% interval. Each level at most once.",
     )
-
-    @field_validator("quantiles", mode="before")
-    @classmethod
-    def _levels_from_form(cls, value: object) -> object:
-        """A form field carries the levels as one string: "0.05,0.95"."""
-        if isinstance(value, str):
-            return [part for part in value.replace(" ", "").split(",") if part]
-        return value
 
     @field_validator("quantiles")
     @classmethod
@@ -285,7 +286,9 @@ class TabctxPredictResponse(BaseModel):
         description="With quantiles requested: one row per test row, the value "
         "at each requested level, in the order of quantile_levels.",
     )
-    quantile_levels: list[float] | None = None
+    quantile_levels: list[float] | None = Field(
+        default=None, description="The levels the quantiles are at, as asked."
+    )
     n_test: int
     latency_ms: float
     served_by: str | None = None
@@ -356,10 +359,52 @@ def _map_error(e: Exception) -> HTTPException:
     raise e
 
 
+def _list_fields(schema: dict) -> set[str]:
+    """A model's fields that take a list (optional or not)."""
+
+    def is_list(prop: dict) -> bool:
+        return prop.get("type") == "array" or any(
+            alt.get("type") == "array" for alt in prop.get("anyOf", ())
+        )
+
+    return {name for name, prop in schema["properties"].items() if is_list(prop)}
+
+
+@functools.cache
+def _model_list_fields(model: type[BaseModel]) -> frozenset[str]:
+    return frozenset(_list_fields(model.model_json_schema()))
+
+
+def _form_lists(fields: dict[str, str], names: frozenset[str]) -> dict[str, object]:
+    """A form field carries a list as one value: "0.05,0.95", "0.05 0.95"
+    or a JSON array. (Repeating the field is refused: see multipart.py.)"""
+    out: dict[str, object] = dict(fields)
+    for name in names & fields.keys():
+        text = fields[name].strip()
+        if text.startswith("["):
+            try:
+                out[name] = json.loads(text)
+            except ValueError:
+                out[name] = text  # the model's validation names the field
+        else:
+            out[name] = [part for part in re.split(r"[,\s]+", text) if part]
+    return out
+
+
 def _request_body(model: type[BaseModel]) -> dict:
     """OpenAPI for a body that is JSON, or multipart/form-data with the
-    same fields as form fields plus the table as a `file` part."""
+    same fields as form fields plus the table as a `file` part. A list
+    field is one form value there: comma-separated, or a JSON array."""
     schema = model.model_json_schema()
+    form_lists = {
+        name: {
+            "type": "string",
+            "description": f"{schema['properties'][name].get('description', '')} "
+            "As one form value: comma-separated, or a JSON array.".strip(),
+            "examples": ["0.05,0.95"],
+        }
+        for name in _list_fields(schema)
+    }
     form = {
         **schema,
         "properties": {
@@ -370,6 +415,7 @@ def _request_body(model: type[BaseModel]) -> dict:
                 "with a header row.",
             },
             **schema["properties"],
+            **form_lists,
         },
         "required": ["file", *schema.get("required", [])],
     }
@@ -607,7 +653,8 @@ class TabctxService:
             )
         path = writer.finish()
         try:
-            return model.model_validate(fields), path
+            values = _form_lists(fields, _model_list_fields(model))
+            return model.model_validate(values), path
         except ValidationError as e:
             self._uploads.discard(path)
             raise _body_error(e) from e

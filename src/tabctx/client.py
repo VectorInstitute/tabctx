@@ -63,6 +63,7 @@ from tabctx.errors import (
 from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
 from tabctx.serve.tenancy import TENANT_HEADER
 from tabctx.types import ArrayLike, Task
+from tabctx.uncertainty import check_quantiles
 
 BASE_URL_ENV = "TABCTX_BASE_URL"
 API_KEY_ENV = "TABCTX_API_KEY"
@@ -105,8 +106,11 @@ class PredictResult:
     classes: list[str] | None
     latency_ms: float
     served_by: str | None
-    # Regression with quantiles asked for: per row, the value at each level.
+    # Regression with quantiles asked for: per row, the value at each
+    # level, and the levels (as quantile_levels; like classes for
+    # probabilities).
     quantiles: list[list[float]] | None = None
+    quantile_levels: list[float] | None = None
 
 
 # The tabular models tabctx serves, preferred first. A gateway in front of
@@ -304,11 +308,11 @@ class TabctxClient:
                 "test_X": None if X_test is None else _json_rows(X_test),
                 "test_upload_id": test_upload_id,
                 "model": model,
-                "quantiles": None if quantiles is None else list(quantiles),
+                "quantiles": _levels(quantiles),
             }
         )
         resp = self._post("/v1/tabctx/predict", body, session_id=dataset_id)
-        return _predict_result(resp)
+        return _predict_result(resp, quantiles is not None)
 
     def predict_file(
         self,
@@ -326,12 +330,12 @@ class TabctxClient:
             "model": model,
             "quantiles": None
             if quantiles is None
-            else ",".join(repr(float(q)) for q in quantiles),
+            else ",".join(repr(q) for q in _levels(quantiles)),
         }
         resp = self._post_file(
             "/v1/tabctx/predict", fields, file, session_id=dataset_id
         )
-        return _predict_result(resp)
+        return _predict_result(resp, quantiles is not None)
 
     def fit_predict(
         self,
@@ -572,7 +576,18 @@ def _json_cell(value: object) -> object:
     return value
 
 
-def _predict_result(resp: dict) -> PredictResult:
+def _levels(quantiles: Sequence[float] | None) -> list[float] | None:
+    """Levels as plain floats (numpy ones too), checked before sending."""
+    levels = check_quantiles(quantiles)
+    return None if levels is None else list(levels)
+
+
+def _predict_result(resp: dict, asked_quantiles: bool = False) -> PredictResult:
+    if asked_quantiles and resp.get("quantiles") is None:
+        raise TabctxError(
+            "the deployment returned no quantiles: it predates them (tabctx "
+            "0.19), or a gateway in front of it drops the field; upgrade it"
+        )
     return PredictResult(
         predictions=resp["predictions"],
         probabilities=resp.get("probabilities"),
@@ -580,6 +595,7 @@ def _predict_result(resp: dict) -> PredictResult:
         latency_ms=resp["latency_ms"],
         served_by=resp.get("served_by"),
         quantiles=resp.get("quantiles"),
+        quantile_levels=resp.get("quantile_levels"),
     )
 
 

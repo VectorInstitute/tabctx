@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import gc
+import inspect
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Sequence
@@ -149,6 +150,22 @@ def _predict_splitting_on_oom(
     ) + _predict_splitting_on_oom(
         backend, payload, X_test[half:], return_proba, quantiles
     )
+
+
+def _check_quantiles_supported(task: Task, backend: TabularICLBackend) -> None:
+    """InvalidInputError (422) unless this context can return quantiles: a
+    regression, by a backend whose predict takes them (a model that
+    predicts only a point doesn't)."""
+    if task != "regression":
+        raise InvalidInputError(
+            "quantiles are for regression; a classification context "
+            "returns class probabilities (return_proba) instead"
+        )
+    if "quantiles" not in inspect.signature(backend.predict).parameters:
+        raise InvalidInputError(
+            f"model {backend.name!r} predicts a single value, not a "
+            "distribution: it can't return quantiles"
+        )
 
 
 class TabctxEngine:
@@ -660,11 +677,6 @@ class TabctxEngine:
         if context is None:
             return None
         _validate_predict_input(X_test, context.n_features)
-        if quantiles is not None and context.task != "regression":
-            raise InvalidInputError(
-                "quantiles are for regression; a classification context "
-                "returns class probabilities (return_proba) instead"
-            )
         # Dispatch to whichever backend fit this context (multi-backend
         # deployments serve several models over one cache).
         backend = self._backends.get(context.backend_name)
@@ -675,6 +687,8 @@ class TabctxEngine:
                 "serves -- re-fit with one of "
                 f"{sorted(self._backends)}"
             )
+        if quantiles is not None:
+            _check_quantiles_supported(context.task, backend)
         estimator = self._estimators[context.backend_name]
         n_features = context.n_features
         # Chunk against the usage-aware transient headroom (what the
@@ -724,8 +738,10 @@ class TabctxEngine:
 
         merged = PredictOutcome.concat(outcomes)
         if not return_proba:
-            merged = dataclasses.replace(merged, probabilities=None, classes=None)
-        return merged
+            return dataclasses.replace(merged, probabilities=None, classes=None)
+        # A regression asked for probabilities has none: an empty list, as
+        # it always was.
+        return dataclasses.replace(merged, probabilities=merged.probabilities or [])
 
     def fit_predict(
         self,
