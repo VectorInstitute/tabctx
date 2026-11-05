@@ -45,6 +45,7 @@ import logging
 import re
 import time
 import uuid
+import weakref
 from pathlib import Path
 from typing import Annotated, Literal, NamedTuple
 
@@ -75,7 +76,7 @@ from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import ServeSettings, build_engine
 from tabctx.serve.files import read_table, read_training_table
 from tabctx.serve.multipart import FILE_FIELD, MAX_FIELD_BYTES, MAX_FIELDS, read_form
-from tabctx.serve.reporting import REPORT_STALE_S, PeriodicReport
+from tabctx.serve.reporting import REPORT_STALE_S, PeriodicReport, spill_stats
 from tabctx.serve.schemas import SchemaCache
 from tabctx.serve.tables import encode_rows, learn_rows
 from tabctx.serve.tenancy import (
@@ -438,6 +439,18 @@ def _body_error(e: ValidationError) -> RequestValidationError:
     )
 
 
+def _local_report(service: "TabctxService") -> PeriodicReport:
+    """The service's own device report, on a thread that holds the service
+    weakly: it never keeps one alive, and ends once it is gone."""
+    ref = weakref.ref(service)
+
+    def measure() -> object:
+        current = ref()
+        return PeriodicReport.STOP if current is None else current._measure_local()
+
+    return PeriodicReport(measure)
+
+
 def _combine_spill(per_device: list[dict]) -> dict | None:
     """Spill stats summed over devices, with the per-device breakdown."""
     if not per_device:
@@ -509,9 +522,7 @@ class TabctxService:
         # Device measurements /readyz reads without waiting (#51): worker
         # processes send their own; devices served in this process are
         # measured here.
-        self._local_report = (
-            None if self._workers else PeriodicReport(self._measure_local)
-        )
+        self._local_report = None if self._workers else _local_report(self)
         if "cuda" not in self._device and "fake" not in settings.backends:
             logger.warning("No CUDA device visible -- running tabctx on CPU")
         logger.info(
@@ -1137,8 +1148,9 @@ class TabctxService:
         """Readiness, from measurements it never waits for (#51): the cache's
         lock-free counters, the host-memory guard's lock-free read, and the
         device reports measured on their own threads (see
-        serve/reporting.py). 503 for a dead GPU worker, or one whose report
-        hasn't arrived for REPORT_STALE_S (it is stuck)."""
+        serve/reporting.py). 503 for a dead GPU worker, or one silent for
+        REPORT_STALE_S (it is stuck). This process's own report is shown,
+        not judged: its age only says how fresh the numbers are."""
         torch = _torch_or_none()
         stats = self._engine.stats_nowait()
         dead = [w.death_reason for w in self._workers if not w.alive]
@@ -1240,11 +1252,9 @@ class TabctxService:
                 }
                 for d in self._cuda_devices()
             }
-        spill = None
-        if self._spill_store is not None:
-            spill = self._spill_store.stats()
-        elif self._spill_stores:
-            spill = _combine_spill([store.stats() for store in self._spill_stores])
+        spill = spill_stats(self._spill_store)
+        if spill is None and self._spill_stores:
+            spill = _combine_spill([spill_stats(s) for s in self._spill_stores])
         return {"gpu_memory": gpu, "spill": spill}
 
     def _cuda_devices(self) -> list[str]:

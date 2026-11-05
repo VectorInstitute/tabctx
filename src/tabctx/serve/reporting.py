@@ -29,7 +29,10 @@ REPORT_STALE_S = 600.0
 class PeriodicReport:
     """Calls `measure` every `interval_s` on a daemon thread and keeps the
     latest result. `publish`, if given, also receives each result (a
-    worker process sends it to the serving process)."""
+    worker process sends it to the serving process). `measure` returning
+    PeriodicReport.STOP ends the thread (e.g. its owner is gone)."""
+
+    STOP = object()
 
     def __init__(
         self,
@@ -56,6 +59,8 @@ class PeriodicReport:
             except Exception:  # noqa: BLE001 -- a failed measurement goes stale
                 logger.exception("periodic report failed")
             else:
+                if value is PeriodicReport.STOP:
+                    return
                 self._latest = (value, self._clock())
                 if self._publish is not None:
                     try:
@@ -75,3 +80,14 @@ class PeriodicReport:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def spill_stats(store: Any) -> dict | None:
+    """A spill tier's stats for /readyz, or an error in their place: a disk
+    that can't be read is reported, not mistaken for a stuck worker."""
+    if store is None:
+        return None
+    try:
+        return store.stats()
+    except OSError as e:
+        return {"error": f"{type(e).__name__}: {e}"}

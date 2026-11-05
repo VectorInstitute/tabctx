@@ -57,7 +57,7 @@ from typing import Any
 from tabctx import timing
 from tabctx.errors import BackendComputeError
 from tabctx.schema import TableSchema
-from tabctx.serve.reporting import PeriodicReport
+from tabctx.serve.reporting import PeriodicReport, spill_stats
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -180,10 +180,7 @@ def _report(shard: Any, device: str) -> dict:
             "allocated_mb": torch.cuda.memory_allocated(device) / 1e6,
             "reserved_mb": torch.cuda.memory_reserved(device) / 1e6,
         }
-    return {
-        "spill": shard.spill_store.stats() if shard.spill_store else None,
-        "gpu_memory": gpu,
-    }
+    return {"spill": spill_stats(shard.spill_store), "gpu_memory": gpu}
 
 
 def available_cpus() -> int:
@@ -284,35 +281,39 @@ def _worker_main(
     reporter = PeriodicReport(
         lambda: _report(shard, device), name=f"w-{device}-report", publish=send_report
     )
-    with (
-        ThreadPoolExecutor(_WORKER_THREADS, thread_name_prefix=f"w-{device}") as pool,
-        ThreadPoolExecutor(
-            _CATALOG_THREADS, thread_name_prefix=f"w-{device}-catalog"
-        ) as catalog,
-    ):
-        lanes = dict.fromkeys(_CATALOG, catalog)
-        while True:
-            try:
-                msg = conn.recv()
-            except (EOFError, OSError):
-                break
-            if msg is None:  # orderly shutdown
-                break
-            req_id, method, args, kwargs = msg
-            if method not in _METHODS:
-                with send_lock:
-                    conn.send(
-                        (
-                            req_id,
-                            False,
-                            ValueError(f"unknown call {method!r}"),
-                            snapshot(),
-                            {},
+    try:
+        with (
+            ThreadPoolExecutor(
+                _WORKER_THREADS, thread_name_prefix=f"w-{device}"
+            ) as pool,
+            ThreadPoolExecutor(
+                _CATALOG_THREADS, thread_name_prefix=f"w-{device}-catalog"
+            ) as catalog,
+        ):
+            lanes = dict.fromkeys(_CATALOG, catalog)
+            while True:
+                try:
+                    msg = conn.recv()
+                except (EOFError, OSError):
+                    break
+                if msg is None:  # orderly shutdown
+                    break
+                req_id, method, args, kwargs = msg
+                if method not in _METHODS:
+                    with send_lock:
+                        conn.send(
+                            (
+                                req_id,
+                                False,
+                                ValueError(f"unknown call {method!r}"),
+                                snapshot(),
+                                {},
+                            )
                         )
-                    )
-                continue
-            lanes.get(method, pool).submit(handle, req_id, method, args, kwargs)
-    reporter.stop()
+                    continue
+                lanes.get(method, pool).submit(handle, req_id, method, args, kwargs)
+    finally:
+        reporter.stop()
 
 
 # ---- serving process -------------------------------------------------------
@@ -359,6 +360,7 @@ class ProcessShard:
         self._reader: threading.Thread | None = None
         # The latest device report the worker sent, and when it arrived.
         self._report: tuple[dict, float] | None = None
+        self._ready_at: float | None = None
 
     # ---- lifecycle ---------------------------------------------------
 
@@ -380,6 +382,7 @@ class ProcessShard:
             self._exited(5)
             raise first.error
         self._backend_names = first.backend_names
+        self._ready_at = time.monotonic()
         self._default_backend = first.default_backend
         self._snapshot = first.snapshot
         self._reader = threading.Thread(
@@ -707,6 +710,9 @@ class ProcessShard:
         waits: the worker sends them on its own."""
         report = self._report
         if report is None:
-            return None, None
+            # None yet: silent since it became ready, which ages like a
+            # report would (a worker that never reports goes stale too).
+            since = self._ready_at
+            return None, None if since is None else time.monotonic() - since
         value, at = report
         return value, time.monotonic() - at

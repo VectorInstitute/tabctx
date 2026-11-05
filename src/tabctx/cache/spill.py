@@ -252,7 +252,13 @@ class DiskSpillStore:
 
     @property
     def used_bytes(self) -> int:
-        return sum(p.stat().st_size for p in self._dir.glob("*.payload") if p.exists())
+        total = 0
+        for path in self._dir.glob("*.payload"):
+            try:
+                total += path.stat().st_size
+            except FileNotFoundError:  # deleted since the listing
+                continue
+        return total
 
     def stats(self) -> dict:
         with self._lock:

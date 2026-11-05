@@ -529,24 +529,33 @@ class TestReadyzNeverWaits:
         service.close()
 
     def test_a_stuck_device_measurement_doesnt_hold_it_up(self, service):
+        """The last measurement is shown, and ages, while the next waits."""
         import threading
 
         from tabctx.serve.reporting import PeriodicReport
 
-        stuck = threading.Event()
+        calls, measuring, release = [], threading.Event(), threading.Event()
 
         def measure():
-            stuck.wait(5)  # e.g. torch's allocator lock behind a fit
-            return {"gpu_memory": {}, "spill": None}
+            calls.append(1)
+            if len(calls) > 1:  # e.g. torch's allocator lock behind a fit
+                measuring.set()
+                release.wait(5)
+            return {"gpu_memory": {}, "spill": {"n_spilled_contexts": len(calls)}}
 
         service._local_report.stop()
-        service._local_report = PeriodicReport(measure)
+        service._local_report = PeriodicReport(measure, interval_s=0.01)
         app = make_app(service)
-        start = time.monotonic()
-        response = _request(app, "GET", "/readyz")
-        assert response.status_code == 200
-        assert time.monotonic() - start < 1.0
-        stuck.set()
+        try:
+            assert measuring.wait(5)
+            start = time.monotonic()
+            first = _request(app, "GET", "/readyz").json()
+            later = _request(app, "GET", "/readyz").json()
+            assert time.monotonic() - start < 1.0
+            assert first["spill"] == {"n_spilled_contexts": 1}
+            assert later["device_report_age_s"] >= first["device_report_age_s"]
+        finally:
+            release.set()
 
     def test_a_held_host_memory_lock_doesnt_hold_it_up(self, service):
         from tabctx.memory.host import HostMemoryGuard

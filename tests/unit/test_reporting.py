@@ -77,3 +77,61 @@ def test_publish_receives_each_measurement():
     finally:
         report.stop()
     assert set(published) == {"r"}
+
+
+def test_a_worker_that_never_reports_ages_from_its_start():
+    """Silent from the start is silent: it goes stale like a late report."""
+    import time
+
+    from tabctx.serve.workers import ProcessShard
+
+    shard = object.__new__(ProcessShard)
+    shard._report, shard._ready_at = None, time.monotonic() - 700
+    report, age = shard.latest_report()
+    assert report is None and age >= 700
+    shard._ready_at = None  # not even ready yet: nothing to judge
+    assert shard.latest_report() == (None, None)
+
+
+def test_a_spill_tier_that_cant_be_read_is_reported_not_stuck():
+    from tabctx.serve.reporting import spill_stats
+
+    class Unmounted:
+        def stats(self):
+            raise PermissionError("[Errno 13] /data/spill")
+
+    assert spill_stats(None) is None
+    assert spill_stats(Unmounted())["error"].startswith("PermissionError")
+
+
+def test_spill_size_ignores_files_deleted_while_counting(tmp_path):
+    from pathlib import Path
+
+    from tabctx.cache.spill import DiskSpillStore
+
+    store = DiskSpillStore(tmp_path)
+    (tmp_path / "a.payload").write_bytes(b"x" * 10)
+
+    class Listing:
+        def glob(self, pattern):
+            return [tmp_path / "a.payload", Path(tmp_path / "gone.payload")]
+
+    store._dir = Listing()
+    assert store.used_bytes == 10
+
+
+def test_a_service_report_ends_with_its_service(monkeypatch):
+    import gc
+
+    import tabctx.serve.reporting as reporting
+    from tabctx.serve.factory import BACKEND_ENV_VAR
+    from tabctx.serve.service import TabctxService
+
+    monkeypatch.setattr(reporting, "REPORT_INTERVAL_S", 0.01)
+    monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+    service = TabctxService()
+    thread = service._local_report._thread
+    del service
+    gc.collect()
+    thread.join(5)  # it notices at its next measurement
+    assert not thread.is_alive()

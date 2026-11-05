@@ -37,7 +37,8 @@ shared lock is a plain lock that waiters poll (a process killed while
 waiting on an mp.Condition would block every later notify forever), and
 every acquire has a timeout: a worker killed while holding it (a window
 of microseconds) makes calls fail with a retryable
-HostMemoryUnavailableError and /readyz report unhealthy, never hang. A
+HostMemoryUnavailableError, never hang (/readyz reads the counters
+without the lock; a worker that died holding it is reported dead). A
 call's release never raises: its result stands, and a reservation that
 can't be returned is logged.
 """
@@ -335,7 +336,7 @@ class HostMemoryGuard:
     def _release(self, base: int, nbytes: int, offloads: bool) -> None:
         """Return a call's reservation. Never raises: the call itself has
         succeeded (a fit's context may already be cached), so a stuck lock
-        is logged -- and seen by /readyz, whose stats() fails -- rather
+        is logged -- the worker that died holding it is reported dead -- rather
         than turning that result into an error."""
         state = self._state
         try:
