@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- A predict reported `cache_outcome: hit` when the table was restored from disk while its rows were being read, as on a replica after a restart (its schema not yet recorded); the restore is now counted wherever it happens.
+### Changed
+- `cache_outcome` is required in the predict response's schema (the server always sent it; generated clients now see it as always present). The coalescing batcher closes a batch and releases everyone in it even if its window's wait fails.
 
 ## [0.19.0] - 2026-11-05
 ### Fixed

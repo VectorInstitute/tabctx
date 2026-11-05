@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -133,6 +133,9 @@ class CoalescingPredictor:
             raise ValueError(f"window_s must be >= 0, got {window_s}")
         self._engine = engine
         self._window_s = window_s
+        # How a batch's leader waits out the window; tests replace it to hold
+        # the window open until the members they expect have joined.
+        self._sleep: Callable[[float], None] = time.sleep
         self._lock = threading.Lock()
         self._batches: dict[_Key, _Batch] = {}
         # Observability: how many engine calls were saved by coalescing.
@@ -165,20 +168,24 @@ class CoalescingPredictor:
                 is_leader = True
 
         if is_leader:
-            with timing.phase("coalesce_wait"):
-                time.sleep(self._window_s)
-            with self._lock:
-                batch.closed = True
-                if self._batches.get(key) is batch:
-                    del self._batches[key]
-                self.batched_requests += len(batch.members)
             try:
+                try:
+                    with timing.phase("coalesce_wait"):
+                        self._sleep(self._window_s)
+                finally:
+                    # Closed even if the wait fails, so no one joins a batch
+                    # that will never run.
+                    with self._lock:
+                        batch.closed = True
+                        if self._batches.get(key) is batch:
+                            del self._batches[key]
+                        self.batched_requests += len(batch.members)
                 with timing.collect() as batch_timings:
                     self._execute(key, batch)
                 batch.timings = batch_timings.as_dict()
             finally:
-                # Followers must never hang, even on a bug in the
-                # execute/split path itself.
+                # Followers must never hang, even on a bug in the wait or
+                # the execute/split path itself.
                 for m in batch.members:
                     if m.outcome is None and m.error is None:
                         m.error = RuntimeError(

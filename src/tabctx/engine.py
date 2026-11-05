@@ -630,7 +630,10 @@ class TabctxEngine:
         if it is neither resident nor spilled). Restores grow residency, so
         they take _fit_lock and make room for the context first; one that
         runs out of memory beside a predict retries with predicts held off
-        (the spilled copy survives a device OOM)."""
+        (the spilled copy survives a device OOM). Counts a restore in the
+        request's timings when it loads the context (whichever call --
+        predict, or schema() as a predict reads its table -- gets there
+        first), which is what a predict's cache_outcome reports."""
         with self._fit_lock:
             # A context mid-spill is in neither tier until the write lands.
             self._cache.wait_settled(dataset_id)
@@ -655,6 +658,7 @@ class TabctxEngine:
                     restored = self._cache.get(dataset_id)
             if restored is None:
                 raise _not_found(dataset_id)
+            timing.count("restores")
 
     def expire(self, now: float | None = None) -> list[str]:
         """Delete every context whose retention limit has passed, from every
@@ -696,7 +700,8 @@ class TabctxEngine:
         predict() would, when there is no such context."""
         self._check_not_expired(dataset_id)
         if self._cache.peek(dataset_id) is None:
-            self._restore(dataset_id)
+            with timing.phase("restore"):
+                self._restore(dataset_id)
         context = self._cache.peek(dataset_id)
         if context is None:  # evicted again in between
             raise _not_found(dataset_id)
@@ -730,7 +735,6 @@ class TabctxEngine:
                 if self._cache.peek(dataset_id) is None:
                     with timing.phase("restore"):
                         self._restore(dataset_id)
-                    timing.count("restores")
                 outcome = self._predict_resident(
                     dataset_id, X_test, return_proba, exclusive, levels
                 )

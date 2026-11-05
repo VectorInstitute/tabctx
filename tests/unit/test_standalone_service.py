@@ -541,34 +541,95 @@ def test_predict_reports_restore_then_hit(monkeypatch, tmp_path, batch_window_ms
 
 
 def test_coalesced_predicts_share_restored_outcome(monkeypatch, tmp_path):
-    from concurrent.futures import ThreadPoolExecutor
-    from threading import Barrier
+    """Two predicts of a spilled context in one batch: one restore, and both
+    report it. The batch's window is held open until the second has joined,
+    so the two always coalesce, however slow the machine."""
+    import threading
 
     from tabctx.serve.service import TabctxPredictRequest
 
     monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
     monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
     monkeypatch.setenv("TABCTX_SPILL_DIR", str(tmp_path))
-    monkeypatch.setenv("TABCTX_BATCH_WINDOW_MS", "100")
+    monkeypatch.setenv("TABCTX_BATCH_WINDOW_MS", "5")
     service = TabctxService()
     app = make_app(service)
     fit = _request(app, "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": "d1"})
     assert fit.status_code == 200, fit.text
     assert service._engine._cache.evict_one() is not None
-    barrier = Barrier(2)
+    predictor = service._predictor
 
-    def predict():
-        barrier.wait(timeout=5)
-        return service._predict_sync(
-            TabctxPredictRequest(dataset_id="d1", test_X=TEST_X), None, {}, None
+    def window_until_both_joined(_seconds):
+        _wait_for(
+            lambda: any(len(b.members) == 2 for b in list(predictor._batches.values()))
         )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(predict) for _ in range(2)]
-        responses = [future.result(timeout=5) for future in futures]
-    assert service._predictor.engine_calls == 1
-    assert all(response.cache_outcome == "restored" for response in responses)
-    assert all(response.timings_ms["n_restores"] == 1 for response in responses)
+    predictor._sleep = window_until_both_joined
+    responses, errors = [], []
+
+    def predict():
+        request = TabctxPredictRequest(dataset_id="d1", test_X=TEST_X)
+        try:
+            responses.append(service._predict_sync(request, None, {}, None))
+        except BaseException as e:  # noqa: BLE001 -- re-raised below
+            errors.append(e)
+
+    threads = [threading.Thread(target=predict) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    if errors:
+        raise errors[0]
+    assert len(responses) == 2
+    assert predictor.engine_calls == 1
+    for response in responses:
+        assert response.cache_outcome == "restored"
+        assert response.timings_ms["n_restores"] == 1
+        assert response.timings_ms["n_batched_with"] == 2
+
+
+def test_a_restarted_replica_reports_its_restore(monkeypatch, tmp_path):
+    """After a restart the replica has no schema recorded for the table, so
+    reading the predict's rows restores it (engine.schema); that restore
+    must still be reported."""
+    monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+    monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+    monkeypatch.setenv("TABCTX_SPILL_DIR", str(tmp_path))
+    before = TabctxService()
+    fit = _request(
+        make_app(before), "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": "d1"}
+    )
+    assert fit.status_code == 200, fit.text
+    assert before._engine._cache.evict_one() is not None
+    before.close()
+
+    app = make_app(TabctxService())  # the restarted replica
+    for expected in ("restored", "hit"):
+        response = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": "d1", "test_X": TEST_X},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["cache_outcome"] == expected
+        assert response.json()["timings_ms"].get("n_restores", 0) == (
+            expected == "restored"
+        )
+
+
+def test_cache_outcome_is_always_in_the_response_schema(app):
+    schema = app.openapi()["components"]["schemas"]["TabctxPredictResponse"]
+    assert "cache_outcome" in schema["required"]
+    assert schema["properties"]["cache_outcome"]["enum"] == ["hit", "restored"]
+
+
+def _wait_for(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.005)
 
 
 class TestReadyzNeverWaits:
