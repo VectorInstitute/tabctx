@@ -96,7 +96,7 @@ clf.predict_proba(X_test[:5])      # reuses the cached context: ~50 ms on a lapt
 ```
 
 On a GPU server, use the image (TabICL, TabPFN and TabDPT included,
-weights downloaded on first use):
+weights downloaded when the server starts):
 
 ```bash
 docker run --gpus all -p 8000:8000 -e TABCTX_BACKEND=tabicl ghcr.io/vectorinstitute/tabctx

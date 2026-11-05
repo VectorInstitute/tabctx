@@ -23,6 +23,15 @@ Flags take `1`/`true` or `0`/`false`.
 | `TABCTX_KV_PRECISION` | `int8` | TabICL's cached keys and values: `int8` (about half the memory; identical labels and metrics on 7 datasets, probabilities within 0.01), `fp16`, `native`. |
 | `TABCTX_OFFLOAD_DIR` | `<spill dir>/offload` | Where TabICL may stage a very large fit's intermediate results on disk. |
 
+## TabDPT
+
+| Variable | Default | |
+|---|---|---|
+| `TABCTX_TABDPT_CONTEXT_SIZE` | `2048` | Training rows sampled as each predict's context. TabDPT keeps no encoding of the table, so a predict's cost grows with this, not with the table. |
+| `TABCTX_TABDPT_ENSEMBLES` | `4` | Ensemble members per predict. |
+
+The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
+
 ## Requests
 
 | Variable | Default | |

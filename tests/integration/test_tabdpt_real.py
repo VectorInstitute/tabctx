@@ -15,11 +15,11 @@ from tabctx.backends.tabdpt import TabDPTBackend  # noqa: E402
 
 @pytest.fixture(scope="module")
 def backend():
+    b = TabDPTBackend(device="cpu")
     try:
-        b = TabDPTBackend(device="cpu")
         b.warmup()
-    except Exception as e:  # noqa: BLE001 -- no checkpoint offline
-        pytest.skip(f"TabDPT unavailable: {e}")
+    except OSError as e:  # the checkpoint can't be downloaded (offline)
+        pytest.skip(f"TabDPT weights unavailable: {e}")
     return b
 
 
@@ -34,7 +34,9 @@ def test_fits_share_the_network(backend, data):
     X, y = data
     a = backend.fit(X, y, "regression")
     b = backend.fit(X[:100], y[:100], "regression")
-    assert a.estimator.model is b.estimator.model is backend._shared["regression"]
+    c = backend.fit(X[:100], (y[:100] > 0).astype(int), "classification")
+    # One network for every fit and both tasks.
+    assert a.estimator.model is b.estimator.model is c.estimator.model
     assert a.estimator is not b.estimator
     # The context's size is its table, not the network.
     assert 0 < backend.context_bytes_hint(300, 5) < 10_000_000
@@ -67,7 +69,7 @@ def test_spill_round_trip_without_the_network(backend, data):
     blob = backend.dumps_payload(context)
     assert len(blob) < 1_000_000  # the table, not the weights
     restored = backend.loads_payload(blob)
-    assert restored.estimator.model is backend._shared["regression"]
+    assert restored.estimator.model is context.estimator.model
     np.testing.assert_allclose(
         backend.predict(restored, X[250:]).predictions,
         backend.predict(context, X[250:]).predictions,

@@ -126,6 +126,8 @@ WORKER_PROCESSES_ENV_VAR = "TABCTX_WORKER_PROCESSES"
 COMPILE_ENV_VAR = "TABCTX_COMPILE"
 COMPILE_AFTER_WARMUP_ENV_VAR = "TABCTX_COMPILE_AFTER_WARMUP"
 FAST_PREPROCESSING_ENV_VAR = "TABCTX_FAST_PREPROCESSING"
+TABDPT_CONTEXT_SIZE_ENV_VAR = "TABCTX_TABDPT_CONTEXT_SIZE"
+TABDPT_ENSEMBLES_ENV_VAR = "TABCTX_TABDPT_ENSEMBLES"
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +165,10 @@ class ServeSettings:
     # Vectorized (GPU) Yeo-Johnson fits in TabICL's preprocessing
     # (backends/yeo_johnson.py).
     fast_preprocessing: bool = True
+    # TabDPT: training rows sampled as each predict's context, and the
+    # ensemble size (backends/tabdpt.py).
+    tabdpt_context_size: int = 2048
+    tabdpt_ensembles: int = 4
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -259,7 +265,24 @@ class ServeSettings:
             fast_preprocessing=_env_flag(
                 FAST_PREPROCESSING_ENV_VAR, cls.fast_preprocessing
             ),
+            tabdpt_context_size=_positive_int(
+                TABDPT_CONTEXT_SIZE_ENV_VAR, cls.tabdpt_context_size
+            ),
+            tabdpt_ensembles=_positive_int(
+                TABDPT_ENSEMBLES_ENV_VAR, cls.tabdpt_ensembles
+            ),
         )
+
+
+def _positive_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise ValueError(f"{name}={raw!r} must be a positive integer")
+    return value
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -569,7 +592,11 @@ def _build_real_backend(
     if kind == "tabdpt":
         from tabctx.backends.tabdpt import TabDPTBackend
 
-        backend: TabularICLBackend = TabDPTBackend(device=device)
+        backend: TabularICLBackend = TabDPTBackend(
+            device=device,
+            context_size=settings.tabdpt_context_size,
+            n_ensembles=settings.tabdpt_ensembles,
+        )
     elif kind == "tabpfn":
         from tabctx.backends.tabpfn import TabPFNBackend
 

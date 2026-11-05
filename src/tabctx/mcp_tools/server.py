@@ -28,7 +28,8 @@ explain (which columns matter).
 
 Paths are relative to the agent's working directory. Drop id columns and
 columns that leak the answer (known only after the outcome) before
-fitting. tabicl-v2 takes at most 10 classes; tabpfn-3.5 up to 160.
+fitting. tabicl-v2 takes at most 10 classes; tabpfn-3.5 up to 160;
+tabdpt-1.3 any number.
 """
 
 Path = Annotated[str, Field(description="A CSV, TSV or Parquet file")]
@@ -36,7 +37,7 @@ Target = Annotated[str, Field(description="The column to predict")]
 Model = Annotated[
     str | None,
     Field(
-        description="A model id, e.g. 'tabpfn-3.5' or 'tabicl-v2'; "
+        description="A model id, e.g. 'tabicl-v2', 'tabdpt-1.3' or 'tabpfn-3.5'; "
         "default: the server's default"
     ),
 ]
