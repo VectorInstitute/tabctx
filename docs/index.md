@@ -18,7 +18,7 @@ typically well under a second, for many tables and many users, on
 hardware you control.
 
 [Get started](getting-started/quickstart.md){ .md-button .md-button--primary }
-[How it works](how-it-works.md){ .md-button }
+[Why a server](why-tabctx.md){ .md-button }
 [GitHub](https://github.com/VectorInstitute/tabctx){ .md-button }
 
 </div>

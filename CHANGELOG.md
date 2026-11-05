@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- **"Why a server"**, a docs page for people arriving from the models' own packages: what changes when a model serves many tables, users and programs (repeat predicts, many tables per GPU, out-of-memory, keeping a fit, uncertainty, licensing), what tabctx does at each step, and when not to use it. Each need links to a thread where users of these models raised it.
 - **TabDPT, a third model** (#102): `TABCTX_BACKEND=tabdpt` (or `tabicl,tabdpt`) serves Layer 6's TabDPT as `tabdpt-1.3`. Its code and weights are Apache-2.0, so with TabICLv2 there are now two models a business can serve without a separate license. Install with `pip install "tabctx[tabdpt]"`; the container image includes it.
   - On credit-g (the quickstart's split) it scored 0.768 against TabICL's 0.772; on California housing, R² 0.89, with its 90% interval holding 88.4% of held-out prices (`python examples/prediction_intervals.py --model tabdpt-1.3`), on a CPU. Classification, regression, prediction intervals, list and delete, and the spill tier all work as for the other models.
   - TabDPT keeps no encoding of the training table: its fit stores the table, and each predict samples a context of `TABCTX_TABDPT_CONTEXT_SIZE` rows (2,048) from it, with `TABCTX_TABDPT_ENSEMBLES` (4) ensemble members for both tasks. Left unbounded, as TabDPT's default is, a predict's cost grows with the square of the table (8,000 rows: 45 s on a CPU, against 4 s). tabctx adds serving: one endpoint, admission control, tenancy.
