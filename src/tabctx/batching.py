@@ -168,20 +168,24 @@ class CoalescingPredictor:
                 is_leader = True
 
         if is_leader:
-            with timing.phase("coalesce_wait"):
-                self._sleep(self._window_s)
-            with self._lock:
-                batch.closed = True
-                if self._batches.get(key) is batch:
-                    del self._batches[key]
-                self.batched_requests += len(batch.members)
             try:
+                try:
+                    with timing.phase("coalesce_wait"):
+                        self._sleep(self._window_s)
+                finally:
+                    # Closed even if the wait fails, so no one joins a batch
+                    # that will never run.
+                    with self._lock:
+                        batch.closed = True
+                        if self._batches.get(key) is batch:
+                            del self._batches[key]
+                        self.batched_requests += len(batch.members)
                 with timing.collect() as batch_timings:
                     self._execute(key, batch)
                 batch.timings = batch_timings.as_dict()
             finally:
-                # Followers must never hang, even on a bug in the
-                # execute/split path itself.
+                # Followers must never hang, even on a bug in the wait or
+                # the execute/split path itself.
                 for m in batch.members:
                     if m.outcome is None and m.error is None:
                         m.error = RuntimeError(

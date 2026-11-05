@@ -1,6 +1,7 @@
 """Unit tests for same-context predict coalescing (batching.py)."""
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -234,6 +235,47 @@ class TestFailureIsolation:
 
 
 class TestConcatRows:
+    def test_a_failed_window_releases_its_followers(self):
+        """If the leader's wait itself fails, everyone in its batch gets an
+        error (no one waits forever) and the next request starts afresh."""
+        engine, _ = _make_engine()
+        _fit(engine, "ds")
+        predictor = CoalescingPredictor(engine, window_s=0.05)
+        joined = threading.Event()
+
+        def failing_window(_seconds):
+            assert joined.wait(5)
+            raise KeyboardInterrupt  # not an Exception: the worst case
+
+        predictor._sleep = failing_window
+        outcomes = []
+
+        def call():
+            try:
+                outcomes.append(predictor.predict("ds", [[1.0, 2.0]]))
+            except BaseException as e:  # noqa: BLE001
+                outcomes.append(e)
+
+        leader = threading.Thread(target=call, daemon=True)
+        leader.start()
+        _wait_until(lambda: predictor._batches)
+        follower = threading.Thread(target=call, daemon=True)
+        follower.start()
+        _wait_until(
+            lambda: any(len(b.members) == 2 for b in predictor._batches.values())
+        )
+        joined.set()
+        for t in (leader, follower):
+            t.join(timeout=5)
+            assert not t.is_alive()
+        assert sorted(type(o).__name__ for o in outcomes) == [
+            "KeyboardInterrupt",
+            "RuntimeError",
+        ]
+        assert predictor._batches == {}
+        predictor._sleep = lambda _s: None
+        assert predictor.predict("ds", [[1.0, 2.0]]).predictions
+
     def test_same_width_arrays_stay_one_array(self):
         import numpy as np
 
@@ -254,3 +296,10 @@ class TestConcatRows:
         ]
         merged = _concat_rows([np.ones((1, 2)), np.ones((1, 3))])
         assert isinstance(merged, list) and len(merged) == 2
+
+
+def _wait_until(predicate, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "condition not reached"
+        time.sleep(0.005)

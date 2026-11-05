@@ -565,23 +565,58 @@ def test_coalesced_predicts_share_restored_outcome(monkeypatch, tmp_path):
         )
 
     predictor._sleep = window_until_both_joined
-    responses = []
+    responses, errors = [], []
 
     def predict():
         request = TabctxPredictRequest(dataset_id="d1", test_X=TEST_X)
-        responses.append(service._predict_sync(request, None, {}, None))
+        try:
+            responses.append(service._predict_sync(request, None, {}, None))
+        except BaseException as e:  # noqa: BLE001 -- re-raised below
+            errors.append(e)
 
     threads = [threading.Thread(target=predict) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=10)
+    if errors:
+        raise errors[0]
     assert len(responses) == 2
     assert predictor.engine_calls == 1
     for response in responses:
         assert response.cache_outcome == "restored"
         assert response.timings_ms["n_restores"] == 1
         assert response.timings_ms["n_batched_with"] == 2
+
+
+def test_a_restarted_replica_reports_its_restore(monkeypatch, tmp_path):
+    """After a restart the replica has no schema recorded for the table, so
+    reading the predict's rows restores it (engine.schema); that restore
+    must still be reported."""
+    monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+    monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+    monkeypatch.setenv("TABCTX_SPILL_DIR", str(tmp_path))
+    before = TabctxService()
+    fit = _request(
+        make_app(before), "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": "d1"}
+    )
+    assert fit.status_code == 200, fit.text
+    assert before._engine._cache.evict_one() is not None
+    before.close()
+
+    app = make_app(TabctxService())  # the restarted replica
+    for expected in ("restored", "hit"):
+        response = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": "d1", "test_X": TEST_X},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["cache_outcome"] == expected
+        assert response.json()["timings_ms"].get("n_restores", 0) == (
+            expected == "restored"
+        )
 
 
 def test_cache_outcome_is_always_in_the_response_schema(app):
