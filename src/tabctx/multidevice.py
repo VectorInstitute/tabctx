@@ -44,16 +44,18 @@ use either interchangeably.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import threading
 import time
 from collections import deque
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
 from tabctx import timing
 from tabctx.engine import _validate_fit_input
-from tabctx.errors import DatasetNotFoundError
+from tabctx.errors import CacheUnavailableError, DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
 from tabctx.keyed_locks import KeyedLocks
 from tabctx.labels import resolve_task
@@ -64,7 +66,7 @@ from tabctx.placement import (
     PlacementPolicy,
 )
 from tabctx.schema import TableSchema
-from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +119,14 @@ class Shard(Protocol):
 
     def schema(self, dataset_id: str) -> TableSchema | None: ...
 
-    def evict(self, dataset_id: str) -> None: ...
+    def evict(self, dataset_id: str) -> bool: ...
+
+    def contexts(self) -> list[ContextInfo]: ...
+
+
+def _alive(shard: Shard) -> bool:
+    """A worker process's liveness; an in-process engine is always alive."""
+    return getattr(shard, "alive", True)
 
 
 def _not_found(dataset_id: str) -> DatasetNotFoundError:
@@ -153,6 +162,8 @@ class MultiDeviceEngine:
         self._activity_lock = threading.Lock()
         self._placement: PlacementPolicy = placement or LeastActiveThatFits()
         self.events = events or EventBus()
+        # Calls that go to every device at once (deletes, listings).
+        self._fanout = ThreadPoolExecutor(len(shards), thread_name_prefix="fanout")
 
     @property
     def devices(self) -> list[str]:
@@ -287,20 +298,68 @@ class MultiDeviceEngine:
             self._evict_from(dataset_id, others, announce)
             return resolved
 
-    def _evict_from(self, dataset_id: str, indices: list[int], announce: bool) -> None:
-        """Evict the id from each device, reporting each removal that
-        happened; a device that fails (a dead worker) is logged and skipped,
-        so the others are still cleaned up."""
-        for i in indices:
-            try:
-                self._shards[i].evict(dataset_id)
-            except Exception:  # noqa: BLE001 -- keep cleaning the others
-                logger.exception(
-                    "evicting %s from %s failed", dataset_id, self._devices[i]
+    def _evict_from(
+        self,
+        dataset_id: str,
+        indices: list[int],
+        announce: bool,
+        strict: bool = False,
+    ) -> bool:
+        """Evict the id from each device at once, reporting each removal
+        that happened; True if any device had it. A device that fails (a
+        dead worker) is logged and skipped, so the others are still cleaned
+        up; `strict` then raises CacheUnavailableError once all were tried."""
+        removed = False
+        failed: list[str] = []
+        for i, had, error in self._on_each(indices, lambda s: s.evict(dataset_id)):
+            if error is not None:
+                logger.error(
+                    "evicting %s from %s failed: %r",
+                    dataset_id,
+                    self._devices[i],
+                    error,
                 )
+                failed.append(f"{self._devices[i]}: {type(error).__name__}")
                 continue
-            if announce:
+            removed = removed or had
+            if announce and had:
                 self._emit("removed", dataset_id, i)
+        if strict and failed:
+            raise CacheUnavailableError(
+                f"deleting failed on {', '.join(failed)}; other GPUs may already "
+                "be cleared, retry"
+            )
+        return removed
+
+    def _on_each(
+        self, indices: list[int], call: Callable[[Shard], object]
+    ) -> list[tuple[int, object, Exception | None]]:
+        """call(shard) on each device concurrently: (index, result, error)
+        per device, in order. Concurrently, since each device answers from
+        its own queue and a slow one mustn't add its wait to the others'."""
+        futures = [(i, self._fanout.submit(call, self._shards[i])) for i in indices]
+        out = []
+        for i, future in futures:
+            try:
+                out.append((i, future.result(), None))
+            except Exception as e:  # noqa: BLE001 -- reported to the caller
+                out.append((i, None, e))
+        return out
+
+    def _require_all_alive(self) -> list[int]:
+        """Every device's index, or CacheUnavailableError if one is dead:
+        its spilled copies stay on disk, unlisted and undeletable, and come
+        back when the replica restarts it (/readyz and /livez report it
+        down, so the replica is restarted)."""
+        dead = [
+            d for d, s in zip(self._devices, self._shards, strict=True) if not _alive(s)
+        ]
+        if dead:
+            raise CacheUnavailableError(
+                f"GPU worker {', '.join(dead)} is down until the replica restarts; "
+                "its contexts can't be listed or deleted until then, retry"
+            )
+        return list(range(len(self._shards)))
 
     def _emit(
         self, kind: EventKind, dataset_id: str, index: int, backend: str | None = None
@@ -365,9 +424,32 @@ class MultiDeviceEngine:
             with self._id_locks.hold(dataset_id):
                 self._evict_from(dataset_id, self._locate(dataset_id), announce=False)
 
-    def evict(self, dataset_id: str) -> None:
+    def evict(self, dataset_id: str) -> bool:
+        """Remove the id from every device (resident and spilled copies);
+        True if any had it. Asks every device, not just those the residency
+        snapshots list (they may lag), and raises CacheUnavailableError if
+        one can't answer, before deleting anything if a worker is dead: a
+        delete must not report success while a copy may survive."""
+        devices = self._require_all_alive()
         with self._id_locks.hold(dataset_id):
-            self._evict_from(dataset_id, self._locate(dataset_id), announce=True)
+            return self._evict_from(dataset_id, devices, announce=True, strict=True)
+
+    def contexts(self) -> list[ContextInfo]:
+        """Every context on every device, each tagged with its device.
+        During a re-fit that moves an id, both copies may be listed.
+        CacheUnavailableError if a device is dead or doesn't answer: a
+        listing that silently leaves a GPU out would look complete."""
+        out: list[ContextInfo] = []
+        for i, infos, error in self._on_each(
+            self._require_all_alive(), lambda s: s.contexts()
+        ):
+            if error is not None:
+                raise CacheUnavailableError(
+                    f"{self._devices[i]} didn't list its contexts "
+                    f"({type(error).__name__}); retry"
+                ) from error
+            out += [dataclasses.replace(c, device=self._devices[i]) for c in infos]
+        return out
 
     def residency(self) -> dict[str, dict[str, list[str]]]:
         """Where every context is now, per device (lock-free snapshots):

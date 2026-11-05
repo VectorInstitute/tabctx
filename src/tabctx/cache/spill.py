@@ -46,6 +46,7 @@ from pathlib import Path
 
 from tabctx.cache.manager import CachedContext
 from tabctx.schema import TableSchema
+from tabctx.types import ContextInfo
 
 DEFAULT_SPILL_CAPACITY_BYTES = 50 * 1024**3
 
@@ -122,6 +123,7 @@ class DiskSpillStore:
                         "n_train": context.n_train,
                         "n_features": context.n_features,
                         "est_bytes": context.est_bytes,
+                        "fitted_at": context.fitted_at,
                         "schema": context.schema.to_json() if context.schema else None,
                         # Read by 0.14 and earlier (a rollback keeps names).
                         "feature_names": (
@@ -170,17 +172,50 @@ class DiskSpillStore:
             payload=payload,
             est_bytes=meta["est_bytes"],
             schema=_schema(meta),
+            fitted_at=meta.get("fitted_at"),
         )
 
-    def est_bytes(self, dataset_id: str) -> int | None:
-        """A spilled context's recorded size, from its metadata only."""
+    def _meta(self, dataset_id: str) -> dict | None:
+        """A spilled context's metadata file, or None if absent or unreadable."""
         if dataset_id not in self._index:
             return None
         meta_path, _ = self._paths(dataset_id)
         try:
-            return int(json.loads(meta_path.read_text())["est_bytes"])
-        except (OSError, ValueError, KeyError):
+            meta = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
             return None
+        return meta if isinstance(meta, dict) else None
+
+    def est_bytes(self, dataset_id: str) -> int | None:
+        """A spilled context's recorded size, from its metadata only."""
+        meta = self._meta(dataset_id)
+        try:
+            return None if meta is None else int(meta["est_bytes"])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def contexts(self) -> list[ContextInfo]:
+        """Every spilled context, from metadata only (no payload is read);
+        files that can't be read are left out."""
+        out = []
+        for dataset_id in self.ids():
+            meta = self._meta(dataset_id)
+            try:
+                out.append(
+                    ContextInfo(
+                        dataset_id=meta["dataset_id"],
+                        model=meta["backend_name"],
+                        task=meta["task"],
+                        n_train=int(meta["n_train"]),
+                        n_features=int(meta["n_features"]),
+                        bytes=int(meta["est_bytes"]),
+                        location="spilled",
+                        fitted_at=meta.get("fitted_at"),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
 
     def contains(self, dataset_id: str) -> bool:
         """Whether a spilled copy exists. Lock-free snapshot (a dict
@@ -192,12 +227,20 @@ class DiskSpillStore:
         """Spilled ids (lock-free snapshot, like contains())."""
         return frozenset(list(self._index))
 
-    def delete(self, dataset_id: str) -> None:
+    def delete(self, dataset_id: str) -> bool:
+        """Remove a spilled copy; True if there was one (indexed, or files
+        on disk)."""
         meta_path, payload_path = self._paths(dataset_id)
-        payload_path.unlink(missing_ok=True)
-        meta_path.unlink(missing_ok=True)
+        found = False
+        for path in (payload_path, meta_path):
+            try:
+                path.unlink()
+                found = True
+            except FileNotFoundError:
+                pass
         with self._lock:
-            self._index.pop(dataset_id, None)
+            found = self._index.pop(dataset_id, None) is not None or found
+        return found
 
     def _make_room(self, needed: int) -> None:
         while self.used_bytes + needed > self._capacity_bytes:

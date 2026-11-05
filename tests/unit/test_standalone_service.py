@@ -10,12 +10,15 @@ through a live Ray Serve cluster answers here from a plain FastAPI app.
 import asyncio
 import subprocess
 import sys
+import time
+import urllib.parse
 
 import httpx
 import pytest
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from tabctx.errors import CacheUnavailableError
 from tabctx.serve.factory import BACKEND_ENV_VAR
 from tabctx.serve.service import ROUTE_SPECS, TabctxService, fastapi_app
 from tabctx.serve.standalone import (
@@ -296,3 +299,192 @@ class TestEntrypoint:
             "assert 'ray' not in sys.modules"
         )
         subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def _fit(app, dataset_id: str, headers: dict | None = None) -> None:
+    fit = _request(
+        app,
+        "POST",
+        "/v1/tabctx/fit",
+        json={**TRAIN, "dataset_id": dataset_id},
+        headers=headers or {},
+    )
+    assert fit.status_code == 200, fit.text
+
+
+def _listed(app, headers: dict | None = None) -> list[str]:
+    response = _request(app, "GET", "/v1/tabctx/datasets", headers=headers or {})
+    assert response.status_code == 200, response.text
+    return [d["dataset_id"] for d in response.json()["data"]]
+
+
+def _delete(app, dataset_id: str, headers: dict | None = None) -> httpx.Response:
+    path = f"/v1/tabctx/datasets/{urllib.parse.quote(dataset_id, safe='')}"
+    return _request(app, "DELETE", path, headers=headers or {})
+
+
+class TestDatasets:
+    """GET /v1/tabctx/datasets and DELETE /v1/tabctx/datasets/{id}."""
+
+    def test_lists_nothing_before_any_fit(self, app):
+        assert _listed(app) == []
+
+    def test_lists_each_context_with_its_metadata(self, app):
+        before = time.time()
+        _fit(app, "b")
+        _fit(app, "a")
+        data = _request(app, "GET", "/v1/tabctx/datasets").json()["data"]
+        assert [d["dataset_id"] for d in data] == ["a", "b"]  # sorted
+        first = data[0]
+        assert {k: first[k] for k in ("model", "task", "n_train", "n_features")} == {
+            "model": "fake",
+            "task": "classification",
+            "n_train": 4,
+            "n_features": 2,
+        }
+        assert first["location"] == "resident" and first["device"]
+        assert first["bytes"] > 0
+        assert before <= first["fitted_at"] <= time.time()
+
+    def test_delete_removes_the_context(self, app):
+        _fit(app, "gone")
+        _fit(app, "kept")
+        response = _delete(app, "gone")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"dataset_id": "gone", "deleted": True}
+        assert _listed(app) == ["kept"]
+        predict = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": "gone", "test_X": TEST_X},
+        )
+        assert predict.status_code == 404
+
+    def test_deleting_what_is_not_there_is_404(self, app):
+        assert _delete(app, "never-fit").status_code == 404
+        _fit(app, "twice")
+        assert _delete(app, "twice").status_code == 200
+        second = _delete(app, "twice")
+        assert second.status_code == 404
+        assert "already deleted" in second.json()["detail"]
+
+    def test_ids_with_slashes_and_spaces(self, app):
+        _fit(app, "team/churn v1")
+        assert _listed(app) == ["team/churn v1"]
+        assert _delete(app, "team/churn v1").status_code == 200
+        assert _listed(app) == []
+
+    def test_session_header_must_match_the_id(self, app):
+        _fit(app, "d1")
+        response = _delete(app, "d1", headers={"x-session-id": "other"})
+        assert response.status_code == 422
+        assert _listed(app) == ["d1"]
+
+    def test_delete_forgets_the_schema(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+        monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+        service = TabctxService()
+        app = make_app(service)
+        csv = b"f1,color,target\n0.0,red,a\n1.0,blue,b\n0.5,red,a\n"
+        fit = _request(
+            app,
+            "POST",
+            "/v1/tabctx/fit",
+            data={"dataset_id": "csv", "target": "target"},
+            files={"file": ("train.csv", csv, "text/csv")},
+        )
+        assert fit.status_code == 200, fit.text
+        assert service._schemas.get("csv") is not None
+        assert _delete(app, "csv").status_code == 200
+        assert service._schemas.get("csv") is None
+
+    def test_a_busy_worker_or_a_move_in_progress_is_503(self, monkeypatch):
+        """Retryable: nothing was listed or deleted."""
+        monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+        monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+        service = TabctxService()
+        app = make_app(service)
+
+        def busy(*args):
+            raise CacheUnavailableError("cuda:1 didn't list its contexts; retry")
+
+        monkeypatch.setattr(service._engine, "contexts", busy)
+        monkeypatch.setattr(service._engine, "evict", busy)
+        assert _request(app, "GET", "/v1/tabctx/datasets").status_code == 503
+        assert _delete(app, "d").status_code == 503
+
+    def test_an_empty_id_is_invalid(self, app):
+        assert _request(app, "DELETE", "/v1/tabctx/datasets/").status_code == 422
+
+    def test_the_listing_names_the_replica(self, app):
+        body = _request(app, "GET", "/v1/tabctx/datasets").json()
+        assert body == {"data": [], "served_by": None}  # no Ray replica here
+
+    def test_routes_are_in_the_openapi_spec(self, app):
+        paths = _request(app, "GET", "/openapi.json").json()["paths"]
+        assert "get" in paths["/v1/tabctx/datasets"]
+        assert "delete" in paths["/v1/tabctx/datasets/{dataset_id}"]
+
+
+class TestDatasetsPerTenant:
+    @pytest.fixture()
+    def app(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+        monkeypatch.setenv(REQUIRE_TENANT_ENV_VAR, "true")
+        return make_app()
+
+    A = {TENANT_HEADER: "tenant-a"}
+    B = {TENANT_HEADER: "tenant-b"}
+
+    def test_a_tenant_lists_only_its_own(self, app):
+        _fit(app, "shared-name", self.A)
+        _fit(app, "a-only", self.A)
+        _fit(app, "shared-name", self.B)
+        assert _listed(app, self.A) == ["a-only", "shared-name"]
+        assert _listed(app, self.B) == ["shared-name"]
+
+    def test_a_tenant_deletes_only_its_own(self, app):
+        _fit(app, "d", self.A)
+        assert _delete(app, "d", self.B).status_code == 404
+        _fit(app, "d", self.B)
+        assert _delete(app, "d", self.B).status_code == 200
+        assert _listed(app, self.A) == ["d"]
+        assert _listed(app, self.B) == []
+
+    def test_both_routes_need_a_tenant(self, app):
+        assert _request(app, "GET", "/v1/tabctx/datasets").status_code == 401
+        assert _delete(app, "d").status_code == 401
+
+    def test_a_malformed_tenant_is_invalid(self, app):
+        bad = {TENANT_HEADER: "no:colons"}
+        assert (
+            _request(app, "GET", "/v1/tabctx/datasets", headers=bad).status_code == 422
+        )
+        assert _delete(app, "d", bad).status_code == 422
+
+
+class TestDatasetsWithoutTenancy:
+    def test_unscoped_callers_never_see_tenant_contexts(self, app):
+        _fit(app, "theirs", {TENANT_HEADER: "tenant-a"})
+        _fit(app, "mine")
+        assert _listed(app) == ["mine"]
+
+    def test_unscoped_callers_cannot_name_a_tenant_context(self, app):
+        """Not by its scoped id either: no delete, predict or overwrite."""
+        tenant = {TENANT_HEADER: "acme"}
+        _fit(app, "secret", tenant)
+        scoped = "t:acme:secret"
+        assert _delete(app, scoped).status_code == 422
+        predict = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            json={"dataset_id": scoped, "test_X": TEST_X},
+        )
+        assert predict.status_code == 422
+        fit = _request(
+            app, "POST", "/v1/tabctx/fit", json={**TRAIN, "dataset_id": scoped}
+        )
+        assert fit.status_code == 422 and "reserved" in fit.json()["detail"]
+        assert _listed(app, tenant) == ["secret"]

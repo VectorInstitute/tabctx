@@ -1,6 +1,23 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **List and delete contexts** (#103, part 1). `GET /v1/tabctx/datasets` lists the caller's contexts, resident or spilled: id, model, task, shape, size, location, GPU and fit time (metadata only). `DELETE /v1/tabctx/datasets/{dataset_id}` removes one from device memory, host memory and the disk tier on every GPU, or answers 404 if there is none. Both are scoped by tenant like every `/v1/tabctx` route. See "Listing and deleting contexts" in `docs/serving.md`.
+  - A delete is atomic with respect to spills and restores: one in progress lands first, so no copy reappears afterwards. If it doesn't land in time, the delete answers 503 having deleted nothing.
+  - On a multi-GPU replica the delete asks every GPU at once, not just the ones the residency snapshot lists. It never reports success while a copy may survive: while a GPU worker is down (its spilled copies would come back with it), list and delete answer 503 before touching anything, and a GPU failing mid-delete makes it 503 too. The client retries, and a retry that finds the context gone counts as deleted.
+  - Worker processes answer listings and deletes from a small pool of their own, so they wait neither behind queued fits nor in front of `/readyz`.
+  - Client: `TabctxClient.datasets()` and `TabctxClient.delete(dataset_id)`.
+  - Agents: a `delete_model` tool (and `tabctx-mcp delete <name>`) removes a model's context on the server and its saved files, which include its training table. A context another saved model shares (same table, model and task) is kept, and a model whose signature doesn't verify still loses its files without the server being asked. Saved models now record their context id.
+  - Spilled contexts now record their fit time; ones spilled by older versions list it as `null`.
+  - A new error, `CacheUnavailableError` (503), for "can't list or delete correctly right now".
+
+### Fixed
+- **A caller without a tenant id could reach a tenant's context** by naming its scoped id (`t:<tenant>:<id>`) on deployments that don't require tenants: predict on it, overwrite it, and now delete it. Ids starting with `t:` are now refused (422) for callers without a tenant id.
+- `TabctxClient`'s GET requests send the tenant header, as its POSTs always did, and requests without a body no longer send a Content-Type.
+- `TabctxClient` raised `UploadNotFoundError` for any 404 whose message contained "upload", including a missing dataset with "upload" in its id. It now matches only the upload store's own message.
+
+### Changed
+- The unit tests run in parallel (`pytest -n auto`, with pytest-xdist in the dev dependencies), as CI now does.
 
 ## [0.18.0] - 2026-11-04
 ### Changed

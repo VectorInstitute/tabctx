@@ -37,6 +37,8 @@ churn current.csv`, and so on (`tabctx-mcp --help`).
 | `predict` | Writes the table with prediction and probability columns, and returns the top-ranked rows. |
 | `what_if` | Predicts hand-made rows, or one real row with some columns changed. |
 | `explain` | Permutation importance: which columns the model relies on. |
+| `list_models` | The models fitted so far, with their targets and features. |
+| `delete_model` | Deletes a model: its context on the server and its saved files, which include its training table. |
 
 Fitted models live in `.tabctx-mcp/` (or `$TABCTX_MCP_HOME`), so a model
 fitted in one call is still there for the next. `tabctx-mcp skill`

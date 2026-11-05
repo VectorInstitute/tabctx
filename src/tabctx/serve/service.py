@@ -38,6 +38,7 @@ budgeting) lives in serve/factory.py; tenant namespacing
 serve/tenancy.py) closes the guessable-dataset_id data-leakage gap.
 """
 
+import dataclasses
 import logging
 import time
 import uuid
@@ -54,6 +55,7 @@ from tabctx import (
     AdmissionRejected,
     BackendComputeError,
     CacheCapacityError,
+    CacheUnavailableError,
     DatasetNotFoundError,
     HostMemoryUnavailableError,
     InvalidInputError,
@@ -232,12 +234,50 @@ class TabctxPredictResponse(BaseModel):
     )
 
 
+class DatasetInfo(BaseModel):
+    dataset_id: str
+    model: str
+    task: Literal["classification", "regression"]
+    n_train: int
+    n_features: int
+    bytes: int = Field(
+        description="The context's size in the cache: the device memory it "
+        "occupies when resident."
+    )
+    location: Literal["resident", "spilled"] = Field(
+        description="resident: in device memory. spilled: in this replica's "
+        "disk tier (TABCTX_SPILL_DIR), restored on its next predict."
+    )
+    device: str | None = Field(
+        default=None, description="Which GPU holds it, on a multi-GPU replica."
+    )
+    fitted_at: float | None = Field(
+        default=None,
+        description="Unix time of the fit (null for a context spilled by an "
+        "older tabctx).",
+    )
+
+
+class DatasetList(BaseModel):
+    data: list[DatasetInfo]
+    served_by: str | None = Field(
+        default=None,
+        description="The replica that answered: with several, each lists only "
+        "its own contexts.",
+    )
+
+
+class DeleteResponse(BaseModel):
+    dataset_id: str
+    deleted: Literal[True] = True
+
+
 _AUTH_ERRORS = (TenantRequiredError,)
 _INVALID_INPUT_ERRORS = (InvalidInputError,)
 _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)
 _COMPUTE_ERRORS = (BackendComputeError,)
-_UNAVAILABLE_ERRORS = (HostMemoryUnavailableError,)
+_UNAVAILABLE_ERRORS = (HostMemoryUnavailableError, CacheUnavailableError)
 
 
 def _map_error(e: Exception) -> HTTPException:
@@ -736,6 +776,72 @@ class TabctxService:
             latency_ms=latency_ms,
             served_by=_replica_tag(),
         )
+
+    # ---- the caller's contexts: list and delete ----
+
+    @fastapi_app.get("/v1/tabctx/datasets", response_model=DatasetList)
+    def datasets(self, request: Request) -> DatasetList:
+        """The contexts this replica holds for the caller's tenant, resident
+        or spilled: metadata only, never their contents. With several
+        replicas, only the one that answers (served_by) is listed."""
+        try:
+            tenant_id = resolve_tenant_id(dict(request.headers))
+            contexts = self._engine.contexts()
+        except (*_AUTH_ERRORS, *_INVALID_INPUT_ERRORS, *_UNAVAILABLE_ERRORS) as e:
+            raise _map_error(e) from e
+        data = []
+        for info in contexts:
+            shown = visible_dataset_id(tenant_id, info.dataset_id)
+            if shown is None:
+                continue
+            fields = dataclasses.asdict(info)
+            fields.update(dataset_id=shown, device=info.device or self._single_device())
+            data.append(DatasetInfo(**fields))
+        data.sort(key=lambda d: (d.dataset_id, d.device or ""))
+        return DatasetList(data=data, served_by=_replica_tag())
+
+    @fastapi_app.delete(
+        "/v1/tabctx/datasets/{dataset_id:path}", response_model=DeleteResponse
+    )
+    def delete_dataset(self, dataset_id: str, request: Request) -> DeleteResponse:
+        """Delete a context: from device memory, host memory and the disk
+        tier, on every GPU of this replica. 404 if there is none (never fit,
+        already deleted, evicted without a spill tier, or lost to a
+        restart); 503 if that can't be done right now (retry). Uploaded
+        tables are already gone: they are deleted once the fit or predict
+        that used them has read them. In multi-replica deployments, send
+        `x-session-id: <dataset_id>` so the request reaches the replica
+        that holds it."""
+        try:
+            if not dataset_id:
+                raise InvalidInputError("name the dataset_id to delete")
+            tenant_id = resolve_tenant_id(dict(request.headers))
+            resolve_dataset_id(session_id_from_headers(request.headers), dataset_id)
+            scoped_id = scope_dataset_id(tenant_id, dataset_id)
+            # Ordered against fits of this id on this replica, so a fit
+            # finishing meanwhile can't record its schema after the delete.
+            with self._schemas.deleting(scoped_id):
+                existed = self._engine.evict(scoped_id)
+            if not existed:
+                raise DatasetNotFoundError(
+                    f"no context for dataset_id={dataset_id!r} -- it was never "
+                    "fit, was already deleted, was evicted, or was lost to a "
+                    "replica restart"
+                )
+        except (
+            *_AUTH_ERRORS,
+            *_INVALID_INPUT_ERRORS,
+            *_NOT_FOUND_ERRORS,
+            *_UNAVAILABLE_ERRORS,
+        ) as e:
+            raise _map_error(e) from e
+        logger.info("deleted context %s", scoped_id)
+        return DeleteResponse(dataset_id=dataset_id)
+
+    def _single_device(self) -> str | None:
+        """The device of a single-device replica (a multi-device engine tags
+        each context itself)."""
+        return None if isinstance(self._engine, MultiDeviceEngine) else self._device
 
     @fastapi_app.get("/healthz")
     def healthz(self):

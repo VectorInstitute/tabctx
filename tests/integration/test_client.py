@@ -101,3 +101,18 @@ def test_ready(two_replica_service):
     # restarted and dropped its cache" apart from eviction.
     assert ready["replica_uptime_s"] >= 0
     assert ready["replica_started_at_unix"] > 0
+
+
+def test_list_and_delete_on_the_owning_replica(two_replica_service):
+    """The delete's affinity header reaches the replica holding the
+    context, on 2 replicas; an id with a slash survives Ray's routing."""
+    client = TabctxClient(two_replica_service, tenant_id="lister")
+    client.fit(TRAIN_X, ["y", "y", "n"], dataset_id="team/to-delete")
+    client.delete("team/to-delete")
+    with pytest.raises(DatasetNotFoundError):
+        client.predict("team/to-delete", TEST_X)
+    with pytest.raises(DatasetNotFoundError):
+        client.delete("team/to-delete")
+    # Listings are per replica, from whichever answers; none may show it.
+    for _ in range(6):
+        assert "team/to-delete" not in [d["dataset_id"] for d in client.datasets()]

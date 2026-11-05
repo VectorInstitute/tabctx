@@ -28,6 +28,7 @@ TOOLS = {
     "what_if",
     "explain",
     "list_models",
+    "delete_model",
 }
 
 

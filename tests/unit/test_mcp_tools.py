@@ -519,3 +519,72 @@ def test_a_bad_argument_fails_before_asking_the_server(tmp_path, history):
         tools.fit_model(history, "nope")
     with pytest.raises(ValueError, match="nothing to evaluate"):
         tools.evaluate(history, "churn", models=[], baseline=False)
+
+
+class TestDeleteModel:
+    def test_deletes_the_server_context_and_the_files(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        assert tools.delete_model("churn") == {
+            "deleted": "churn",
+            "server_context_deleted": True,
+        }
+        assert deployment.contexts == {}
+        assert tools.list_models()["models"] == []
+        assert list(tools.store.root.iterdir()) == []  # the training table too
+
+    def test_a_context_already_gone_from_the_server(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        deployment.contexts.clear()  # evicted, or the server restarted
+        out = tools.delete_model("churn")
+        assert out["server_context_deleted"] is False
+        assert tools.list_models()["models"] == []
+
+    def test_an_unknown_name_lists_the_models(self, tools, history):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        with pytest.raises(ValueError, match="fitted models: \\['churn'\\]"):
+            tools.delete_model("nope")
+
+    def test_the_record_keeps_the_context_id(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        assert tools.store.info("churn").dataset_id == deployment.fits[-1]["dataset_id"]
+
+    def test_a_context_another_model_shares_is_kept(self, tools, history, deployment):
+        """Same table, model and task: one context. Deleting it would only
+        make the other model upload the table again."""
+        for name in ("a", "b"):
+            tools.fit_model(history, "churn", name=name, drop=["customer_id"])
+        out = tools.delete_model("a")
+        assert out["server_context_deleted"] is False and "b" in out["note"]
+        assert len(deployment.contexts) == 1
+        assert [m["name"] for m in tools.list_models()["models"]] == ["b"]
+        assert tools.delete_model("b")["server_context_deleted"] is True
+        assert deployment.contexts == {}
+
+    def test_an_unverifiable_model_still_loses_its_files(
+        self, tools, history, deployment, tmp_path, monkeypatch
+    ):
+        """Nothing it says is trusted (it may be planted), and it is never
+        unpickled; the files, which hold a training table, still go."""
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        monkeypatch.setenv("TABCTX_MCP_KEY_FILE", str(tmp_path / "other.key"))
+        other = TabularTools(ModelStore(tools.store.root), client=deployment)
+        out = other.delete_model("churn")
+        assert out["server_context_deleted"] is None and "verified" in out["note"]
+        assert len(deployment.contexts) == 1  # the server was not asked
+        assert list(tools.store.root.iterdir()) == []
+
+    def test_a_model_saved_before_records_kept_the_id(self, tools, history, deployment):
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        info, estimator = tools.store.load("churn")
+        info.dataset_id = ""  # as 0.18 wrote it
+        tools.store.save(info, estimator)
+        assert tools.delete_model("churn")["server_context_deleted"] is True
+        assert deployment.contexts == {}
+
+    def test_cli(self, tools, history, capsys):
+        from tabctx.mcp_tools import cli
+
+        tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+        capsys.readouterr()
+        assert cli.main(["delete", "churn"], tools) == 0
+        assert json.loads(capsys.readouterr().out)["deleted"] == "churn"

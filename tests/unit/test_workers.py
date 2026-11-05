@@ -51,7 +51,10 @@ def test_fit_predict_round_trip_and_residency_mirror(built):
     assert len(holders) == 1  # mirrored before fit() returned
     assert engine.predict("rt", [[0.0, 0.0]]).predictions == ["x"]
     assert engine.schema("rt") is None
-    engine.evict("rt")
+    (info,) = [i for i in engine.contexts() if i.dataset_id == "rt"]
+    assert info.device == holders[0] and info.location == "resident"
+    assert engine.evict("rt") is True
+    assert engine.evict("rt") is False
     assert not any(w.has("rt") for w in built.worker_shards)
 
 

@@ -203,6 +203,83 @@ def test_stats_reflect_cached_contexts():
     assert engine.stats().n_cached_contexts == 0
 
 
+class TestListAndDelete:
+    def test_evict_reports_whether_there_was_a_context(self):
+        engine, _ = make_engine()
+        dataset_id = engine.fit(TRAIN_X, TRAIN_Y)
+        assert engine.evict(dataset_id) is True
+        assert engine.evict(dataset_id) is False
+        with pytest.raises(DatasetNotFoundError):
+            engine.predict(dataset_id, TEST_X)
+
+    def test_contexts_lists_metadata(self):
+        engine, _ = make_engine()
+        engine.fit(TRAIN_X, TRAIN_Y, dataset_id="d", task="classification")
+        (info,) = engine.contexts()
+        assert (info.dataset_id, info.model, info.task) == (
+            "d",
+            "fake",
+            "classification",
+        )
+        assert (info.n_train, info.n_features) == (20, 2)
+        assert info.location == "resident" and info.device is None
+        assert info.bytes == engine.stats().used_bytes
+        assert info.fitted_at is not None
+
+    def test_a_context_in_use_is_deleted_and_freed_after_its_predict(self):
+        """The delete answers at once; the predict holding the payload
+        finishes on it, and nothing keeps it afterwards."""
+        import gc
+        import threading
+        import weakref
+
+        started, release = threading.Event(), threading.Event()
+
+        class SlowPredict(FakeBackend):
+            def predict(self, payload, X_test, return_proba=False):
+                started.set()
+                assert release.wait(5)
+                return super().predict(payload, X_test, return_proba)
+
+        engine, _ = make_engine(SlowPredict())
+        engine.fit(TRAIN_X, TRAIN_Y, dataset_id="d")
+        payload = weakref.ref(engine._cache.peek("d").payload)
+        predicting = threading.Thread(target=engine.predict, args=("d", TEST_X))
+        predicting.start()
+        assert started.wait(5)
+        assert engine.evict("d") is True
+        assert engine.contexts() == []
+        release.set()
+        predicting.join(5)
+        gc.collect()
+        assert payload() is None
+
+
+def test_a_delete_waiting_for_a_move_holds_no_engine_lock():
+    """While a delete waits for a spill or restore of its id to land,
+    finishing predicts and fits must still get the release lock."""
+    import threading
+
+    engine, _ = make_engine()
+    engine.fit(TRAIN_X, TRAIN_Y, dataset_id="d")
+    cache = engine._cache
+    with cache._lock:
+        cache._transit_add("d")  # a move of "d" in progress
+    result: list = []
+    deleting = threading.Thread(target=lambda: result.append(engine.evict("d")))
+    deleting.start()
+    try:
+        deleting.join(0.05)
+        assert deleting.is_alive()  # waiting for the move
+        assert engine._release_lock.acquire(timeout=1)
+        engine._release_lock.release()
+    finally:
+        with cache._lock:
+            cache._transit_discard("d")
+        deleting.join(5)
+    assert result == [True]
+
+
 class TestNumpyInput:
     """X/y as numpy arrays take the rectangular-shape fast path
     (_rect_shape) instead of the per-row Python loop -- both must agree

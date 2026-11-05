@@ -362,7 +362,10 @@ def test_a_waiting_large_fit_does_not_block_predicts_on_its_device():
     t0.start()  # takes the only slot, then blocks inside the backend
     assert backends[0].entered.wait(5)
     t1 = threading.Thread(target=engines[1].fit, args=big, daemon=True)
-    t1.start()  # waits for the host slot
+    t1.start()
+    # Only once it really waits for the host slot (a loaded machine may take
+    # a while to get there), else this would test nothing.
+    _wait_for(lambda: guard.stats()["calls_waiting"] == 1)
     # Device 1 still serves predicts while its large fit waits for host memory.
     done = threading.Event()
     threading.Thread(

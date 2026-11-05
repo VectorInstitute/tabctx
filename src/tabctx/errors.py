@@ -56,6 +56,14 @@ class BackendComputeError(TabctxError):
     tabctx errors."""
 
 
+class CacheUnavailableError(TabctxError):
+    """Raised when contexts can't be listed or deleted correctly right now:
+    a GPU worker is dead (its spilled copies would outlive a delete) or
+    didn't answer, or a context is still moving between cache tiers.
+    Nothing is deleted where it couldn't be done; retryable, so the API
+    answers 503."""
+
+
 class HostMemoryUnavailableError(TabctxError):
     """Raised when host-memory admission can't be decided right now (its
     shared accounting is stuck, e.g. a worker died holding the lock);

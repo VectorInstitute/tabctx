@@ -13,7 +13,12 @@ from tabctx.backends.fake import FakeBackend
 from tabctx.cache.manager import ContextCacheManager
 from tabctx.cache.spill import DiskSpillStore
 from tabctx.engine import TabctxEngine
-from tabctx.errors import AdmissionRejected, DatasetNotFoundError, InvalidInputError
+from tabctx.errors import (
+    AdmissionRejected,
+    CacheUnavailableError,
+    DatasetNotFoundError,
+    InvalidInputError,
+)
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.schema import TableSchema
 
@@ -536,6 +541,92 @@ class TestMovingContexts:
         engine._locate = locate
         assert engine.predict("d", [[0.0]]).predictions == ["x"]
         assert len(calls) == 2
+
+
+class TestListAndDelete:
+    def test_contexts_are_tagged_with_their_device(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="a")
+        engine.fit(*table(20), dataset_id="b")
+        listed = {i.dataset_id: i.device for i in engine.contexts()}
+        assert listed == {d: f"cuda:{where(shards, d)[0]}" for d in ("a", "b")}
+
+    def test_spilled_contexts_are_listed_on_their_device(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        shards[owner]._cache.make_room(CAPACITY)
+        (info,) = engine.contexts()
+        assert (info.location, info.device) == ("spilled", f"cuda:{owner}")
+
+    def test_evict_reports_whether_any_device_had_it(self, tmp_path):
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10), dataset_id="d")
+        shards[where(shards, "d")[0]]._cache.make_room(CAPACITY)  # spill it
+        assert engine.evict("d") is True
+        assert engine.evict("d") is False
+        assert engine.contexts() == []
+
+    def test_evict_asks_every_device_not_just_the_snapshot(self):
+        """A residency snapshot can lag (a worker's view arrives with its
+        next reply): a delete must not trust it."""
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        engine._locate = lambda dataset_id: []  # a stale view: nowhere
+        assert engine.evict("d") is True
+        assert not shards[owner].has("d")
+
+    def test_a_failing_device_fails_the_delete_after_cleaning_the_others(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="t:acme:d")
+        owner = where(shards, "t:acme:d")[0]
+
+        def fail(dataset_id):
+            raise RuntimeError("worker gone")
+
+        shards[1 - owner].evict = fail
+        with pytest.raises(CacheUnavailableError, match="retry") as raised:
+            engine.evict("t:acme:d")
+        assert "acme" not in str(raised.value)  # never the scoped id
+        assert not shards[owner].has("t:acme:d")  # removed where it lived
+
+    def test_a_dead_device_refuses_before_deleting_anything(self, tmp_path):
+        """Its spilled copies stay on disk, and the restarted worker would
+        list and restore them: no delete may claim success meanwhile."""
+        engine, shards, _ = build(2, spill_root=tmp_path)
+        engine.fit(*table(10), dataset_id="d")
+        owner = where(shards, "d")[0]
+        shards[1 - owner].alive = False
+        with pytest.raises(CacheUnavailableError, match="down"):
+            engine.evict("d")
+        with pytest.raises(CacheUnavailableError, match="down"):
+            engine.contexts()
+        assert shards[owner].has("d")
+
+    def test_devices_are_asked_concurrently(self):
+        """A device busy for a while mustn't add its wait to the others'."""
+        engine, shards, _ = build(3)
+        everyone = threading.Barrier(3, timeout=5)
+
+        def meet(dataset_id):
+            everyone.wait()  # BrokenBarrierError unless all three run at once
+            return False
+
+        for shard in shards:
+            shard.evict = meet
+        assert engine.evict("d") is False
+
+    def test_a_device_that_cannot_list_fails_the_listing(self):
+        engine, shards, _ = build(2)
+        engine.fit(*table(10), dataset_id="d")
+
+        def busy():
+            raise TimeoutError("worker for cuda:1 did not answer contexts in 30s")
+
+        shards[1].contexts = busy
+        with pytest.raises(CacheUnavailableError, match="cuda:1"):
+            engine.contexts()
 
 
 class TestFailures:

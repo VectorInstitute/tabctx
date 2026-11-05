@@ -18,6 +18,7 @@ from sklearn import metrics
 from sklearn.model_selection import train_test_split
 
 from tabctx.client import TabctxClient
+from tabctx.errors import DatasetNotFoundError
 from tabctx.estimators import TabctxClassifier, TabctxRegressor
 from tabctx.labels import infer_task
 from tabctx.mcp_tools.store import ModelInfo, ModelStore, check_name
@@ -76,6 +77,43 @@ class TabularTools:
             "models": [i.as_dict() for i in self.store.list()],
         }
 
+    def delete_model(self, name: str) -> dict[str, Any]:
+        """Delete a fitted model: its context on the deployment, then its
+        files here (which hold its training table). The files go even when
+        the server can't be told (an unverifiable model). A context another
+        saved model shares (same table, model and task) stays: that model
+        would only upload the table again."""
+        self.store.info(name)  # a clear error, listing the models, if absent
+        info = self.store.verified(name)
+        dataset_id = None
+        if info is not None:
+            # Saved before records kept the id: it's in the verified pickle.
+            dataset_id = info.dataset_id or self.store.load(name)[1].dataset_id_
+        out: dict[str, Any] = {"deleted": name}
+        shared = [
+            m.name
+            for m in self.store.list()
+            if dataset_id and m.name != name and m.dataset_id == dataset_id
+        ]
+        if dataset_id is None:
+            out["server_context_deleted"] = None
+            out["note"] = (
+                "the model's files could not be verified, so its server context "
+                "is unknown; it is evicted in time, or the server operator can "
+                "delete it"
+            )
+        elif shared:
+            out["server_context_deleted"] = False
+            out["note"] = f"the server context is kept: {', '.join(shared)} uses it"
+        else:
+            try:
+                self._client().delete(dataset_id)
+                out["server_context_deleted"] = True
+            except DatasetNotFoundError:  # evicted or lost already
+                out["server_context_deleted"] = False
+        self.store.delete(name)
+        return out
+
     # ---- fit and predict -----------------------------------------------
 
     def fit_model(
@@ -113,6 +151,7 @@ class TabularTools:
             classes=_classes(estimator),
             dropped=list(drop),
             created=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+            dataset_id=estimator.dataset_id_,
         )
         estimator.set_params(client=None)  # the store must not pickle a client
         replaced = self.store.exists(name)

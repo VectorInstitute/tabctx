@@ -51,6 +51,10 @@ class FakeDeployment:
         self.contexts[dataset_id] = (task, schema, classes)
         return dataset_id
 
+    def delete(self, dataset_id):
+        if self.contexts.pop(dataset_id, None) is None:
+            raise DatasetNotFoundError(f"no context for dataset_id={dataset_id!r}")
+
     def predict_file(self, dataset_id, file, return_proba=False, model=None):
         self.predict_calls.append(len(file))
         if dataset_id not in self.contexts:

@@ -27,7 +27,7 @@ from tabctx.labels import resolve_task
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
 from tabctx.schema import TableSchema
-from tabctx.types import ArrayLike, EngineStats, PredictOutcome, Task
+from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 # Predicts of at most this many test rows against a resident context run
 # beside a fit on the same device instead of waiting for it (head-of-line,
@@ -725,14 +725,26 @@ class TabctxEngine:
         finally:
             self.evict(dataset_id)
 
-    def evict(self, dataset_id: str) -> None:
-        # Under the release lock, so the memory is freed either before a
-        # fit starts measuring or after it is done (see _measuring).
+    def evict(self, dataset_id: str) -> bool:
+        """Remove a context from every tier (device, host memory, disk);
+        True if there was one. Its memory is freed now, or -- while a fit
+        measures itself, or a predict still uses it -- once that is done."""
+        # The delete may wait for a move between tiers, so it runs outside
+        # the release lock (finishing predicts and fits need that lock).
+        # Holding `removed` keeps the memory alive until it is dropped under
+        # the lock: freed before a fit starts measuring or after it is done
+        # (see _measuring).
+        removed, existed = self._cache.delete(dataset_id)
         with self._release_lock:
-            removed = self._cache.evict(dataset_id)
             if removed is not None and self._fitting:
                 self._parked.append(removed)
             removed = None
+        return existed
+
+    def contexts(self) -> list[ContextInfo]:
+        """Every context this engine holds, resident or spilled (metadata
+        only; never waits on GPU work)."""
+        return self._cache.contexts()
 
     def stats(self) -> EngineStats:
         return self._cache.stats()
