@@ -1104,10 +1104,12 @@ class TabctxService:
     @fastapi_app.get(
         "/v1/models", summary="List the models served", tags=["deployment"]
     )
-    def models(self):
+    async def models(self):
         """Which models this deployment serves: pass one of these ids
         as `model` in fit requests.
         The first is the default."""
+        # async: answered on the event loop, not from the threadpool that
+        # fits and predicts hold, so a readiness probe never waits on them.
         return {
             "data": [
                 {
