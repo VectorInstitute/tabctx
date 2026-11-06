@@ -12,8 +12,10 @@ Ray host provides and what replaces it here:
 - Request shedding (the deployment's max_ongoing_requests /
   max_queued_requests): the limiter below, configured by
   TABCTX_MAX_ONGOING_REQUESTS and TABCTX_MAX_QUEUED_REQUESTS (defaults
-  8 / 16, matching serve/app.py). Health routes bypass it -- a saturated
-  service must still answer its probes.
+  8 / 16, matching serve/app.py). Health routes, the model list and
+  Ray's /-/healthz path (a 404 here) bypass it -- a saturated service
+  must still answer its probes, and a gateway judges readiness from the
+  list after asking /-/healthz.
 - Multi-replica session affinity: nothing replaces it. Run ONE replica,
   or front several with a router that pins the session-affinity header
   (serve/affinity.py) to a replica.
@@ -43,7 +45,12 @@ DEFAULT_MAX_ONGOING = 8
 DEFAULT_MAX_QUEUED = 16
 # Never shed probes: a platform restarts a replica whose liveness probe
 # times out, and a loaded replica is exactly when that must not happen.
-_UNSHED_PATHS = frozenset({"/livez", "/readyz", "/healthz"})
+# A gateway's readiness probe is one too (aieng-proxy-gateway's
+# /v1/models/{id}/ready, behind the inference site's status page). It
+# first asks Ray Serve's proxy health path, /-/healthz, which this server
+# answers 404 (not Ray), then reports the model ready only while
+# /v1/models names it. Neither reads engine state.
+_UNSHED_PATHS = frozenset({"/livez", "/readyz", "/healthz", "/v1/models", "/-/healthz"})
 
 
 def _positive_int_env(name: str, default: int) -> int:

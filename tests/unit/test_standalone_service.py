@@ -10,6 +10,7 @@ through a live Ray Serve cluster answers here from a plain FastAPI app.
 import asyncio
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 
@@ -22,6 +23,7 @@ from tabctx.errors import CacheUnavailableError
 from tabctx.serve.factory import BACKEND_ENV_VAR
 from tabctx.serve.service import ROUTE_SPECS, TabctxService, fastapi_app
 from tabctx.serve.standalone import (
+    _UNSHED_PATHS,
     MAX_ONGOING_ENV_VAR,
     MAX_QUEUED_ENV_VAR,
     _RequestLimiter,
@@ -232,6 +234,22 @@ class TestRouteSpecs:
         assert want <= got  # the made app adds only its own docs routes
 
 
+async def _until(condition, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        await asyncio.sleep(0.005)
+
+
+def _limiter_of(app) -> _RequestLimiter:
+    """The app's limiter instance (built with its middleware stack on the
+    first request)."""
+    layer = app.middleware_stack
+    while not isinstance(layer, _RequestLimiter):
+        layer = layer.app
+    return layer
+
+
 class TestRequestLimiter:
     def test_sheds_beyond_the_queue_and_never_sheds_probes(self):
         async def scenario():
@@ -239,7 +257,7 @@ class TestRequestLimiter:
             started = asyncio.Event()
 
             async def app(scope, receive, send):
-                if scope["path"] == "/livez":
+                if scope["path"] in _UNSHED_PATHS:
                     await JSONResponse({"status": "alive"})(scope, receive, send)
                     return
                 started.set()
@@ -264,14 +282,70 @@ class TestRequestLimiter:
                 assert shed.status_code == 503
                 assert "retry" in shed.json()["detail"]
 
-                probe = await client.get("/livez")  # bypasses the limiter
-                assert probe.status_code == 200
+                for probe in _UNSHED_PATHS:  # bypass the limiter
+                    assert (await client.get(probe)).status_code == 200, probe
 
                 release.set()
                 assert (await first).status_code == 200
                 assert (await second).status_code == 200
 
         asyncio.run(scenario())
+
+    def test_unshed_paths_are_the_probe_routes(self):
+        # Each is a GET route the server answers, except Ray's /-/healthz,
+        # which it must answer (404) just as fast.
+        routes = {s.path for s in ROUTE_SPECS if s.methods == ("GET",)}
+        assert _UNSHED_PATHS - routes == {"/-/healthz"}
+
+    def test_a_gateway_probe_answers_a_saturated_server(self, monkeypatch):
+        # The real app, its one slot and one queue place taken: the probe
+        # aieng-proxy-gateway runs (/-/healthz must 404, then /v1/models
+        # must name the model) still answers at once, while work is shed.
+        monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
+        monkeypatch.delenv(REQUIRE_TENANT_ENV_VAR, raising=False)
+        monkeypatch.setenv(MAX_ONGOING_ENV_VAR, "1")
+        monkeypatch.setenv(MAX_QUEUED_ENV_VAR, "1")
+        service = TabctxService()
+        held = threading.Event()
+        release = threading.Event()
+        limits = service.limits
+
+        def slow_limits():  # the handler's signature: FastAPI reads it
+            held.set()
+            release.wait(10)
+            return limits()
+
+        service.limits = slow_limits
+        app = make_app(service)
+
+        async def scenario():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://test", timeout=5.0
+            ) as client:
+                first = asyncio.create_task(client.get("/v1/tabctx/limits"))
+                await _until(held.is_set)  # holds the one slot
+                limiter = _limiter_of(app)
+                second = asyncio.create_task(client.get("/v1/tabctx/limits"))
+                await _until(lambda: limiter._queued == 1)  # the queue place
+                assert (await client.get("/v1/tabctx/datasets")).status_code == 503
+
+                started = time.monotonic()
+                assert (await client.get("/-/healthz")).status_code == 404
+                models = await client.get("/v1/models")
+                assert models.status_code == 200
+                assert [m["id"] for m in models.json()["data"]] == ["fake"]
+                assert time.monotonic() - started < 1.0
+
+                release.set()
+                assert (await first).status_code == 200
+                assert (await second).status_code == 200
+
+        try:
+            asyncio.run(scenario())
+        finally:
+            release.set()
+            service.close()
 
     def test_rejects_bad_limit_configuration(self, monkeypatch):
         monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
