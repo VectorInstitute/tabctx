@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Fixed
-- **A gateway's readiness probe is never shed** by the standalone server's request limiter, like `/livez`, `/readyz` and `/healthz`: `GET /v1/models`, since a gateway judges a model ready only while the list names it, and `/-/healthz` (Ray Serve's health path, a 404 here), which it asks first. Behind a full queue, a busy replica read as down.
+- **A saturated replica no longer reads as down to a gateway.** The standalone server's request limiter no longer sheds `GET /v1/models` or `/-/healthz` (Ray Serve's health path, a 404 here), which a gateway's readiness probe asks, and `/v1/models` is answered on the event loop rather than behind fits in the threadpool.
 - A predict reported `cache_outcome: hit` when the table was restored from disk while its rows were being read, as on a replica after a restart (its schema not yet recorded); the restore is now counted wherever it happens.
 ### Changed
 - `cache_outcome` is required in the predict response's schema (the server always sent it; generated clients now see it as always present). The coalescing batcher closes a batch and releases everyone in it even if its window's wait fails.

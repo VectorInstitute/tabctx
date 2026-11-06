@@ -45,11 +45,10 @@ DEFAULT_MAX_ONGOING = 8
 DEFAULT_MAX_QUEUED = 16
 # Never shed probes: a platform restarts a replica whose liveness probe
 # times out, and a loaded replica is exactly when that must not happen.
-# A gateway's readiness probe is one too (aieng-proxy-gateway's
-# /v1/models/{id}/ready, behind the inference site's status page). It
-# first asks Ray Serve's proxy health path, /-/healthz, which this server
-# answers 404 (not Ray), then reports the model ready only while
-# /v1/models names it. Neither reads engine state.
+# A gateway's readiness probe is one too (e.g. aieng-proxy-gateway's,
+# behind the inference site's status page): it asks Ray Serve's health
+# path, /-/healthz (a 404 here: not Ray), then reports a model ready only
+# while /v1/models names it. Neither reads engine state.
 _UNSHED_PATHS = frozenset({"/livez", "/readyz", "/healthz", "/v1/models", "/-/healthz"})
 
 

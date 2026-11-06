@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.parse
 
+import anyio.to_thread
 import httpx
 import pytest
 from fastapi.responses import JSONResponse
@@ -298,7 +299,8 @@ class TestRequestLimiter:
         assert _UNSHED_PATHS - routes == {"/-/healthz"}
 
     def test_a_gateway_probe_answers_a_saturated_server(self, monkeypatch):
-        # The real app, its one slot and one queue place taken: the probe
+        # The real app, its one slot and one queue place taken, and the
+        # threadpool's one thread held by that slot's work: the probe
         # aieng-proxy-gateway runs (/-/healthz must 404, then /v1/models
         # must name the model) still answers at once, while work is shed.
         monkeypatch.setenv(BACKEND_ENV_VAR, "fake")
@@ -319,9 +321,10 @@ class TestRequestLimiter:
         app = make_app(service)
 
         async def scenario():
+            anyio.to_thread.current_default_thread_limiter().total_tokens = 1
             transport = httpx.ASGITransport(app=app)
             async with httpx.AsyncClient(
-                transport=transport, base_url="http://test", timeout=5.0
+                transport=transport, base_url="http://test"
             ) as client:
                 first = asyncio.create_task(client.get("/v1/tabctx/limits"))
                 await _until(held.is_set)  # holds the one slot
@@ -330,12 +333,13 @@ class TestRequestLimiter:
                 await _until(lambda: limiter._queued == 1)  # the queue place
                 assert (await client.get("/v1/tabctx/datasets")).status_code == 503
 
-                started = time.monotonic()
-                assert (await client.get("/-/healthz")).status_code == 404
-                models = await client.get("/v1/models")
+                async def probe() -> httpx.Response:
+                    assert (await client.get("/-/healthz")).status_code == 404
+                    return await client.get("/v1/models")
+
+                models = await asyncio.wait_for(probe(), timeout=1.0)
                 assert models.status_code == 200
                 assert [m["id"] for m in models.json()["data"]] == ["fake"]
-                assert time.monotonic() - started < 1.0
 
                 release.set()
                 assert (await first).status_code == 200
