@@ -1,0 +1,1331 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "tabctx",
+  "summary": "The serving engine for tabular foundation models.",
+  "version": "0.19.0"
+ },
+ "paths": {
+  "/v1/tabicl/predict": {
+   "post": {
+    "tags": [
+     "legacy"
+    ],
+    "summary": "Fit, predict once and discard",
+    "operationId": "legacy_predict_v1_tabicl_predict_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/LegacyPredictRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/LegacyPredictResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/upload": {
+   "post": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "Upload a table ahead of a fit or predict",
+    "description": "Streamed CSV upload for fit/predict-by-reference. Send the raw\nCSV as the request body. In multi-replica deployments the request\nMUST carry `x-session-id: <dataset_id>` so the upload lands on\nthe replica that the fit/predict for that dataset will reach.",
+    "operationId": "tabctx_upload_v1_tabctx_upload_post",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/UploadResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/fit": {
+   "post": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "Fit a table into a context",
+    "operationId": "tabctx_fit_v1_tabctx_fit_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "train_X": {
+          "anyOf": [
+           {
+            "items": {
+             "items": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "type": "array"
+            },
+            "type": "array"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Train X",
+          "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value."
+         },
+         "train_y": {
+          "anyOf": [
+           {
+            "items": {
+             "anyOf": [
+              {
+               "type": "number"
+              },
+              {
+               "type": "string"
+              }
+             ]
+            },
+            "type": "array"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Train Y"
+         },
+         "train_upload_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Train Upload Id"
+         },
+         "target_column": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Target Column",
+          "description": "The table file's label column (also accepted as `target`); default: its last column."
+         },
+         "task": {
+          "anyOf": [
+           {
+            "type": "string",
+            "enum": [
+             "classification",
+             "regression"
+            ]
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Task",
+          "description": "classification or regression. Omit it to infer from train_y: non-integer numbers, or whole numbers with more distinct values than both 30 and 5% of the rows, mean regression; anything else (text, class codes) classification."
+         },
+         "dataset_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Dataset Id"
+         },
+         "model": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Model"
+         },
+         "ttl_s": {
+          "anyOf": [
+           {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Ttl S",
+          "description": "Delete this context after this many seconds, from every tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, if set, caps it (and applies when this is omitted)."
+         }
+        },
+        "type": "object",
+        "title": "FitRequest"
+       }
+      },
+      "multipart/form-data": {
+       "schema": {
+        "properties": {
+         "file": {
+          "type": "string",
+          "format": "binary",
+          "description": "The table: CSV (plain, gzip or zstd) or Parquet, with a header row."
+         },
+         "train_X": {
+          "type": "string",
+          "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value. As one form value: comma-separated, or a JSON array.",
+          "examples": [
+           "0.05,0.95"
+          ]
+         },
+         "train_y": {
+          "type": "string",
+          "description": "As one form value: comma-separated, or a JSON array.",
+          "examples": [
+           "0.05,0.95"
+          ]
+         },
+         "train_upload_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Train Upload Id"
+         },
+         "target_column": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Target Column",
+          "description": "The table file's label column (also accepted as `target`); default: its last column."
+         },
+         "task": {
+          "anyOf": [
+           {
+            "type": "string",
+            "enum": [
+             "classification",
+             "regression"
+            ]
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Task",
+          "description": "classification or regression. Omit it to infer from train_y: non-integer numbers, or whole numbers with more distinct values than both 30 and 5% of the rows, mean regression; anything else (text, class codes) classification."
+         },
+         "dataset_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Dataset Id"
+         },
+         "model": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Model"
+         },
+         "ttl_s": {
+          "anyOf": [
+           {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Ttl S",
+          "description": "Delete this context after this many seconds, from every tier, whatever else happens. The server's TABCTX_MAX_CONTEXT_AGE_S, if set, caps it (and applies when this is omitted)."
+         }
+        },
+        "type": "object",
+        "required": [
+         "file"
+        ],
+        "title": "FitRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/FitResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/predict": {
+   "post": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "Predict against a context",
+    "operationId": "tabctx_predict_v1_tabctx_predict_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "properties": {
+         "dataset_id": {
+          "type": "string",
+          "title": "Dataset Id"
+         },
+         "test_X": {
+          "anyOf": [
+           {
+            "items": {
+             "items": {
+              "anyOf": [
+               {
+                "type": "number"
+               },
+               {
+                "type": "string"
+               },
+               {
+                "type": "null"
+               }
+              ]
+             },
+             "type": "array"
+            },
+            "type": "array"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Test X",
+          "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value."
+         },
+         "test_upload_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Test Upload Id"
+         },
+         "return_proba": {
+          "type": "boolean",
+          "title": "Return Proba",
+          "default": false
+         },
+         "quantiles": {
+          "anyOf": [
+           {
+            "items": {
+             "type": "number",
+             "exclusiveMaximum": 1.0,
+             "exclusiveMinimum": 0.0
+            },
+            "type": "array",
+            "maxItems": 99,
+            "minItems": 1
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Quantiles",
+          "description": "Regression only: also return each row's predicted distribution at these levels in (0, 1), e.g. [0.05, 0.5, 0.95] for the median and a 90% interval. Each level at most once."
+         }
+        },
+        "type": "object",
+        "required": [
+         "dataset_id"
+        ],
+        "title": "TabctxPredictRequest"
+       }
+      },
+      "multipart/form-data": {
+       "schema": {
+        "properties": {
+         "file": {
+          "type": "string",
+          "format": "binary",
+          "description": "The table: CSV (plain, gzip or zstd) or Parquet, with a header row."
+         },
+         "dataset_id": {
+          "type": "string",
+          "title": "Dataset Id"
+         },
+         "test_X": {
+          "type": "string",
+          "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value. As one form value: comma-separated, or a JSON array.",
+          "examples": [
+           "0.05,0.95"
+          ]
+         },
+         "test_upload_id": {
+          "anyOf": [
+           {
+            "type": "string"
+           },
+           {
+            "type": "null"
+           }
+          ],
+          "title": "Test Upload Id"
+         },
+         "return_proba": {
+          "type": "boolean",
+          "title": "Return Proba",
+          "default": false
+         },
+         "quantiles": {
+          "type": "string",
+          "description": "Regression only: also return each row's predicted distribution at these levels in (0, 1), e.g. [0.05, 0.5, 0.95] for the median and a 90% interval. Each level at most once. As one form value: comma-separated, or a JSON array.",
+          "examples": [
+           "0.05,0.95"
+          ]
+         }
+        },
+        "type": "object",
+        "required": [
+         "file",
+         "dataset_id"
+        ],
+        "title": "TabctxPredictRequest"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TabctxPredictResponse"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/datasets": {
+   "get": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "List your contexts",
+    "description": "The contexts this replica holds for the caller's tenant, resident\nor spilled: metadata only, never their contents. With several\nreplicas, only the one that answers (served_by) is listed.",
+    "operationId": "datasets_v1_tabctx_datasets_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DatasetList"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/datasets/{dataset_id}": {
+   "delete": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "Delete a context",
+    "description": "Delete a context: from device memory, host memory and the disk\ntier, on every GPU of this replica. 404 if there is none (never fit,\nalready deleted, evicted without a spill tier, or lost to a\nrestart); 503 if that can't be done right now (retry). Uploaded\ntables are already gone: they are deleted once the fit or predict\nthat used them has read them. In multi-replica deployments, send\n`x-session-id: <dataset_id>` so the request reaches the replica\nthat holds it.",
+    "operationId": "delete_dataset_v1_tabctx_datasets__dataset_id__delete",
+    "parameters": [
+     {
+      "name": "dataset_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Dataset Id"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/DeleteResponse"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/healthz": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Process is up",
+    "operationId": "healthz_healthz_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/livez": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Liveness probe",
+    "description": "check_health as an HTTP route, for hosts without Ray (e.g. a\nKubernetes livenessProbe): 503 only on the condition a restart\nfixes, a dead per-GPU worker. /readyz is the wrong liveness probe\n-- it also 503s on transient pressure (host memory, a slow worker\nreport), which would restart a healthy replica under load.",
+    "operationId": "livez_livez_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/models": {
+   "get": {
+    "tags": [
+     "deployment"
+    ],
+    "summary": "List the models served",
+    "description": "Which models this deployment serves: pass one of these ids\nas `model` in fit requests.\nThe first is the default.",
+    "operationId": "models_v1_models_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/residency": {
+   "get": {
+    "tags": [
+     "contexts"
+    ],
+    "summary": "Where your contexts are",
+    "description": "Where the caller's contexts are now, per device, and the router's\nlatest placements and removals of them (multi-GPU replicas). Scoped\nlike every /v1/tabctx route: a tenant sees only its own datasets.\nEvents are advisory (contexts dropped by capacity eviction without\nspill aren't reported); `devices` is the current truth to\nreconcile against. A single-GPU replica reports neither.",
+    "operationId": "residency_v1_tabctx_residency_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/v1/tabctx/limits": {
+   "get": {
+    "tags": [
+     "deployment"
+    ],
+    "summary": "Table shapes it admits now",
+    "description": "Capability discovery (inspired by PriorLabs' get_model_limits):\nwhat will this deployment admit? Lets clients validate table\nshapes BEFORE uploading data, instead of discovering a 413 the\nexpensive way. max_admissible_train_rows is derived live from\nthe admission gate at representative feature counts, so it\ntightens/loosens as the adaptive estimator learns real costs.",
+    "operationId": "limits_v1_tabctx_limits_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  },
+  "/readyz": {
+   "get": {
+    "tags": [
+     "health"
+    ],
+    "summary": "Readiness and cache state",
+    "description": "Readiness, from measurements it never waits for (#51): the cache's\nlock-free counters, the host-memory guard's lock-free read, and the\ndevice reports measured on their own threads (see\nserve/reporting.py). 503 for a dead GPU worker, or one silent for\nREPORT_STALE_S (it is stuck). This process's own report is shown,\nnot judged: its age only says how fresh the numbers are.",
+    "operationId": "readyz_readyz_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "DatasetInfo": {
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "title": "Dataset Id"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "task": {
+      "type": "string",
+      "enum": [
+       "classification",
+       "regression"
+      ],
+      "title": "Task"
+     },
+     "n_train": {
+      "type": "integer",
+      "title": "N Train"
+     },
+     "n_features": {
+      "type": "integer",
+      "title": "N Features"
+     },
+     "bytes": {
+      "type": "integer",
+      "title": "Bytes",
+      "description": "The context's size in the cache: the device memory it occupies when resident."
+     },
+     "location": {
+      "type": "string",
+      "enum": [
+       "resident",
+       "spilled"
+      ],
+      "title": "Location",
+      "description": "resident: in device memory. spilled: in this replica's disk tier (TABCTX_SPILL_DIR), restored on its next predict."
+     },
+     "device": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Device",
+      "description": "Which GPU holds it, on a multi-GPU replica."
+     },
+     "fitted_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Fitted At",
+      "description": "Unix time of the fit (null for a context spilled by an older tabctx)."
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At",
+      "description": "Unix time it is deleted at (its retention limit), or null."
+     }
+    },
+    "type": "object",
+    "required": [
+     "dataset_id",
+     "model",
+     "task",
+     "n_train",
+     "n_features",
+     "bytes",
+     "location"
+    ],
+    "title": "DatasetInfo"
+   },
+   "DatasetList": {
+    "properties": {
+     "data": {
+      "items": {
+       "$ref": "#/components/schemas/DatasetInfo"
+      },
+      "type": "array",
+      "title": "Data"
+     },
+     "served_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Served By",
+      "description": "The replica that answered: with several, each lists only its own contexts."
+     }
+    },
+    "type": "object",
+    "required": [
+     "data"
+    ],
+    "title": "DatasetList"
+   },
+   "DeleteResponse": {
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "title": "Dataset Id"
+     },
+     "deleted": {
+      "type": "boolean",
+      "const": true,
+      "title": "Deleted",
+      "default": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "dataset_id"
+    ],
+    "title": "DeleteResponse"
+   },
+   "FitResponse": {
+    "properties": {
+     "dataset_id": {
+      "type": "string",
+      "title": "Dataset Id"
+     },
+     "model": {
+      "type": "string",
+      "title": "Model"
+     },
+     "task": {
+      "type": "string",
+      "enum": [
+       "classification",
+       "regression"
+      ],
+      "title": "Task",
+      "description": "The task the context was fit for: the request's, or inferred."
+     },
+     "n_train": {
+      "type": "integer",
+      "title": "N Train"
+     },
+     "n_features": {
+      "type": "integer",
+      "title": "N Features"
+     },
+     "expires_at": {
+      "anyOf": [
+       {
+        "type": "number"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Expires At",
+      "description": "Unix time the context is deleted at (its retention limit), or null if it has none."
+     },
+     "served_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Served By"
+     },
+     "timings_ms": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "integer"
+          }
+         ]
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timings Ms",
+      "description": "Where this request's time went on the server, in ms per phase (waits for placement, host memory or the device; preprocessing; making room; restoring a spilled context; device work), plus counts as n_<name> (e.g. n_graphs_compiled, which counts the whole worker process, so concurrent requests can share it). Phases nest and overlap (worker_call contains the worker's phases); coalesced predicts report their batch's breakdown. Diagnostic: keys may change."
+     }
+    },
+    "type": "object",
+    "required": [
+     "dataset_id",
+     "model",
+     "task",
+     "n_train",
+     "n_features"
+    ],
+    "title": "FitResponse"
+   },
+   "GpuMemory": {
+    "properties": {
+     "allocated_mb": {
+      "type": "number",
+      "title": "Allocated Mb"
+     },
+     "reserved_mb": {
+      "type": "number",
+      "title": "Reserved Mb"
+     }
+    },
+    "type": "object",
+    "required": [
+     "allocated_mb",
+     "reserved_mb"
+    ],
+    "title": "GpuMemory"
+   },
+   "HTTPValidationError": {
+    "properties": {
+     "detail": {
+      "items": {
+       "$ref": "#/components/schemas/ValidationError"
+      },
+      "type": "array",
+      "title": "Detail"
+     }
+    },
+    "type": "object",
+    "title": "HTTPValidationError"
+   },
+   "LegacyPredictRequest": {
+    "properties": {
+     "train_X": {
+      "items": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "type": "array",
+      "title": "Train X",
+      "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value."
+     },
+     "train_y": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "number"
+        },
+        {
+         "type": "string"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Train Y"
+     },
+     "test_X": {
+      "items": {
+       "items": {
+        "anyOf": [
+         {
+          "type": "number"
+         },
+         {
+          "type": "string"
+         },
+         {
+          "type": "null"
+         }
+        ]
+       },
+       "type": "array"
+      },
+      "type": "array",
+      "title": "Test X",
+      "description": "Rows of cells: numbers, text (a category: the server encodes text columns at fit and reuses that encoding at predict), or null for a missing value."
+     },
+     "task": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "classification",
+         "regression"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task",
+      "description": "classification or regression. Omit it to infer from train_y: non-integer numbers, or whole numbers with more distinct values than both 30 and 5% of the rows, mean regression; anything else (text, class codes) classification."
+     },
+     "return_proba": {
+      "type": "boolean",
+      "title": "Return Proba",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "train_X",
+     "train_y",
+     "test_X"
+    ],
+    "title": "LegacyPredictRequest"
+   },
+   "LegacyPredictResponse": {
+    "properties": {
+     "task": {
+      "anyOf": [
+       {
+        "type": "string",
+        "enum": [
+         "classification",
+         "regression"
+        ]
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Task",
+      "description": "The task fit: the request's, or inferred."
+     },
+     "request_id": {
+      "type": "string",
+      "title": "Request Id"
+     },
+     "predictions": {
+      "items": {},
+      "type": "array",
+      "title": "Predictions",
+      "description": "One per test row. Classification: the predicted class as a string, one of the training labels (the `classes` returned with return_proba), whatever return_proba is. Regression: numbers."
+     },
+     "probabilities": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Probabilities"
+     },
+     "classes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Classes"
+     },
+     "n_train": {
+      "type": "integer",
+      "title": "N Train"
+     },
+     "n_test": {
+      "type": "integer",
+      "title": "N Test"
+     },
+     "n_features": {
+      "type": "integer",
+      "title": "N Features"
+     },
+     "latency_ms": {
+      "type": "number",
+      "title": "Latency Ms"
+     },
+     "gpu_memory": {
+      "anyOf": [
+       {
+        "$ref": "#/components/schemas/GpuMemory"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "type": "object",
+    "required": [
+     "request_id",
+     "predictions",
+     "n_train",
+     "n_test",
+     "n_features",
+     "latency_ms"
+    ],
+    "title": "LegacyPredictResponse"
+   },
+   "TabctxPredictResponse": {
+    "properties": {
+     "predictions": {
+      "items": {},
+      "type": "array",
+      "title": "Predictions",
+      "description": "One per test row. Classification: the predicted class as a string, one of the training labels (the `classes` returned with return_proba), whatever return_proba is. Regression: numbers."
+     },
+     "probabilities": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Probabilities"
+     },
+     "classes": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Classes"
+     },
+     "quantiles": {
+      "anyOf": [
+       {
+        "items": {
+         "items": {
+          "type": "number"
+         },
+         "type": "array"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantiles",
+      "description": "With quantiles requested: one row per test row, the value at each requested level, in the order of quantile_levels."
+     },
+     "quantile_levels": {
+      "anyOf": [
+       {
+        "items": {
+         "type": "number"
+        },
+        "type": "array"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Quantile Levels",
+      "description": "The levels the quantiles are at, as asked."
+     },
+     "n_test": {
+      "type": "integer",
+      "title": "N Test"
+     },
+     "latency_ms": {
+      "type": "number",
+      "title": "Latency Ms"
+     },
+     "cache_outcome": {
+      "type": "string",
+      "enum": [
+       "hit",
+       "restored"
+      ],
+      "title": "Cache Outcome",
+      "description": "Whether the context was resident or restored from the disk tier. Coalesced requests report their batch's outcome."
+     },
+     "served_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Served By"
+     },
+     "timings_ms": {
+      "anyOf": [
+       {
+        "additionalProperties": {
+         "anyOf": [
+          {
+           "type": "number"
+          },
+          {
+           "type": "integer"
+          }
+         ]
+        },
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Timings Ms",
+      "description": "Where this request's time went on the server, in ms per phase (waits for placement, host memory or the device; preprocessing; making room; restoring a spilled context; device work), plus counts as n_<name> (e.g. n_graphs_compiled, which counts the whole worker process, so concurrent requests can share it). Phases nest and overlap (worker_call contains the worker's phases); coalesced predicts report their batch's breakdown. Diagnostic: keys may change."
+     }
+    },
+    "type": "object",
+    "required": [
+     "predictions",
+     "n_test",
+     "latency_ms",
+     "cache_outcome"
+    ],
+    "title": "TabctxPredictResponse"
+   },
+   "UploadResponse": {
+    "properties": {
+     "upload_id": {
+      "type": "string",
+      "title": "Upload Id"
+     },
+     "n_bytes": {
+      "type": "integer",
+      "title": "N Bytes"
+     },
+     "served_by": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Served By"
+     }
+    },
+    "type": "object",
+    "required": [
+     "upload_id",
+     "n_bytes"
+    ],
+    "title": "UploadResponse"
+   },
+   "ValidationError": {
+    "properties": {
+     "loc": {
+      "items": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "integer"
+        }
+       ]
+      },
+      "type": "array",
+      "title": "Location"
+     },
+     "msg": {
+      "type": "string",
+      "title": "Message"
+     },
+     "type": {
+      "type": "string",
+      "title": "Error Type"
+     },
+     "input": {
+      "title": "Input"
+     },
+     "ctx": {
+      "type": "object",
+      "title": "Context"
+     }
+    },
+    "type": "object",
+    "required": [
+     "loc",
+     "msg",
+     "type"
+    ],
+    "title": "ValidationError"
+   }
+  }
+ },
+ "tags": [
+  {
+   "name": "contexts",
+   "description": "Fit a table, predict against it, list and delete."
+  },
+  {
+   "name": "deployment",
+   "description": "What this deployment serves and admits."
+  },
+  {
+   "name": "health",
+   "description": "Liveness and readiness probes."
+  },
+  {
+   "name": "legacy",
+   "description": "One-shot fit and predict, kept for old callers."
+  }
+ ]
+}

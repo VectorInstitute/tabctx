@@ -1,0 +1,3709 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="The serving engine for tabular foundation models.">
+      
+      
+      
+        <link rel="canonical" href="https://vectorinstitute.github.io/tabctx/changelog/">
+      
+      
+        <link rel="prev" href="../roadmap/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/icon.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Changelog - tabctx</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#changelog" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="tabctx" class="md-header__button md-logo" aria-label="tabctx" data-md-component="logo">
+      
+  <img src="../assets/icon.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tabctx
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="custom" data-md-color-accent="custom"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/VectorInstitute/tabctx" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    VectorInstitute/tabctx
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started/quickstart/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Get started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../serving/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Guides
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../why-tabctx/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Concepts
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/python/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../contributing/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Contribute
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="tabctx" class="md-nav__button md-logo" aria-label="tabctx" data-md-component="logo">
+      
+  <img src="../assets/icon.svg" alt="logo">
+
+    </a>
+    tabctx
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/VectorInstitute/tabctx" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    VectorInstitute/tabctx
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Get started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Get started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python and scikit-learn
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/http/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../serving/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Serving
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coding-agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Coding agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../why-tabctx/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Why a server
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-it-works/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How it works
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/http-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HTTP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../contributing/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contribute
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Contribute
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contributing/adding-a-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Add a model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../roadmap/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Roadmap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [Unreleased]
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0190-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.19.0] - 2026-11-05
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.19.0] - 2026-11-05">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0180-2026-11-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.18.0] - 2026-11-04
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.18.0] - 2026-11-04">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0171-2026-11-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.17.1] - 2026-11-01
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.17.1] - 2026-11-01">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0170-2026-10-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.17.0] - 2026-10-31
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.17.0] - 2026-10-31">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0160-2026-10-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.16.0] - 2026-10-31
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.16.0] - 2026-10-31">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0150-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.15.0] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.15.0] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0141-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.14.1] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.14.1] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0140-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.14.0] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.14.0] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0130-2026-10-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.13.0] - 2026-10-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.13.0] - 2026-10-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0120-2026-10-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.12.0] - 2026-10-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.12.0] - 2026-10-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0110-2026-10-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.11.0] - 2026-10-17
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.11.0] - 2026-10-17">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0100-2026-09-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.10.0] - 2026-09-01
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.10.0] - 2026-09-01">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#091-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.9.1] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.9.1] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#090-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.9.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.9.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#080-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.8.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.8.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#070-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.7.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.7.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#060-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.6.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.6.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#050-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.5.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.5.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#040-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.4.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.4.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#030-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.3.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.3.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.2.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.2.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#010-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.1.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [Unreleased]
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0190-2026-11-05" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.19.0] - 2026-11-05
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.19.0] - 2026-11-05">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0180-2026-11-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.18.0] - 2026-11-04
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.18.0] - 2026-11-04">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Removed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0171-2026-11-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.17.1] - 2026-11-01
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.17.1] - 2026-11-01">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0170-2026-10-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.17.0] - 2026-10-31
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.17.0] - 2026-10-31">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0160-2026-10-31" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.16.0] - 2026-10-31
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.16.0] - 2026-10-31">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0150-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.15.0] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.15.0] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0141-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.14.1] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.14.1] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0140-2026-10-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.14.0] - 2026-10-21
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.14.0] - 2026-10-21">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0130-2026-10-20" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.13.0] - 2026-10-20
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.13.0] - 2026-10-20">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0120-2026-10-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.12.0] - 2026-10-18
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.12.0] - 2026-10-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0110-2026-10-17" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.11.0] - 2026-10-17
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.11.0] - 2026-10-17">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#0100-2026-09-01" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.10.0] - 2026-09-01
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.10.0] - 2026-09-01">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validated_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validated
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#091-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.9.1] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.9.1] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#090-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.9.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.9.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#080-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.8.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.8.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_9" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#070-2026-08-29" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.7.0] - 2026-08-29
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.7.0] - 2026-08-29">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#060-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.6.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.6.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_14" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added_11" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#050-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.5.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.5.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_15" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#040-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.4.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.4.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_12" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#030-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.3.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.3.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fixed_16" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fixed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#020-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.2.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[0.2.0] - 2026-08-28">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added_13" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Added
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#010-2026-08-28" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        [0.1.0] - 2026-08-28
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/VectorInstitute/tabctx/edit/main/docs/changelog.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A saturated replica no longer reads as down to a gateway.</strong> The standalone server's request limiter no longer sheds <code>GET /v1/models</code> or <code>/-/healthz</code> (Ray Serve's health path, a 404 here), which a gateway's readiness probe asks, and <code>/v1/models</code> is answered on the event loop rather than behind fits and predicts in the threadpool.</li>
+<li>A predict reported <code>cache_outcome: hit</code> when the table was restored from disk while its rows were being read, as on a replica after a restart (its schema not yet recorded); the restore is now counted wherever it happens.</li>
+</ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>cache_outcome</code> is required in the predict response's schema (the server always sent it; generated clients now see it as always present). The coalescing batcher closes a batch and releases everyone in it even if its window's wait fails.</li>
+</ul>
+<h2 id="0190-2026-11-05">[0.19.0] - 2026-11-05<a class="headerlink" href="#0190-2026-11-05" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>A 422 for a non-finite number in a request (<code>Infinity</code>) no longer becomes a 500: the error echoes the value as text.</li>
+<li><strong><code>/readyz</code> no longer waits behind long fits</strong> (#51). It read GPU memory through torch's allocator (which waits for a fit freeing memory), asked each GPU worker for a report (up to 30 s behind its queued calls), took the host-memory guard's cross-process lock and walked the spill directory; on prod, readiness timed out during large fits, so a busy replica looked hung, and with the Helm chart's single replica that would take it out of its Service. Now every one of those is measured on its own thread every 5 s (worker processes send theirs), and <code>/readyz</code> reads the latest results and the guard's counters without a lock. It reports how old the device measurements are (<code>device_report_age_s</code>), and fails only for a dead worker or one silent for 10 minutes. Polled every 0.2 s during a 49 s TabICL fit on a CPU: median 1 ms, at most 353 ms. <code>/v1/tabctx/limits</code> reads the cache's counters without its lock too. A worker that never reports goes stale from its start; a spill tier that can't be read is shown as an error rather than a stuck worker. Not yet verified on a GPU: on a single-GPU replica serving in-process, whether torch releases the interpreter lock while its measuring call waits on the allocator; replicas with GPU worker processes measure in those processes, out of <code>/readyz</code>'s way.</li>
+</ul>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Predict responses and <code>PredictResult</code> expose <code>cache_outcome</code>: <code>hit</code> for a resident context or <code>restored</code> after disk spillover. Coalesced requests share their batch's outcome; older deployments leave the client field as <code>None</code>. (#112; the project's first outside contribution, from @sunxiuguo in #115.)</li>
+<li><strong>Retention limits</strong> (#103). <code>TABCTX_MAX_CONTEXT_AGE_S</code> caps how long any fitted table is kept after its fit, including tables fit before it was set (one spilled by an older tabctx, with no recorded fit time, counts as expired); a fit can ask for less with <code>ttl_s</code>, counted from when the request arrives (HTTP; <code>TabctxClient.fit</code>, <code>fit_file</code> and <code>fit_uploaded</code>; the scikit-learn estimators, which apply it again on every refit). At that time the context is deleted from device memory, host memory, the disk tier and the server's schema cache, whether or not anyone uses it again: a predict after it is a 404, and each engine sweeps expired contexts every 30 s (in worker processes too), re-checking each under the cache lock so a refit of the same id is never deleted. Fit responses and <code>GET /v1/tabctx/datasets</code> show <code>expires_at</code> (the listing leaves out expired tables); <code>/v1/tabctx/limits</code> shows the server's limit; the Helm chart sets it with <code>maxContextAgeS</code>.</li>
+<li><strong>"Why a server"</strong>, a docs page for people arriving from the models' own packages: what changes when a model serves many tables, users and programs (repeat predicts, many tables per GPU, out-of-memory, keeping a fit, uncertainty, licensing), what tabctx does at each step, and when not to use it. Each need links to a thread where users of these models raised it.</li>
+<li><strong>TabDPT, a third model</strong> (#102): <code>TABCTX_BACKEND=tabdpt</code> (or <code>tabicl,tabdpt</code>) serves Layer 6's TabDPT as <code>tabdpt-1.3</code>. Its code and weights are Apache-2.0, so with TabICLv2 there are now two models a business can serve without a separate license. Install with <code>pip install "tabctx[tabdpt]"</code>; the container image includes it.</li>
+<li>On credit-g (the quickstart's split) it scored 0.768 against TabICL's 0.772; on California housing, R² 0.89, with its 90% interval holding 88.4% of held-out prices (<code>python examples/prediction_intervals.py --model tabdpt-1.3</code>), on a CPU. Classification, regression, prediction intervals, list and delete, and the spill tier all work as for the other models.</li>
+<li>TabDPT keeps no encoding of the training table: its fit stores the table, and each predict samples a context of <code>TABCTX_TABDPT_CONTEXT_SIZE</code> rows (2,048) from it, with <code>TABCTX_TABDPT_ENSEMBLES</code> (4) ensemble members for both tasks. Left unbounded, as TabDPT's default is, a predict's cost grows with the square of the table (8,000 rows: 45 s on a CPU, against 4 s). tabctx adds serving: one endpoint, admission control, tenancy.</li>
+<li>One network per device, shared by every context and both tasks; the spill tier stores a context without it, tagged with the checkpoint version.</li>
+<li>Flash attention on every CUDA device (TabDPT enables it only for the device name "cuda", so a multi-GPU replica's "cuda:1" ran without it).</li>
+<li>Predicts use a fixed seed, so the same request gives the same answer; the mean is the same with or without quantiles.</li>
+<li>Numeric labels keep numeric order (1, 2, 10), as with the other models. Bad test rows (an infinite value) are a 422.</li>
+<li><strong>A Helm chart</strong> (#105) in <code>deploy/helm/tabctx</code>, with a "Deploy on Kubernetes" guide. One tabctx pod with its GPUs:</li>
+<li><code>/livez</code> (startup, liveness) and <code>/readyz</code> (readiness) probes, with the startup budget covering the first weights download and kernel compilation;</li>
+<li>a persistent volume for weights and compiled kernels, and an opt-in one for the disk tier (both kept on uninstall, or bring your own claim);</li>
+<li>a TabPFN token from an existing Secret;</li>
+<li>the Pod Security "restricted" profile (non-root, no capabilities, RuntimeDefault seccomp);</li>
+<li>a 300 s shutdown grace for in-flight fits;</li>
+<li>the settings as values, plus <code>extraEnv</code> (which replaces a variable the chart sets rather than duplicating it) and extra volumes.</li>
+<li>Rendering refuses what would fail at runtime: <code>tabpfn</code> without a token, <code>replicaCount &gt; 1</code> with ReadWriteOnce volumes, sizes under 1 GiB.</li>
+<li>CI lints it and checks those refusals; the chart's version must match the package's (a unit test). Release tags push it to <code>oci://ghcr.io/vectorinstitute/charts/tabctx</code>.</li>
+<li>Installed on a local kind cluster (CPU, fake model): fit, predict, list and the tenant check worked through the Service, and the non-root user could write its volumes.</li>
+<li><strong>A documentation site</strong> at https://vectorinstitute.github.io/tabctx/ (#9), built with MkDocs Material and published from <code>main</code> by <code>.github/workflows/docs.yml</code>. Pull requests build it with <code>--strict</code>, so broken links and missing API symbols fail. It has:</li>
+<li>a landing page;</li>
+<li>a quickstart, and guides for Python and scikit-learn and for the HTTP API;</li>
+<li>the serving, agents, architecture and benchmark docs;</li>
+<li>a reference generated from the code: the Python API from docstrings, the HTTP API from the service's own OpenAPI spec (rendered with Redoc), and configuration;</li>
+<li>a guide to adding a model.</li>
+<li>The OpenAPI spec names the service <code>tabctx</code> at its real version, groups routes (contexts, deployment, health, legacy) and gives each a summary.</li>
+<li><strong>Prediction intervals for regression.</strong> A predict can ask for <code>quantiles</code> (levels in (0, 1), e.g. <code>[0.05, 0.5, 0.95]</code> for the median and a 90% interval), and each test row gets the predicted distribution's value at each level. TabICL and TabPFN both predict a distribution over the target, so the quantiles come from the same forward pass as the mean: no extra GPU work. <code>examples/prediction_intervals.py</code> measures how well calibrated they are: on California housing (TabICL, 2,250 training and 750 held-out rows) the 90% interval held 86.5% of the prices, a little narrower than nominal.</li>
+<li>HTTP: <code>quantiles</code> in <code>POST /v1/tabctx/predict</code>, returned as <code>quantiles</code> and <code>quantile_levels</code>. JSON takes a list; a multipart form takes one field, comma- or space-separated or a JSON array (a repeated field is refused, as for every form field). Bad levels are a 422, as are quantiles for a classification context (it returns probabilities) or from a model that predicts only a point. The legacy <code>/v1/tabicl/predict</code> doesn't take them.</li>
+<li>Python: <code>TabctxRegressor.predict_quantiles(X, quantiles=(0.05, 0.5, 0.95))</code> returns an <code>(n_samples, n_levels)</code> array (bad levels raise <code>ValueError</code>). <code>TabctxClient.predict(..., quantiles=...)</code> and <code>predict_file</code> return <code>PredictResult.quantiles</code> and <code>quantile_levels</code>, check the levels before sending, and raise if the deployment predates quantiles instead of silently returning none.</li>
+<li>Engine and backends: <code>quantiles=</code> on <code>predict</code> throughout; the backend protocol documents it, and a backend without it still serves every other predict. Concurrent predicts are only coalesced with others asking for the same levels.</li>
+<li><strong>List and delete contexts</strong> (#103, part 1). <code>GET /v1/tabctx/datasets</code> lists the caller's contexts, resident or spilled: id, model, task, shape, size, location, GPU and fit time (metadata only). <code>DELETE /v1/tabctx/datasets/{dataset_id}</code> removes one from device memory, host memory and the disk tier on every GPU, or answers 404 if there is none. Both are scoped by tenant like every <code>/v1/tabctx</code> route. See "Listing and deleting contexts" in <code>docs/serving.md</code>.</li>
+<li>A delete is atomic with respect to spills and restores: one in progress lands first, so no copy reappears afterwards. If it doesn't land in time, the delete answers 503 having deleted nothing.</li>
+<li>On a multi-GPU replica the delete asks every GPU at once, not just the ones the residency snapshot lists. It never reports success while a copy may survive: while a GPU worker is down (its spilled copies would come back with it), list and delete answer 503 before touching anything, and a GPU failing mid-delete makes it 503 too. The client retries, and a retry that finds the context gone counts as deleted.</li>
+<li>Worker processes answer listings and deletes from a small pool of their own, so they wait neither behind queued fits nor in front of <code>/readyz</code>.</li>
+<li>Client: <code>TabctxClient.datasets()</code> and <code>TabctxClient.delete(dataset_id)</code>.</li>
+<li>Agents: a <code>delete_model</code> tool (and <code>tabctx-mcp delete &lt;name&gt;</code>) removes a model's context on the server and its saved files, which include its training table. A context another saved model shares (same table, model and task) is kept, and a model whose signature doesn't verify still loses its files without the server being asked. Saved models now record their context id.</li>
+<li>Spilled contexts now record their fit time; ones spilled by older versions list it as <code>null</code>.</li>
+<li>A new error, <code>CacheUnavailableError</code> (503), for "can't list or delete correctly right now".</li>
+</ul>
+<h3 id="fixed_2">Fixed<a class="headerlink" href="#fixed_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A caller without a tenant id could reach a tenant's context</strong> by naming its scoped id (<code>t:&lt;tenant&gt;:&lt;id&gt;</code>) on deployments that don't require tenants: predict on it, overwrite it, and now delete it. Ids starting with <code>t:</code> are now refused (422) for callers without a tenant id.</li>
+<li><code>TabctxClient</code>'s GET requests send the tenant header, as its POSTs always did, and requests without a body no longer send a Content-Type.</li>
+<li><code>TabctxClient</code> raised <code>UploadNotFoundError</code> for any 404 whose message contained "upload", including a missing dataset with "upload" in its id. It now matches only the upload store's own message.</li>
+</ul>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The unit tests run in parallel (<code>pytest -n auto</code>, with pytest-xdist in the dev dependencies), as CI now does.</li>
+</ul>
+<h2 id="0180-2026-11-04">[0.18.0] - 2026-11-04<a class="headerlink" href="#0180-2026-11-04" title="Permanent link">&para;</a></h2>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A shorter README with a logo and a headline figure.</strong> The front page now has the pitch, a fit-vs-predict chart from a saved A40 sweep (<code>benchmarks/plot_readme_figure.py</code> draws it from <code>benchmarks/baselines/sweep-a40x4-tabicl-v2.json</code>), a quickstart that runs on a laptop with no API key (checked against a fresh install of 0.17.1 from PyPI), the agent tools, a comparison with in-process models and hosted APIs, and each model's weights license. The detail moved, unchanged, into <code>docs/serving.md</code>, <code>docs/how-it-works.md</code>, <code>docs/benchmarks.md</code> and <code>docs/coding-agents.md</code>. Images use absolute URLs so the PyPI page shows them too.</li>
+</ul>
+<h3 id="fixed_3">Fixed<a class="headerlink" href="#fixed_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The estimators and <code>tabctx-mcp</code> use the deployment's own default model</strong> when none is named, instead of always <code>tabpfn-3.5</code>. Before, <code>TabctxClassifier()</code>, <code>TabctxRegressor()</code> and the agent tools' <code>fit_model</code>/<code>explain</code> failed with a 422 on any deployment that doesn't serve TabPFN, and <code>evaluate</code> reported an error for TabPFN there.</li>
+<li><code>model=None</code> (the default) is resolved at fit time from <code>GET /v1/models</code>, and the estimators record the answer as <code>model_</code>. The context id is computed from that resolved model, so naming the default explicitly reuses the same cached context.</li>
+<li>tabctx's own listing marks its default. A gateway lists its whole catalog with no mark: Vector's lists 65 LLMs beside <code>tabicl-v2</code> and <code>tabpfn-3.5</code>. There, the client narrows the list to the tabular models it knows (<code>tabctx.client.KNOWN_MODELS</code>) and prefers <code>tabpfn-3.5</code>, as before.</li>
+<li><code>evaluate</code> with no <code>models</code> runs every tabular model served, and never a gateway's LLMs.</li>
+<li>New: <code>TabctxClient.tabular_models()</code> and <code>TabctxClient.default_model()</code>.</li>
+<li>GET requests now retry on 503, like fit and predict.</li>
+<li>The agent tools check their arguments and read the table before asking the server.</li>
+<li><strong><code>pip install "tabctx[client]"</code> installs pandas.</strong> The estimators are built for DataFrames, and scikit-learn's loaders (<code>fetch_openml(as_frame=True)</code>) need pandas, so the documented quickstart failed on a clean install.</li>
+<li><strong><code>from tabctx import TabctxClient</code></strong> works (also <code>PredictResult</code>). Before, the client could only be imported from <code>tabctx.client</code>.</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tabctx.estimators.DEFAULT_MODEL</code> and <code>tabctx.mcp_tools.tools.MODELS</code>: the default now comes from the deployment. <code>tabctx.client.KNOWN_MODELS</code> lists the tabular model ids the client recognises in a gateway's catalog.</li>
+</ul>
+<h2 id="0171-2026-11-01">[0.17.1] - 2026-11-01<a class="headerlink" href="#0171-2026-11-01" title="Permanent link">&para;</a></h2>
+<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>pi in the agent demo now runs on Vector's on-prem Qwen3.8 27B</strong> (<code>Qwen3_8-27B</code> on the gateway) instead of Claude Sonnet 5.5, so one of the three agents uses an open model on Vector's own GPUs. A hosted visitor whose project lacks it still gets Sonnet. <code>PI_MODEL</code> overrides it as before.</li>
+</ul>
+<h3 id="fixed_4">Fixed<a class="headerlink" href="#fixed_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Demo page: an agent's progress notes render its <strong>bold</strong> and <code>code</code> instead of showing raw <code>**</code> and backticks (Qwen uses them a lot). Only those inline tags are allowed through.</li>
+</ul>
+<h2 id="0170-2026-10-31">[0.17.0] - 2026-10-31<a class="headerlink" href="#0170-2026-10-31" title="Permanent link">&para;</a></h2>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A Ray-free standalone host</strong>: <code>python -m tabctx.serve</code> (the new <code>standalone</code> extra: <code>[serve]</code> minus ray) serves the same routes as the Ray Serve deployment from one plain uvicorn process, for platforms that don't run Ray -- e.g. a Kubernetes Deployment behind a gateway. The service moved to <code>serve/service.py</code>, host-agnostic and importable without ray (route handlers unchanged; <code>ROUTE_SPECS</code> captures the routes at import time so <code>serve/standalone.py</code>'s <code>make_app()</code> can rebind them to a plain instance); <code>serve/app.py</code> keeps its import path and is now only the Ray host (the deployment settings and the consistent-hash affinity router). Serve-isms get standalone replacements: <code>GET /livez</code> answers 503 exactly when <code>check_health</code> would fail the replica (a dead per-GPU worker -- <code>/readyz</code> is the wrong liveness probe, it also 503s on transient pressure), and a request limiter replicates <code>max_ongoing_requests</code>/<code>max_queued_requests</code> shedding (<code>TABCTX_MAX_ONGOING_REQUESTS</code>/<code>TABCTX_MAX_QUEUED_REQUESTS</code>, defaults 8/16, probes exempt). One replica only: nothing outside Ray routes a dataset's predicts back to the replica that fit it. Unit-tested over httpx's ASGI transport in the ray-less unit environment (fit/predict inline and multipart, tenancy, 404/422, limiter, livez); the integration suite still proves <code>serve/app.py</code> on a live Ray cluster.</li>
+<li><strong>A serving image</strong> (<code>Dockerfile</code>, pushed to <code>ghcr.io/vectorinstitute/tabctx:&lt;version&gt;</code> by <code>.github/workflows/docker_image.yml</code> on each release tag): python:3.12-slim + a pinned torch (PyPI wheels bundle the CUDA runtime; the host supplies only the driver) + <code>tabctx[standalone,tabicl,tabpfn]</code>, entrypoint <code>python -m tabctx.serve --host 0.0.0.0</code>, non-root. Weights are mounted, not baked. CI smoke-tests the image against the fake backend (imports, readyz/livez, tenant-gated fit and predict); GPU validation stays with the deploying platform's rehearsal. Every dependency except torch's own stack is installed at its <code>uv.lock</code> version (CI checks it), so a PR's smoke build and the release ship the same model libraries; the image carries gcc so <code>torch.compile</code> can build Triton's C helper instead of silently running eager kernels (about 1.3x slower).</li>
+</ul>
+<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The agent demo is now about hospital readmission, not telecom churn.</strong> It uses the public Diabetes 130-US Hospitals table (UCI; OpenML #4541): 30,000 past stays and 2,000 current patients who appear nowhere in the history, picked in proportion to their number of stays so both sides have the same mix. The agent ranks the current patients by their risk of coming back within 30 days, finds the drivers, and tests care changes with what-if predictions. Admission and discharge codes are named, and diagnosis codes grouped, so tables and what-if rows read as "Home health service", not "6". Claude Code, Codex and pi all reached ROC AUC 0.674 on the real outcomes, with 8 of their top 10 and 36% of their top 100 readmitted (base rate 11.0%). <code>examples/agent_demo/task.py</code> now holds the files, columns, outcome labels and task steps, which the runner, scoring and page read.</li>
+<li><strong>Demo page: less text.</strong> The key note became a tooltip, agent cards show icon chips instead of two lines of text, the task shows as five step icons with the prompt folded, a failed tool call shows one line, and the hero lost its paragraph and footer. The predict card shows the expected split (mean probability), which says something even when almost no row crosses 50%.</li>
+</ul>
+<h3 id="fixed_5">Fixed<a class="headerlink" href="#fixed_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>/readyz</code> no longer fails on a healthy, busy replica.</strong> A worker answered <code>/readyz</code>'s report from the same 16 threads that run fits and predicts, and fits on one device run one at a time, so with more than 16 calls queued on a device the report waited past its 30 s timeout and readiness returned 503. The report now has its own thread in each worker.</li>
+<li><code>examples/agent_demo/run.sh claude</code> failed on macOS's bash 3.2 without <code>CLAUDE_MODEL</code> set (an empty array is "unbound" under <code>set -u</code>).</li>
+<li><code>make_showcase.py</code> masks the login name, which <code>ls -l</code> output in a transcript shows.</li>
+<li>Demo page tooltips escape untrusted values (column names, class labels, what-if values, tool errors) a second time, since the tooltip renders its attribute as HTML.</li>
+</ul>
+<h2 id="0160-2026-10-31">[0.16.0] - 2026-10-31<a class="headerlink" href="#0160-2026-10-31" title="Permanent link">&para;</a></h2>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>tabctx-mcp</code>: tabular foundation models as tools for coding agents</strong> (<code>tabctx/mcp_tools/</code>, <code>pip install "tabctx[mcp]"</code>). There are seven tools: <code>inspect_table</code>, <code>evaluate</code>, <code>fit_model</code>, <code>predict</code>, <code>what_if</code>, <code>explain</code> and <code>list_models</code>. They come in four forms, all over one implementation (<code>tools.TabularTools</code>):</li>
+<li>an MCP server (<code>tabctx-mcp</code>, stdio), for Claude Code, Codex and Gemini CLI;</li>
+<li>shell commands that print JSON (<code>tabctx-mcp fit ...</code>);</li>
+<li><code>tabctx-mcp tools</code> and <code>tabctx-mcp call</code>, which expose and call the MCP tools without MCP;</li>
+<li>a pi extension (<code>tabctx-mcp pi-extension</code>) that registers them as native pi tools, with no shell involved.</li>
+</ul>
+<p>How the tools behave:
+  - Fitted models are saved by name in <code>.tabctx-mcp/</code> (or <code>$TABCTX_MCP_HOME</code>), and fit the server again if it dropped their context.
+  - <code>evaluate</code> scores both models against scikit-learn gradient boosting on held-out rows.
+  - <code>predict</code> writes the table with prediction and probability columns, and returns the top-ranked rows (<code>rank_by</code>, <code>where</code>, <code>show</code>), with the id column found automatically.
+  - <code>what_if</code> can start from a real row (<code>base_file</code>, <code>base_where</code>) and change only some columns.
+  - <code>explain</code> is permutation importance, with all shuffled copies sent in one predict.
+  - Tables are CSV, TSV or Parquet. Blank cells are missing, and numbers stored as text become numbers.
+  - Errors reach the agent as MCP tool errors with their message: bad arguments, the deployment's 4xx answers, and file or network failures.
+  - <code>tabctx-mcp skill</code> prints a guide for agents (SKILL.md).</p>
+<p>Further behaviour:
+  - Saved models are signed with HMAC under a per-user key (<code>~/.config/tabctx-mcp/signing.key</code>, mode 0600). A model planted in a project's <code>.tabctx-mcp/</code> is neither listed nor unpickled.
+  - <code>evaluate</code> keeps the other models' results when one fails.
+  - <code>predict</code> writes only inside the working directory, and never over its input.
+  - Class labels stay <code>"0"</code>/<code>"1"</code> when blank target cells make pandas read them as floats.
+  - Zero-padded codes such as <code>"02139"</code> stay text, and <code>where</code> filters match numbers numerically.
+  - Results are valid JSON: NaN becomes null.
+  - <code>explain</code> caps its batched predict at 60,000 rows.</p>
+<p><code>examples/agent_demo/</code> runs a churn task with Claude Code, Codex and pi through the prod gateway. All three reached ROC AUC 0.866-0.867 on the real outcomes, and 9 of each one's 10 top-ranked customers churned.
+- <code>examples/agent_demo/ui/</code>: a local web page that runs or replays an agent on the churn task. Each tabctx call appears as a chart card: column map, model comparison, predicted split and risk table, importance, what-if deltas. The scores against the real outcomes come last. The UI is FastAPI with Server-Sent Events and plain HTML, CSS and JS.
+- CI's unit and integration jobs install the <code>mcp</code> extra (which pulls in <code>client</code>), so the estimator tests, which were skipped there before, now run.
+- <code>benchmarks/bench_upload_formats.py</code>: the same tables through a gateway as JSON and as Parquet, interleaved, splitting each fit's time between the hop to tabctx and tabctx's own work. On prod (0.15.0, 12 fits each of 5,000 x 500 and 10,000 x 100 TabICL): Parquet bodies were 8.5 MiB vs 14.0 MiB, the hop's median 1.2 s vs 2.7 s, its worst 42 s vs 113 s, and 1 fit in 12 took over 10 s vs 3 in 12; tabctx's own work was the same. Baselines <code>prod-bench-0.15.0.json</code> and <code>upload-formats-0.15.0.json</code>.</p>
+<h3 id="fixed_6">Fixed<a class="headerlink" href="#fixed_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>A Parquet file's pandas index was read as data.</strong> <code>DataFrame.to_parquet()</code> saves any index except the default 0..n-1 range as extra columns: <code>__index_level_0__</code> (after <code>train_test_split</code>, say), or the index's name. The server read those columns as features, so:</li>
+<li>the model learned from row numbers;</li>
+<li>predicting with JSON rows, or a file without the index, got a 422 ("the table has 20 columns; the training table had 21");</li>
+<li>with no <code>target</code> given, the index, which comes last, was used as the labels.</li>
+</ul>
+<p>Columns the file's pandas metadata lists as its index are now dropped when the file is read (<code>serve/files.py</code>), the way pandas reads them back as the index. One named as the <code>target</code> is kept. Found through the gateway, fitting a file uploaded with <code>/v1/tabctx/upload</code>.</p>
+<p>Other changes and limits:
+  - <strong>Behaviour change:</strong> a meaningful named index, such as <code>customer_id</code> or a <code>date</code> DatetimeIndex, used to be a feature and no longer is, matching pandas. To use it, save the frame after <code>reset_index()</code>, or name it as the target.
+  - When the index removal leaves too few columns, the error now says the index was removed.
+  - Pandas metadata that isn't in the shape pandas writes is ignored.
+  - <strong>Still open:</strong> <code>DataFrame.to_csv()</code> writes the index as an unnamed first column. CSV files have no metadata to recognize it by, so write CSVs with <code>index=False</code>.</p>
+<h2 id="0150-2026-10-21">[0.15.0] - 2026-10-21<a class="headerlink" href="#0150-2026-10-21" title="Permanent link">&para;</a></h2>
+<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>scikit-learn estimators</strong> (#63): <code>TabctxClassifier</code> and <code>TabctxRegressor</code> (<code>tabctx/estimators.py</code>, <code>from tabctx import ...</code>; <code>pip install "tabctx[client]"</code> adds scikit-learn and pyarrow). They take DataFrames, numpy arrays or lists of rows with text columns, dates and missing values as they are; labels are checked as scikit-learn checks them and come back exactly as given (sent as class indices); <code>predict_proba</code> follows <code>classes_</code>; clone, pipelines and model selection work. Test columns match the training columns by name when both have names, else by position (with a warning); a column that was text at fit stays text at predict, whatever its new values look like. Each table is one Parquet file (<code>tabctx/table_files.py</code>, float32 numbers, timestamps and durations as such); predicts over <code>max_request_bytes</code> (default 29 MiB, under the Vector gateway's 30 MiB) are split until each part fits, and a training table over it is refused before sending. The context id comes from the table, labels, model and task; a predict that finds its context gone (the server's "no cached context") fits it again from the kept training file and retries once, with the model it was fit with.</li>
+<li><strong>Client:</strong> <code>TabctxClient(api_key=...)</code> (sent as <code>Authorization: Bearer</code>, for the Vector gateway); <code>base_url</code> and <code>api_key</code> default to <code>TABCTX_BASE_URL</code> and <code>TABCTX_API_KEY</code>. <code>fit_file()</code> / <code>predict_file()</code> send a table file (path, streamed, or bytes) in the request as multipart/form-data; <code>predict(model=...)</code> for gateways, which route predicts by model. Redirects are refused rather than followed (urllib would carry the key to the new host, and turn a POST into a GET). The key never appears in the client's repr and is dropped from pickles: an unpickled client (a saved model, a worker with <code>n_jobs &gt; 1</code>) reads <code>TABCTX_API_KEY</code>, and a 401 without a key says so; copies (sklearn's clone) share the client. 403 maps to <code>PermissionError</code> like 401.</li>
+<li><strong>A table file in the fit or predict request itself.</strong> <code>/v1/tabctx/fit</code> and <code>/v1/tabctx/predict</code> take multipart/form-data as well as JSON: the same fields as form fields, the table as a <code>file</code> part (<code>curl -F dataset_id=churn -F target=churned -F file=@train.parquet</code>), so a file is one call instead of upload-then-reference. The file streams to the replica's disk under the upload size cap, is read, and is deleted. OpenAPI documents both body types.</li>
+<li><strong>Parquet and compressed CSV.</strong> Files (sent with the request or through <code>/v1/tabctx/upload</code>) may be CSV (plain, gzip or zstd) or Parquet, detected from the content (<code>serve/files.py</code>, pyarrow, replacing the numpy CSV parser). A 5,000 x 500 float table is 51 MB as JSON and 13 MB as Parquet; reading it takes 16 ms. Dates and times become seconds, stored from the training minimum so float32 keeps sub-second resolution (<code>TableSchema.offsets</code>, for any float64 column past 2^24); header names are stripped; decimal targets are numbers. Labels keep their text as written (<code>"1.0"</code>, <code>"01"</code>, <code>"true"</code> are classes of their own; <code>"NA"</code> can be a class among text labels); a missing value among numeric labels, in any spelling, is a 422 naming the row, and regression with text labels is a 422. Reading a CSV peaks at about 3x its size in host memory (arrow's parser; Parquet much less), which matters only for multi-GB direct uploads. <code>pyarrow</code> and <code>python-multipart</code> join the <code>serve</code> extra.</li>
+<li><strong>Multipart bodies stream to disk under the upload cap</strong> (<code>serve/multipart.py</code>): the file part goes straight to the upload writer as it arrives, so an oversized body stops at the cap (or is refused from its <code>Content-Length</code> before any is read), a good one is written once, and disk writes run off the event loop. Tenant checks run before the body is read.</li>
+<li><strong>Text columns</strong> (#63). Feature cells may be text in JSON rows and files alike. At fit, each text column's values are coded in sorted order (<code>tabctx/schema.py</code>, <code>TableSchema</code>); the encoding is kept with the context (spill included) and applied at predict, where a value the training table never had becomes missing. Text where the training table had numbers is a 422 naming the column. All-number JSON tables still convert in one numpy call (validation takes ~20% longer for the wider cell type: 88 -&gt; 108 ms for a 5,000 x 500 body).</li>
+</ul>
+<h3 id="changed_5">Changed<a class="headerlink" href="#changed_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Test files are matched to the training file's columns by name</strong>: any order, and extra columns (such as the target) are ignored; a missing column is a 422 naming it. A reordered header used to be a 422.</li>
+<li><strong>A request with more than one table</strong> (inline rows, a file, an upload id) is a 422 checked before an upload is used up, so the upload can still be used by a corrected request.</li>
+<li>Each replica keeps the schemas of the contexts it fit (<code>serve/schemas.py</code>, LRU bounded in entries and bytes; fits of one id record in turn, and a failed fit leaves the engine's copy to answer), so a predict doesn't ask a worker process for it; after a restart it falls back to the engine's copy. <code>engine.schema()</code> raises <code>DatasetNotFoundError</code> for an unknown context (a predict against one is a 404 whatever its rows are).</li>
+<li><code>CachedContext.feature_names</code> / <code>engine.feature_names()</code> became <code>CachedContext.schema</code> / <code>engine.schema()</code> (a <code>TableSchema</code>: names and text categories); <code>fit(feature_names=...)</code> is <code>fit(schema=...)</code>. Spill files from earlier versions load with their column names, and new ones still record <code>feature_names</code> for a rollback.</li>
+</ul>
+<h2 id="0141-2026-10-21">[0.14.1] - 2026-10-21<a class="headerlink" href="#0141-2026-10-21" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_7">Fixed<a class="headerlink" href="#fixed_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>TabICL compiled new graphs inside requests</strong> (#47): call shapes warmup didn't cover -- tables of ~20k+ rows (differently strided inputs), 1,024+-row regression predicts, and variants that overlapping calls on one worker produce -- each compiled 1-7 graphs inside the request that hit them, 5-25 s on an A100 and ~4x that on prod's A40s, holding the device so other models' calls waited too. On prod, a 5,000 x 500 TabICL fit compiled 3 graphs on every call (25.8 s, <code>timings_ms</code> from 0.14.0). Once every backend in a process has warmed up (<code>serve/factory.finish_warmup</code>: after all devices of an in-process engine, or a worker process's one), a call no compiled graph fits now runs eagerly instead (<code>torch.compiler.set_stance("eager_on_recompile")</code>, process-wide, only where compiled blocks were installed). On an A100: a first 20,000 x 100 fit 12.5 s -&gt; 3.0 s, a first 1,000-row regression predict 1.8 s -&gt; 0.14 s; eager costs ~30% on those families once a compile would have been paid (20,000 x 100 2.3 s compiled vs 2.9 s eager). <code>TABCTX_COMPILE_AFTER_WARMUP=1</code> restores compiling them.</li>
+</ul>
+<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>prod_bench.py --log-calls</code> saves every call with its <code>timings_ms</code>, for timelines of where stalls go.</li>
+</ul>
+<h2 id="0140-2026-10-21">[0.14.0] - 2026-10-21<a class="headerlink" href="#0140-2026-10-21" title="Permanent link">&para;</a></h2>
+<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Where a request's time went</strong> (<code>timings_ms</code> on fit and predict responses). A slow call can be waiting (for placement to hear back from a busy worker, for host memory, for the device's lock), moving data (spilling contexts to make room, restoring a spilled one) or computing (CPU preprocessing, the device, compiling a graph), which look the same from outside -- and prod's logs aren't readable from where the stalls are reported. Each request now carries a collector (<code>tabctx/timing.py</code>, a ContextVar) that the engine, the multi-GPU router and the worker processes record phases into: <code>read_table</code>, <code>place</code>, <code>wait_dataset_lock</code>, <code>wait_prepare_gate</code>, <code>prepare</code>, <code>wait_host_memory</code>, <code>wait_device</code>, <code>make_room</code>, <code>fit_device</code>, <code>restore</code>, <code>predict_device</code>, and counts <code>n_graphs_compiled</code>, <code>n_restores</code>, <code>n_predict_chunks</code>. Worker processes send theirs back with each reply. Diagnostic: phases can overlap and keys may change.</li>
+<li><code>benchmarks/prod_bench.py</code>: the prod benchmark as a gateway user sees it -- single-user latency (first and repeat fits of new tables per size), mixed load (two users per model looping fit + predicts; tails and calls over 5 s), and throughput (concurrent predicts with per-GPU utilization sampled from the Ray dashboard) -- keeping the slowest calls with their <code>timings_ms</code>. Baseline: <code>baselines/prod-bench-0.13.0.json</code>. <code>benchmarks/gke/serve_bench.sh</code> runs it against Ray Serve in the devbox, configured like prod; <code>devbox.sh</code> also offers 2-GPU machines.</li>
+<li><strong>Missing values</strong> (#61). Inline <code>train_X</code>/<code>test_X</code> cells may be JSON <code>null</code>; CSV cells may be empty, <code>NA</code>, <code>N/A</code>, <code>null</code>, <code>None</code> or <code>NaN</code>. Both become NaN, which both backends handle natively, so callers no longer impute first. On the devbox GPU (serving config), Adult with 30% of cells removed scores the same or slightly better sent as missing than median-filled (TabICL 0.851 vs 0.846 accuracy; TabPFN log-loss 0.320 vs 0.324). Inline tables are converted to float arrays at the HTTP edge (<code>serve/tables.py</code>), which also spares the engine its per-row checks; coalesced predicts concatenate those arrays. Text that isn't a number or a missing value is still a 422, and a CSV row with a blank label is a 422 naming the row. <code>tabicl&gt;=2.2.0</code> is now required: 2.1.x fails a predict when a training column is entirely missing.</li>
+</ul>
+<h3 id="changed_6">Changed<a class="headerlink" href="#changed_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>task</code> is optional and inferred from the labels when omitted</strong> (#60): non-integer numbers, or whole numbers with more distinct values than both 30 and 5% of the rows (prices, counts: Ames sale prices are integers; 50 state codes in 1,000 rows stay classes), mean regression; anything else means classification, as before. Only actual numbers count: text labels are categories even when they look numeric ("250.01"); a CSV target column, which has no types, counts as numbers when every value parses as one. NaN/inf labels are a 422 whatever the task. <code>FitResponse</code> reports the task used. An explicit <code>task</code> still wins. Engine, multi-GPU router, HTTP API (<code>/v1/tabctx/fit</code>, the legacy predict) and client all take <code>task=None</code>; the client leaves the field out when unset, so it still works against servers that require it.</li>
+</ul>
+<h3 id="fixed_8">Fixed<a class="headerlink" href="#fixed_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>TabICL with more than 10 classes failed the fit with a bare 500</strong>: its kv cache can't hold the several forward passes tabicl uses past the model's native 10 classes. Such a fit is now a 422 that names the limit, checked before preprocessing once the model is loaded. The legacy <code>/v1/tabicl/predict</code> response now reports the <code>task</code> it fit.</li>
+<li><strong>A continuous target sent as classification</strong> got a 500 from TabICL and a 422 from TabPFN about "573 classes" (#60). Classification labels that are non-integer numbers are now rejected up front with a 422 that says to pass <code>task='regression'</code> (<code>labels.validate_labels</code>); integer-coded classes are unchanged. TabICL's own input errors are now a 422 like TabPFN's, and both backends' rejections of all-numeric classification labels carry the same hint.</li>
+</ul>
+<h2 id="0130-2026-10-20">[0.13.0] - 2026-10-20<a class="headerlink" href="#0130-2026-10-20" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_9">Fixed<a class="headerlink" href="#fixed_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Predicts against wide or long contexts ran as one-row calls</strong> (#47). Predict chunks were sized with the fit memory model, which grows with the training table; past ~3,500 x 500 no chunk "fit", chunking fell to one row, and a 100-row predict became 100 sequential model calls: 14.4 s (TabICLv2) and 6.3 s (TabPFN-3.5) instead of ~0.1 s on an A100, ~24 s and ~11 s on prod's A40s. Chunks are now sized by <code>PredictCostModel</code> (<code>memory/predict.py</code>), built from predict peaks measured under the serving configuration (<code>benchmarks/calibrate_predict.py</code>, A100, compiled TabICL, int8 kv; generated <code>memory/calibration_predict_a100.py</code>): a cost per test row and a fixed cost per call, both by width, plus a cost per training row. It bounds every measurement it was built from and assumes at most linear growth beyond them (affine in width past the widest, where it scales in proportion to width), and it applies only to the calibrated configuration (kv cache, int8, compiled TabICL; TabPFN). When a call's fixed cost alone exceeds the headroom, only the rows above it are sized against the budget instead of splitting to single rows, which only multiplied that fixed cost; with no headroom a predict still runs as the smallest chunks, and a real OOM still halves a chunk. <code>LIGHT_PREDICT_ROWS</code> is now <code>chunking.MAX_CHUNK_ROWS</code> (2,048), so a light predict is one call.</li>
+<li><strong>A killed worker could look alive to <code>close()</code></strong>, which then kept its host-memory reservations (and failed <code>test_workers_close_together_within_one_grace_period</code> intermittently in CI). The reader thread and <code>close()</code> both reaped a dying worker; when two threads call waitpid at once, the loser finds no child and CPython reports the process still running until the winner records its exit code. Every wait, liveness check and kill of a worker is now serialized under one lock (waits on its process sentinel happen outside it, so health checks never block), so every caller sees the exit, and its code, once one does; a sentinel a forked grandchild still holds falls back to a non-blocking check.</li>
+<li><strong>TabICL classification labels changed type with <code>return_proba</code></strong> (#45): without probabilities it returned <code>predict()</code>'s labels (numbers for a JSON <code>train_y</code>), with them strings from <code>classes</code>; TabPFN always returned strings. TabICL now derives labels the way TabPFN already did, from one <code>predict_proba</code> pass, and both report them through <code>backends._outcome.classification_outcome</code>: a classification's <code>predictions</code> are always strings drawn from <code>classes</code>. (Integer labels sent as JSON numbers still come back in float form, <code>"1.0"</code>; see #45.) Documented on the predict responses' <code>predictions</code> field.</li>
+<li><strong>Compiled TabICL stopped compiling in serving</strong> (#47). <code>install_compiled_blocks</code> set dynamo's <code>recompile_limit</code> and <code>suppress_errors</code> once, but dynamo's config overrides are per thread (a <code>ContextVar</code>, torch 2.13+), and fits and predicts run on other threads (engine and worker threads, <code>asyncio.to_thread</code>), which saw dynamo's defaults: a limit of 8. Prod's four A40 workers each hit <code>recompile_limit (8)</code> at the first graph past warmup's 54, after which dynamo compiles no new graph of the blocks for the life of the process: every shape warmup missed ran eagerly from then on (warmed shapes kept their graphs), and a compile error would have failed a tenant's fit instead of falling back to eager. The settings are now applied around each compiled call too (<code>tabicl_compile.with_compile_settings</code>, ~4 us), so they hold on any thread, and <code>accumulated_recompile_limit</code> (256, which capped the per-device limit) is raised with them. A100, calls on a separate thread (<code>benchmarks/bench_stalls.py --call-thread</code>; <code>baselines/compile-call-thread-a100-{before,after}.jsonl</code>): shapes outside warmup's families run compiled once their graph exists -- in that sweep, 3,500 x 500 fits 2.31 -&gt; 1.61 s and 3,500 x 1,000 5.49 -&gt; 3.50 s, on graphs first built by its earlier 30k-row fits. Such a graph now compiles once per worker (a first ~30k-row fit takes 5-25 s) instead of never.</li>
+</ul>
+<h3 id="added_6">Added<a class="headerlink" href="#added_6" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>benchmarks/bench_stalls.py</code> (fixed-cost stalls across table sizes, with compiled-graph counts per call; <code>--tasks</code>, <code>--call-thread</code> to call from another thread as serving does), <code>benchmarks/profile_predict.py</code> (cProfile of one predict), <code>benchmarks/calibrate_predict.py</code> and <code>benchmarks/gen_predict_grid.py</code> (predict calibration), <code>benchmarks/sweep_gateway.py</code> (the table-size sweep through the Vector gateway).</li>
+</ul>
+<h2 id="0120-2026-10-18">[0.12.0] - 2026-10-18<a class="headerlink" href="#0120-2026-10-18" title="Permanent link">&para;</a></h2>
+<h3 id="added_7">Added<a class="headerlink" href="#added_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Multi-GPU replicas</strong> (#30). <code>MultiDeviceEngine</code> runs one <code>TabctxEngine</code> per device -- backends bound to <code>cuda:i</code>, its own cache, lock and spill subdirectory -- behind the single-engine API, built automatically when a replica sees several GPUs (<code>TABCTX_DEVICES=auto</code>, or an explicit list). Placement is aimed at the expected workload, a few concurrent users with small and large tables: a fit goes where its estimated peak fits without eviction, on the least active device (in-flight calls, then calls in the last 30s), else to the device with the most headroom. Predicts route to the device holding the context (resident first, then spilled), found from lock-free residency/spill snapshots, so routing never waits on another GPU's work and fits and predicts on different devices run concurrently. Per-dataset_id locks serialize fits and evicts of one id (no duplicate copies from retried fits); a re-fit lands on its device before other copies are removed, so a failed re-fit leaves the previous context serving. Unknown models are rejected (422) before anything changes. <code>TABCTX_SPILL_CAPACITY_BYTES</code> is the replica's total, split across devices' spill subdirectories; a spill layout change (one vs several devices) is logged. <code>TABCTX_DEVICES</code> rejects mixed CPU/GPU lists, a bare <code>cuda</code> among indexed GPUs, and indices the process can't see. <code>/readyz</code> gains a per-device breakdown (contexts, bytes, activity, real GPU memory); <code>/v1/tabctx/limits</code> reports the best single device. A single GPU builds exactly the engine it did before.</li>
+<li><strong>One worker process per GPU</strong> (#39, <code>TABCTX_WORKER_PROCESSES</code>, default on for multi-GPU replicas). Fits are host-bound, so threads of one process driving several GPUs contend for the GIL: on 4x A100, four concurrent fits ran at 2.1-3.1x aggregate from threads and 3.96-4.3x from processes (<code>benchmarks/bench_scaling.py</code>). <code>serve/workers.py</code> runs each device's engine in its own process behind a <code>ProcessShard</code> proxy; the router reads versioned residency/headroom snapshots that every reply carries, so its decisions stay lock-free. A dead worker fails its calls, is skipped by placement, and fails <code>/readyz</code> and Ray Serve's <code>check_health</code> so the replica restarts. Nothing depends on Ray. Under Ray Serve on 4x A100 with 6 mixed users: 2.58 -&gt; 5.0 predicts/s, small-fit p50 1.6 -&gt; 0.6 s.</li>
+<li><strong>Light predicts run beside a fit</strong> on the same GPU (#39). A predict against a resident context with at most 2,048 rows no longer waits for a fit on its device (it waited up to 266 s on the L4 rehearsal): ~0.1 s p50 during a 40k x 100 fit on an A100, at ~15% fit slowdown. Restores and large predicts still wait; contexts in use are pinned against evict-ahead (and evicted with predicts held off when nothing else makes room); a fit that runs out of memory beside a predict retries alone; allocator measurements are taken with predicts quiesced, and memory freed during a fit is released only after it has measured itself.</li>
+<li><strong>TabPFN-3.5 requirement calibration</strong> (A100, 20 shapes up to 200k x 10 and 30k x 1,000). TabPFN also sizes its working memory from what is free (20k x 100 peaks at 7.3 GiB unconstrained but runs within 2x its time on 1.1 GiB), so admission bounds resident + working floor for it too, instead of TabICL's peak formula: up to 100k rows at 100 features and 80k at 1,000 on an A40 (was 5k and 500 on an L4). Its per-row resident rate grows with features, which <code>ResidentRateModel(width_dependent=True)</code> respects.</li>
+<li><strong>Pluggable placement and residency events</strong> (#39). The multi-device router asks a <code>PlacementPolicy</code> (<code>placement.py</code>) which device takes a fit, from a lock-free view of each device (headroom, the fit's estimated need there, activity, liveness); the previous rule is the default <code>LeastActiveThatFits</code>, which now also skips dead workers. The router emits <code>ResidencyEvent</code>s (<code>events.py</code>) when it places a context and when it removes a copy, to any sink; <code>/v1/tabctx/residency</code> serves the latest. A platform that co-schedules LLMs and tabular models can supply its own policy and follow placements without polling; events are advisory (contexts dropped by capacity eviction without spill aren't reported), so <code>/v1/tabctx/residency</code> also returns each device's current resident and spilled ids to reconcile against, scoped like every <code>/v1/tabctx</code> route (a tenant sees only its own datasets). <code>fit_predict</code>'s throwaway contexts aren't reported, and an evict that fails on one device (a dead worker) no longer stops the others.</li>
+<li><code>benchmarks/bench_scaling.py</code> (threads vs processes across GPUs), <code>bench_overlap.py</code> (predict latency and correctness during a fit), <code>gke/serve_workload.sh</code> (Ray Serve + workload inside the devbox).</li>
+<li><code>benchmarks/bench_workload.py</code>: concurrent users looping fit-then-predict over a small/medium/large table mix (large ones via CSV upload), with per-class latency percentiles, 413s, errors and the per-device spread.</li>
+<li><code>benchmarks/sweep_admission.py</code>: the table-size sweep (rows up to the first 413 per feature count, fit and predict timed).</li>
+<li>ROADMAP: multi-GPU and CUDA-level track (#30-#37), PyTorch-level first.</li>
+</ul>
+<h3 id="changed_7">Changed<a class="headerlink" href="#changed_7" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>TabICL's ICL key/value cache is stored in int8 by default</strong> (#34, <code>TABCTX_KV_PRECISION=int8|fp16|native</code>; <code>backends/tabicl_kv.py</code>). It dominates a TabICL context, so int8 about halves resident memory per context: twice the contexts per GPU and a longer longest table. A100, 7 datasets (<code>benchmarks/baselines/kv-precision-tabicl-a100.jsonl</code>): identical labels and metrics, max probability drift 0.009, warm predicts up to ~1.4x slower on large contexts. <strong>Served probabilities change slightly</strong>; set <code>TABCTX_KV_PRECISION=native</code> for 0.11.0's exact outputs. TabPFN already stores its cache in int8.</li>
+<li><strong><code>TABCTX_OFFLOAD_DIR</code></strong> (new): where TabICL spills stage outputs too large for GPU and host memory (memory-mapped files) instead of exhausting the pod's RAM; default <code>&lt;TABCTX_SPILL_DIR&gt;/offload</code>, else a temporary directory, one subdirectory per device. Lets one A100 fit 130k x 500 (65M cells).</li>
+<li><code>serve.factory.BuiltEngine</code>: <code>backends</code>/<code>backend</code> are replaced by <code>backend_names</code> (with worker processes this process holds no backends), <code>engine</code> may be a <code>MultiDeviceEngine</code>, and <code>close()</code> stops worker processes.</li>
+<li><strong>TabICL's power transforms are fitted on the GPU</strong> (<code>TABCTX_FAST_PREPROCESSING</code>, default on; <code>backends/yeo_johnson.py</code>). tabicl normalizes each ensemble member with scikit-learn's Yeo-Johnson PowerTransformer, which fits one lambda per column with scipy -- 80%+ of a fit's CPU half. A vectorized fit (same objective, bounds and tolerance; grid then golden-section search, all columns at once) runs in 0.08-0.25 s instead of 0.8-4.4 s on an A100 host; lambdas agree with scikit-learn's within one float32 ulp, accuracy/AUC/R^2 are unchanged on the evaluation datasets, and NaN inputs, Box-Cox and a device out-of-memory fall back to scikit-learn. The device section runs under the measurement lock (a concurrent fit's allocator readings never see it) with temporaries bounded to 512 MiB per column chunk, and fitted transformers pickle as plain scikit-learn objects. With compiled blocks, an isolated 40k x 100 fit takes 4.8 s (was 11.2 s).</li>
+<li><strong>TabICL's attention blocks are compiled</strong> (#36, <code>TABCTX_COMPILE</code>, default on; <code>backends/tabicl_compile.py</code>). Inductor fuses the memory-bound layer norms, residual adds and GELU MLP around each attention kernel: on an A100 the fit's GPU half is 1.7-2.2x faster (10k x 50: 0.91 -&gt; 0.52 s; 40k x 100: 7.65 -&gt; 4.30 s; 20k x 200: 6.51 -&gt; 2.92 s) and its peak ~20% lower (40k x 100: 33.1 -&gt; 27.0 GiB); 100-row predicts 20-35% faster. Accuracy, AUC and R^2 are unchanged on the evaluation datasets, and predicts beside a fit stay correct. Ray Serve, 6 mixed users on 4x A100: 5.78 -&gt; 6.99 predicts/s, small-fit p95 1.48 -&gt; 0.95 s. tabicl's ssmax log(n) is now computed symbolically inside compiled code, so a new table size doesn't recompile. Each worker's compile pool is sized to its share of the container's CPUs (<code>TORCHINDUCTOR_COMPILE_THREADS</code>, when unset). Only tabicl's fp16 path (1,024+ rows) is compiled; its common graphs (~50) compile in <code>warmup()</code> at replica start (~130 s per worker, workers in parallel); shapes it doesn't cover (very large tables) compile on first use, ~10 s once per worker. Compile errors fall back to eager, with a warning after warmup if nothing compiled. The lower peak doesn't lower what admission must reserve: the least free memory a compiled fit succeeds with is the same as eager's or up to ~2 GiB more (80k x 10: 22.9 vs 20.7 GiB), so compiled TabICL is admitted against its own requirement grid (per shape, the larger of the two measurements; <code>minfree-tabicl-kv-compiled-a100.jsonl</code>).</li>
+<li><strong>Host-memory admission</strong> (new; <code>memory/host.py</code>). Large TabICL fits offload stage outputs to host RAM (~46 GiB at 10M cells); two at once could get the pod OOM-killed with every tenant's context. Each backend estimates a call's host use (TabICL ~5 KB per cell when it offloads, else nothing; TabPFN ~0.6 KB per cell), and a guard admits calls against one budget shared by every worker process on the node: first come first served (a large fit can't be starved by modest ones), at most <code>slots</code> offloading calls at once (each budgets 1/slots of free host memory for its staging), calls under 1 GiB never wait. The budget is the container's memory limit x 0.85 minus its working set (every process in the pod) and an 8 GiB reserve, re-measured once the per-GPU workers have warmed up. A worker that dies holding host memory has it returned by its parent; a stuck accounting lock fails calls with <code>HostMemoryUnavailableError</code> (new, exported; HTTP 503, retryable) instead of hanging. <code>/readyz</code> gains <code>host_memory</code> (<code>budget_bytes</code>, <code>reserved_bytes</code>, <code>calls_active</code>, <code>calls_offloading</code>, <code>calls_waiting</code>, <code>large_fit_slots</code>).</li>
+<li><strong>TabICL fits prepare their CPU half before taking the device</strong>: preprocessing (~30-37% of a fit) overlaps another fit's GPU half -- back-to-back fits 17-26% faster on an A100. At most one fit per device prepares ahead, so queued fits don't each hold preprocessed copies in host memory.</li>
+<li>Worker processes shut down together under one 10 s deadline (was up to 10 s each, past a pod's grace period).</li>
+<li><strong>tabicl's per-call log(n) host-to-device syncs are cached</strong> (bit-identical): 10k x 50 fits 1.98 -&gt; 1.66 s on an A100.</li>
+<li>The cache's spill reads and writes run outside its lock, so bookkeeping and light predicts never wait on multi-GB disk I/O.</li>
+<li><strong>TabPFN contexts share the model: ~42x less GPU memory per context.</strong> TabPFN builds a fresh model for every estimator unless its built-model cache is on, so every cached context held its own ~850 MB copy of the weights on the GPU (measured on an A100: 4 contexts of a 300x6 table took 3.4 GB). <code>TabPFNBackend</code> now enables that cache (<code>TABPFN_MODEL_CACHE_SIZE</code>, default 16 entries, keyed by device and task): one shared model per (device, task), about 1.7 GB fixed per GPU, and a context costs only its own state (~20 MB for that table). Interleaved contexts predict bit-identically to each context alone.</li>
+<li><strong>TabPFN spill blobs no longer contain the model.</strong> A spilled TabPFN payload was ~900 MB, mostly weights, and a restore built another private copy on the GPU. References to the shared model are now pickled as tokens and re-attached on load: a 2,000x20 context spills as 99 MB and restores with identical predictions and no extra GPU memory. Older blobs still load.</li>
+<li><strong>Weights load at replica start</strong> (<code>warmup()</code> on both backends, called by the factory) instead of inside the first tenant's fit, which reported the checkpoint as part of its context (a 200x6 TabPFN context was booked at 855 MB, TabICL's at 226 MB) and paid the load latency.</li>
+</ul>
+<h3 id="fixed_10">Fixed<a class="headerlink" href="#fixed_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Fits OOMed on GPUs the books said had room</strong> (4x L4 rehearsal: a 250 x 1000 TabPFN fit beside 18 GB of contexts on a 22 GB card). Memory outside the cache's accounting grows after warmup (allocator fragmentation, compiled kernels' workspaces), so making room now also checks the device's real free memory (free plus torch's reusable cache) and evicts until both agree. A fit retrying after an OOM first frees contexts that were parked during its failed attempt.</li>
+<li><strong>Router 404 for a context being spilled</strong> (4xL4 rehearsal: a fit returned 200 and the next predict 404'd 27 ms later): a context moving between the GPU cache and the spill tier was listed by neither; it is now tracked in transit, and predict re-locates once after a miss.</li>
+<li><strong>TabICL shared-backbone cache was per-module, not per-call</strong>: interleaved calls could read another context's cache. It is now thread-local.</li>
+<li>A device OOM while restoring a spilled context no longer deletes the spilled copy.</li>
+<li><strong>First fit on a GPU failed</strong> with "Invalid device argument": device-explicit memory-stat calls need CUDA initialized, which the no-argument forms used to do implicitly. Backends now initialize CUDA at construction.</li>
+<li><strong>Spill tier warm restart:</strong> the index rebuilt at startup was keyed by the hex-encoded file name instead of the dataset_id, so lookups, explicit deletes and disk-pressure cleanup all missed contexts a previous process had spilled (restores still worked because <code>load()</code> reads by path).</li>
+<li><strong>TabICL spill restore reloaded the checkpoint:</strong> tabicl's <code>__setstate__</code> calls <code>_load_model()</code>, which loaded the full checkpoint (and a second backbone onto the GPU, unaccounted) on every restore before tabctx swapped in the shared one. Spilled TabICL payloads now carry a task tag and restore straight onto the shared backbone; untagged blobs from older versions still load.</li>
+<li><code>/readyz</code> and the legacy endpoint read GPU memory from torch's current device; they now read the replica's own device(s).</li>
+<li>The TabICL and TabPFN backends measured memory on, and let library internals allocate on, torch's <em>current</em> CUDA device rather than their own. Harmless on one GPU; on <code>cuda:i</code> it would have charged every context to <code>cuda:0</code>. They now measure on their device and run inside its scope.</li>
+</ul>
+<h3 id="validated">Validated<a class="headerlink" href="#validated" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Unit (multi-device placement, routing, spill restore, failures) and integration tests (the serve app on two fake devices through Ray). Concurrency tests force interleavings with gates and barriers rather than timing: a fit on an idle device completes while another device is mid-call, lookups and stats never wait on a busy device, concurrent same-id fits leave one copy, a predict during a re-fit is answered. Seven of them fail against the first version of this engine (found by review).</li>
+<li>On a local fake 3-device replica with 5 concurrent users: with spill on, 0 failed predicts at ~100 predicts/s. Without spill, capacity eviction cost 12 predicts on three devices versus 115 on one.</li>
+</ul>
+<h2 id="0110-2026-10-17">[0.11.0] - 2026-10-17<a class="headerlink" href="#0110-2026-10-17" title="Permanent link">&para;</a></h2>
+<h3 id="changed_8">Changed<a class="headerlink" href="#changed_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The TabPFN model id follows the checkpoint actually loaded.</strong> It was hardcoded to <code>tabpfn-3</code>, but <code>tabpfn</code> 9.x loads TabPFN-3.5 by default (a different model under its own license, <code>tabpfn-3-5-license-v1.0</code>), so a default install served TabPFN-3.5 named <code>tabpfn-3</code>. The id is now derived from <code>tabpfn</code>'s resolved <code>model_version</code> (<code>TABPFN_MODEL_VERSION</code>): <code>v3.5</code> -&gt; <code>tabpfn-3.5</code> (the 9.x default), <code>v3</code> -&gt; <code>tabpfn-3</code>, <code>v3.5-fast</code> -&gt; <code>tabpfn-3.5-fast</code>. <strong>Breaking for callers that send <code>"model": "tabpfn-3"</code> to a deployment on the default version</strong>: pin <code>TABPFN_MODEL_VERSION=v3</code> to keep serving TabPFN-3 under its old id, or switch callers to <code>tabpfn-3.5</code>.</li>
+</ul>
+<h3 id="fixed_11">Fixed<a class="headerlink" href="#fixed_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The TabPFN pretraining-limit integration test used 2,100 features, which TabPFN-3.5 accepts (its feature limit is 20,000, versus 2,000 on v3). It now exceeds the 160-class limit shared by every v3-series checkpoint.</li>
+</ul>
+<h3 id="validated_1">Validated<a class="headerlink" href="#validated_1" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tests/integration/test_tabpfn_backend.py</code> on CPU with <code>tabpfn</code> 9.1.0 against both <code>v3</code> and <code>v3.5</code>, offline (<code>HF_HUB_OFFLINE=1</code>, no <code>TABPFN_TOKEN</code>) from a read-only <code>TABPFN_MODEL_CACHE_DIR</code> holding only the checkpoint: 4/4 each. TabPFN-3.5 needs one file, <code>tabpfn-v3.5-20260909.safetensors</code> (835 MiB), for both classification and regression.</li>
+</ul>
+<h2 id="0100-2026-09-01">[0.10.0] - 2026-09-01<a class="headerlink" href="#0100-2026-09-01" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_12">Fixed<a class="headerlink" href="#fixed_12" title="Permanent link">&para;</a></h3>
+<p>Found by a full-codebase review (2026-09-01), each with a regression test:
+- <strong>Explicit eviction could resurrect a stale context.</strong> <code>ContextCacheManager.evict()</code> (fit_predict's cleanup, re-fit overwrites) dropped the resident entry but left any spilled copy on disk, so the next <code>get()</code> transparently reloaded the OLD context. Explicit evict and re-fit <code>put()</code> now remove the spilled copy too.
+- <strong>Spill restore under a smaller budget was a 500.</strong> A context spilled by a replica with a larger <code>TABCTX_GPU_MEMORY_FRACTION</code> failed re-admission with <code>CacheCapacityError</code> from inside <code>get()</code>; it is now a clean miss (re-fit), and predict maps admission errors to 413 as fit already did.
+- <strong>predict() raced evict-ahead-of-fit.</strong> The context lookup and chunk-size derivation ran outside the cache lock, so a concurrent fit could spill the context and shrink the headroom between lookup and GPU call. The whole sequence now runs under the lock (RLock, so nothing else changes).
+- <strong>The serving budget was always an A100's.</strong> <code>serve/factory.py</code> hardcoded 40GB device capacity; on an L4 (24GB) admission headroom exceeded the card. Capacity is now read from the visible CUDA device (<code>detect_gpu_capacity_bytes</code>), the cache ceiling keeps its calibrated 24/40 ratio to it, and <code>/readyz</code> + <code>/v1/tabctx/limits</code> report <code>gpu_capacity_bytes</code>.
+- <strong>Client:</strong> <code>GET</code> calls (<code>ready</code>, <code>models</code>, <code>limits</code>) leaked raw <code>urllib</code> errors instead of tabctx exceptions; <code>upload_csv_file</code> read the whole file into memory despite existing for tables too big for inline JSON (it now streams the open file with an explicit <code>Content-Length</code>, verified against a real HTTP server in the unit suite); the affinity header name is configurable (<code>session_header=</code>) to follow a deployment's <code>RAY_SERVE_SESSION_ID_HEADER_KEY</code>, without which affinity silently degraded.
+- <strong>Factory default model</strong> was chosen by comparing a backend <em>kind</em> (<code>tabicl</code>) against model <em>ids</em> (<code>tabicl-v2</code>) -- correct only because dict insertion order happened to agree. Now explicit.</p>
+<h3 id="changed_9">Changed<a class="headerlink" href="#changed_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>CachedContext.feature_names</code>: a CSV-fit context's column names live on the context (and in its spill metadata) instead of a per-replica dict in <code>serve/app.py</code> that grew without bound and lost the schema check whenever a context was restored from spill or a replica restarted. <code>TabctxEngine.fit(feature_names=...)</code> / <code>engine.feature_names(dataset_id)</code>.</li>
+<li>Cache usage is tracked incrementally (<code>make_room</code> polled an O(n) sum per eviction); <code>ContextCacheManager.dataset_ids()</code> added. Estimator/factory defaults reference the module constants they duplicated; adaptive observations use a bounded deque.</li>
+<li>Housekeeping: <code>.env</code> ignored; ruff no longer formats Markdown code blocks; README architecture figure (<code>docs/figures/architecture.svg</code>), status section, and a "pre-computed contexts for many applications" section stating what works and what's missing (ROADMAP item 1).</li>
+</ul>
+<h3 id="added_8">Added<a class="headerlink" href="#added_8" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>benchmarks/probe_deployment.py</code>: end-to-end acceptance probe for a live deployment on any GPU via <code>TabctxClient</code> (tenant + custom session header aware): cache reuse, single-pass proba, upload/fit/predict by reference + schema check, chunked predicts, coalescing, and fill-until-eviction with spill restore.</li>
+</ul>
+<h3 id="validated_2">Validated<a class="headerlink" href="#validated_2" title="Permanent link">&para;</a></h3>
+<ul>
+<li>All of the above on a live GKE deployment (<code>tabctx-gateway</code>, one NVIDIA L4 24GB, TabICLv2 + TabPFN-3, spill on) via <code>probe_deployment.py</code>: 24/24 checks. The device-capacity fix is visible there: cache ceiling 14.3GB / admission headroom 20.1GB (was 24GB / 36GB, i.e. more than the card). Deployment gotcha recorded for next time: Ray caches pip runtime envs by package spec on every node, and the Serve controller ships the ingress-wrapped class from the HEAD's cached env by value -- a same-named wheel only goes live after the head pod (not just the worker) restarts.</li>
+</ul>
+<h2 id="091-2026-08-29">[0.9.1] - 2026-08-29<a class="headerlink" href="#091-2026-08-29" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_13">Fixed<a class="headerlink" href="#fixed_13" title="Permanent link">&para;</a></h3>
+<p>Two bugs found by the dedicated GKE stress run (a fresh single-replica A100 deployment of v0.9.0 with both models and spillover):
+- <strong>One oversized request could flush every tenant's context.</strong> Evict-ahead-of-fit drained the ENTIRE cache (spilling 30 contexts) making room for a 200k x 60 fit that could never be admitted, then 413'd anyway -- observed live via <code>/readyz</code> (cache 0 contexts, spill tier at capacity). Feasibility is now checked against the empty-cache headroom BEFORE any eviction: infeasible fits reject immediately and warm contexts stay put.
+- <strong>Predicts against calibration-admitted shapes degraded to 1-row chunks.</strong> Chunking still estimated with the stale conservative formula against the cache ceiling, so a 2,000-row predict on a 50k x 100 context became 2,000 sequential GPU calls and timed out (the shape 413'd instantly before v0.9.0, so this path had never run). The calibration sweep's measured predict-time peaks now ship as a second preloaded grid (<code>*_PREDICT_PEAK_GRID</code>, scaled linearly in n_test from the 1,000-row measurement basis), and chunking budgets against the same usage-aware headroom admission uses.</p>
+<h2 id="090-2026-08-29">[0.9.0] - 2026-08-29<a class="headerlink" href="#090-2026-08-29" title="Permanent link">&para;</a></h2>
+<h3 id="changed_10">Changed<a class="headerlink" href="#changed_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Standard multi-model endpoint (chat-completions style).</strong> One deployment now serves several models over ONE shared context cache and GPU budget: <code>TABCTX_BACKEND=tabicl,tabpfn</code> (first listed = default), requests select a model via <code>"model": "&lt;exact id&gt;"</code> (<code>tabicl-v2</code>, <code>tabpfn-3</code> -- named for the checkpoints actually loaded), <code>GET /v1/models</code> lists what's served. Contexts remember which model fit them, so predict dispatches automatically; a single shared budget is the point -- two separate deployments on one GPU would each be blind to the other's memory use. Single-model deployments are unchanged. Requires Python &gt;= 3.12.</li>
+<li><strong>Admission control now bounds the right quantity, measured on real hardware</strong> (the former Priority-1 rewrite):</li>
+<li>Backends report TWO measurements per fit: the transient PEAK allocation (what actually OOMs -- can exceed the resident context by an order of magnitude) and the post-fit RESIDENT size. Admission learns from peaks; cache accounting charges residents. (v0.4.0 conflated these -- admission was learning from residents.)</li>
+<li>Admission is usage-aware: a fit's estimated peak must fit within 85% of device capacity MINUS what the cache already holds resident, so the same shape honestly stops being admissible as the replica fills and recovers after eviction. <code>/v1/tabctx/limits</code> reports the live boundary.</li>
+<li><code>AdaptiveMemoryEstimator</code> ships with a factory-preloaded calibration grid (<code>memory/calibration_tabicl_a100.py</code>, generated by <code>benchmarks/calibrate_memory.py</code> + <code>gen_calibration_data.py</code> from an A100-40GB sweep of TabICL with the kv cache on): measured peaks for shapes up to 100,000 rows x 200 features in "kv" mode and 500,000 rows in "repr" mode (whose contexts are ~10x smaller resident: 1.6GB vs 14.8GB at 100k x 100 -- the high-tenant-density option), with the real boundaries recorded: ~200k rows GPU-OOMs in kv mode, and ~10M-cell tables (200k x 100, 100k x 200) exhaust ~85GB of HOST RAM in the model's CPU-side pipeline -- pod memory limits are the backstop for that. Calibration points carry a 1.1x margin (direct measurements) vs 1.5x for runtime observations. Net effect, validated end to end on an A100: a 100,000 x 10 fit -- rejected by every prior version -- admits and completes in 17s, and fits beyond the measured boundary still 413 cleanly.</li>
+<li><strong>Disk spillover tier</strong> (<code>TABCTX_SPILL_DIR</code>, off by default): capacity-evicted contexts serialize to local disk and reload transparently on the next request -- no training data needed from the caller; bounded by its own LRU (<code>TABCTX_SPILL_CAPACITY_BYTES</code>), best-effort by contract, warm-restart capable. TabICL spills exclude the shared pretrained backbone. Validated under real pressure on an A100 (3 contexts / 39GB spilled, evicted context reloaded with correct predictions). Measured economics are in the module docstring: on slow disks a reload can lose to a re-fit -- enable it for fast NVMe, expensive fits, or callers who can't re-send data.</li>
+<li><strong>Evict-ahead-of-fit</strong> (found by the OOM it prevents, on a real A100): when a fit's estimated transient peak exceeds current headroom, cold contexts are evicted/spilled until it fits, instead of rejecting a fit that is safe once they step aside. Admission now runs under the cache lock (no two fits can pass on one snapshot), and the transient budget is capped at 85% of device capacity -- a fit admitted with ~400MB nominal slack at 90% still OOMed to allocator fragmentation.</li>
+<li><strong>Fixed a multi-GB eviction leak</strong>: tabicl's <code>forward_with_cache</code> leaves a pointer to the active context's kv cache on the (shared) backbone module, so the most recently used context stayed pinned on the GPU after tabctx evicted it -- ~15GB the accounting said was freed but never left the device, eventually OOMing a fit the books called safe. The backend now clears the module pointer after every fit/predict.</li>
+<li>Cross-context batching: investigated, mapped, and deliberately deferred with the full feasibility map preserved in <code>batching.py</code>'s docstring (same-shape wrapper-level batching is exact but narrow; cross-shape needs upstream model changes and has a silent-accuracy trap in SSMax). Same-context coalescing remains the batching layer; real-user traffic will decide whether the narrow case is worth building.</li>
+<li>Tooling: Python &gt;= 3.12; ruff + pre-commit + uv lockfile; CI split into code checks / unit tests (with coverage) / integration tests; <code>publish.yml</code> (PyPI Trusted Publishing, <code>pypi</code> environment). README's "Why" section rewritten for first-time readers.</li>
+</ul>
+<h2 id="080-2026-08-29">[0.8.0] - 2026-08-29<a class="headerlink" href="#080-2026-08-29" title="Permanent link">&para;</a></h2>
+<h3 id="added_9">Added<a class="headerlink" href="#added_9" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Large-table ingestion: upload, then fit/predict by reference</strong> (ROADMAP Priority 3, inspired by comparing API shapes with PriorLabs' hosted service). New <code>POST /v1/tabctx/upload</code> streams a raw CSV to replica-local disk (never buffered in memory, size cap enforced mid-stream via <code>TABCTX_MAX_UPLOAD_BYTES</code>, TTL expiry via <code>TABCTX_UPLOAD_TTL_S</code>); <code>fit</code> accepts <code>train_upload_id</code>/<code>target_column</code> and <code>predict</code> accepts <code>test_upload_id</code> as alternatives to inline JSON. Uploads are single-use, tenant-scoped like dataset ids, and replica-local -- correct at <code>num_replicas &gt;= 2</code> because the same <code>x-session-id</code> affinity contract routes upload, fit, and predicts to one replica. Test-CSV headers are checked against the training schema (reordered columns 422 rather than silently mispredicting). CSV parsing (<code>serve/csv_io.py</code>, numpy C parser, float32) and the store (<code>serve/uploads.py</code>) are transport-agnostic modules with their own unit tests; the engine is unchanged apart from an O(1) rectangularity fast path for 2D arrays (replacing a per-row Python loop that would cost real time at 10^6 rows). <code>TabctxClient</code> gains <code>upload_csv</code>/<code>upload_csv_file</code>/<code>fit_uploaded</code> and <code>predict(test_upload_id=...)</code>. New errors: <code>UploadNotFoundError</code> (404), <code>UploadTooLargeError</code> (413). Transport and admission remain separate layers: a huge CSV uploads fine and the memory-admission gate then rules on the table itself.</li>
+<li><strong>TabPFN backend</strong> (<code>backends/tabpfn.py</code>, <code>TABCTX_BACKEND=tabpfn</code>, <code>pip install tabctx[tabpfn]</code>): the second real backend behind the <code>TabularICLBackend</code> protocol -- engine, cache, estimator, and serving stack all unchanged, which was the design claim. The TabICL kv-cache lesson applies verbatim: TabPFN's default <code>fit_mode="fit_preprocessors"</code> still re-runs the training-context forward pass per predict, so tabctx maps <code>TABCTX_KV_CACHE</code> onto it (<code>kv</code>-&gt;<code>fit_with_cache</code>, <code>repr</code>-&gt;<code>fit_preprocessors</code>, <code>off</code>-&gt;<code>low_memory</code>). TabPFN's pretraining-limit rejections surface as 422s, CUDA OOM as <code>BackendComputeError</code>. Validated on CPU with the real model (license portal: ux.priorlabs.ai + TABPFN_TOKEN): engine-stack roundtrip, cache-mode prediction equivalence (labels identical; probabilities drift up to ~1e-2 between fit_with_cache and fit_preprocessors due to TabPFN's reduced kv_cache_precision -- documented in the test), regression, and clean 422s past the ~2,000-feature checkpoint limit. GPU validation and TabPFN-specific memory calibration still pending (estimator calibration is TabICL data).</li>
+<li><code>/v1/tabctx/limits</code> + <code>TabctxClient.limits()</code>: capability discovery (inspired by PriorLabs' <code>get_model_limits</code>) reporting the live, adaptive admission boundary -- max admissible train rows at representative feature counts -- so clients validate shapes before uploading tables.</li>
+<li><code>benchmarks/bench_vs_hosted_api.py</code> + <code>baselines/v0.7.0-vs-hosted-api-cpu.json</code>: serving-architecture comparison against PriorLabs' hosted TabPFN API on the fit-once-predict-many workload. tabctx warm predicts are 6-14x faster at p50 even with the local side on a laptop CPU (each hosted predict pays upload + network round trips); the hosted side wins cold-fit on larger tables absent a local GPU. Explicitly NOT a model-speed comparison -- the baseline file and script both say so.</li>
+</ul>
+<h2 id="070-2026-08-29">[0.7.0] - 2026-08-29<a class="headerlink" href="#070-2026-08-29" title="Permanent link">&para;</a></h2>
+<h3 id="added_10">Added<a class="headerlink" href="#added_10" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>tabctx.client.TabctxClient</code>: pure-stdlib HTTP client that makes the serving contracts impossible to get wrong -- it sends <code>x-session-id</code> (== dataset_id, required for correct multi-replica routing) and <code>x-tabctx-tenant-id</code> automatically, maps HTTP errors back to the same tabctx exception types the in-process engine raises, and retries 503 backpressure with exponential backoff (safe by construction under strict affinity). End-to-end tested against the local 2-replica deployment.</li>
+</ul>
+<h3 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>TabICL's kv-cache is now enabled by default</strong> (<code>TabICLBackend(kv_cache="kv")</code>, env-tunable via <code>TABCTX_KV_CACHE=kv|repr|off</code>). tabicl defaults it OFF, and without it every <code>predict()</code> silently re-encodes the ENTIRE training set through all three transformer stages -- i.e. the exact repeat cost tabctx exists to eliminate. Found by tracing tabicl's <code>predict_proba</code> internals (<code>transform(mode="both")</code> re-concatenates train+test per call; with the cache, test rows only attend to fit-time-cached K/V). Verified on CPU that kv-cached predictions are identical to the uncached path (max probability diff ~1e-6) and warm predict is 2.9x faster even for a tiny 40-row context; the win grows with training-set size since the avoided re-encode is O(n_train^2). The cache's GPU memory cost lands inside <code>fit()</code>'s measured allocation delta, so cache accounting and the adaptive admission gate price it automatically.</li>
+<li><strong>Pretrained backbone weights are loaded once per process and shared across fits</strong> instead of <code>torch.load</code> + H2D-transferring hundreds of MB per fitted context (5.8x faster re-fit on CPU). Uses tabicl's own sanctioned sharing pattern (<code>_unsupervised</code>/<code>_finetune</code> do exactly this). Safe because the engine serializes every backend call behind its cache lock, so the shared module's per-call mutable state is never touched concurrently.</li>
+<li><strong>Same-context predict coalescing</strong> (<code>batching.py</code>, <code>CoalescingPredictor</code>): concurrent requests against one cached context are packed into a single backend call within a small window (<code>TABCTX_BATCH_WINDOW_MS</code>, default 5ms; 0 disables) and results are split back per caller. One malformed member is retried individually so it fails alone (422) without poisoning batchmates. Cannot exceed the memory budget: the engine still runs exactly one GPU call at a time and chunks oversized merged batches. <code>/readyz</code> reports coalescing counters.</li>
+<li><code>max_ongoing_requests</code> raised 2 -&gt; 8 (and <code>max_queued_requests</code> 8 -&gt; 16): safe since GPU work is serialized by the engine lock regardless; more in-flight requests just means more coalescing opportunity.</li>
+</ul>
+<h2 id="060-2026-08-28">[0.6.0] - 2026-08-28<a class="headerlink" href="#060-2026-08-28" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_14">Fixed<a class="headerlink" href="#fixed_14" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Multi-replica deployments are now correct</strong> (previously the architecture was only safe at exactly one replica -- ROADMAP.md's former Priority 1). The Ray Serve deployment now ships with Ray's consistent-hash request router (<code>ray.serve.experimental.consistent_hash_router.ConsistentHashRouter</code>, requires ray &gt;= 2.58) configured for strict session affinity (<code>num_fallback_replicas=0</code>): requests carrying the <code>x-session-id</code> header always land on the same replica. The contract, enforced in the new <code>serve/affinity.py</code>, is that the session id IS the dataset_id -- clients send <code>x-session-id: &lt;dataset_id&gt;</code> on every <code>/v1/tabctx/fit</code> and <code>/v1/tabctx/predict</code> call (fit adopts the header value as the dataset_id when the body omits one; a mismatched header/body pair is rejected 422 loudly rather than silently mis-routing). Requests without the header behave as before, which only routes correctly on single-replica deployments.</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Tenant isolation</strong> (former ROADMAP.md Priority 2): the serving layer now scopes every dataset_id by the caller's <code>x-tabctx-tenant-id</code> header before it touches the cache (<code>serve/tenancy.py</code>), so a guessed/shared dataset_id no longer reaches another tenant's cached model. <code>TABCTX_REQUIRE_TENANT=true</code> makes the header mandatory (401 without it), eliminating the unscoped namespace entirely; the default keeps the header optional for dev/backward compatibility. Tenant identity is caller-supplied and unverified by design (pair with an authenticating proxy for real security -- trust model documented in the module). Malformed tenant ids are rejected 422 rather than silently unscoped; responses never leak the internal scoping prefix.</li>
+</ul>
+<h3 id="added_11">Added<a class="headerlink" href="#added_11" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>serve/factory.py</code>: environment-driven engine construction, shared by any host. <code>TABCTX_BACKEND=fake</code> runs the full serve app against the deterministic fake backend (no GPU/torch), which is what makes multi-replica routing testable on a laptop and in CI. <code>TABCTX_GPU_MEMORY_FRACTION</code> scales the estimator's admission ceiling and the cache's capacity budget for replicas sharing one physical GPU (e.g. two replicas at <code>num_gpus: 0.5</code> on one A100).</li>
+<li><code>served_by</code> (replica tag) in fit/predict responses and <code>replica</code> in <code>/readyz</code>, so clients and probes can verify affinity actually pinned a tenant's traffic to one replica.</li>
+<li><code>tests/integration/test_multi_replica_affinity.py</code>: boots a real local 2-replica Ray Serve cluster (fake backend) and asserts 16 datasets x 6 predicts see zero spurious 404s, every predict lands on its fit replica, and fits spread across both replicas. This is the regression test that would have caught the routing gap immediately; also run in CI (new <code>integration</code> job).</li>
+<li><code>benchmarks/bench_concurrency.py</code> now sends the session header on all tabctx-native calls, so its numbers stay valid at <code>num_replicas &gt;= 2</code>.</li>
+</ul>
+<h2 id="050-2026-08-28">[0.5.0] - 2026-08-28<a class="headerlink" href="#050-2026-08-28" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_15">Fixed<a class="headerlink" href="#fixed_15" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Malformed input (mismatched <code>train_X</code>/<code>train_y</code> lengths, empty tables, ragged rows, zero-feature rows, a <code>predict()</code> feature count mismatched against the cached context) now raises <code>InvalidInputError</code> -&gt; HTTP 422, instead of reaching the backend as raw numpy/sklearn arrays and surfacing as an unhandled, untranslated exception (a bare 500 with no useful detail). Found via <code>probe_scale.py</code>'s malformed-input test against a real deployment.</li>
+</ul>
+<h3 id="context">Context<a class="headerlink" href="#context" title="Permanent link">&para;</a></h3>
+<p>Found during a dedicated race-condition/throughput/input-validation test pass (<code>tests/gke-tabicl-test/probe_scale.py</code> in inference-platform), run to validate the service is robust to one careless client's bad request -- a real multi-tenant requirement, not just a nice-to-have. That same pass confirmed no data corruption under concurrent <code>fit()</code>/<code>predict()</code> races on the same <code>dataset_id</code>, and measured real sustained throughput (~1.2 fit+predict cycles/sec across 8 concurrent users, p95 latency ~7.7s) -- concrete evidence of the coarse per-replica lock's real-world cost under load, which is already a documented gap.</p>
+<h2 id="040-2026-08-28">[0.4.0] - 2026-08-28<a class="headerlink" href="#040-2026-08-28" title="Permanent link">&para;</a></h2>
+<h3 id="added_12">Added<a class="headerlink" href="#added_12" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>AdaptiveMemoryEstimator</code> (<code>memory/adaptive.py</code>): wraps the static <code>PowerLawMemoryEstimator</code> as a fallback, but the pre-fit admission gate now uses real per-fit measurements (fed back via <code>engine.fit()</code> -&gt; <code>record_observation()</code>) whenever a past fit at least as large in both rows and features has been observed -- safe by construction (memory cost is assumed monotonic in table size, so a real measurement on a larger-or-equal shape is a valid upper bound for a smaller query), with a configurable safety margin on top. Falls back to the static formula for genuinely novel or larger-than-anything-seen shapes, and always for predict()-time chunking queries (a different, unmeasured quantity). Deployed as the default estimator in <code>serve/app.py</code>.</li>
+<li><code>MemoryEstimator</code> protocol gained <code>record_observation()</code>; <code>PowerLawMemoryEstimator</code> implements it as a no-op.</li>
+</ul>
+<h3 id="context_1">Context<a class="headerlink" href="#context_1" title="Permanent link">&para;</a></h3>
+<p>Direct extension of the v0.3.0 cache-accounting fix: now that fit() calls report real measured GPU cost, this closes the loop by feeding that data back into the PRE-FIT admission gate too, so admission decisions get progressively less conservative for shapes the service has actually served -- compounding the multi-tenant capacity improvement from v0.3.0 over the life of a running replica.</p>
+<h2 id="030-2026-08-28">[0.3.0] - 2026-08-28<a class="headerlink" href="#030-2026-08-28" title="Permanent link">&para;</a></h2>
+<h3 id="fixed_16">Fixed<a class="headerlink" href="#fixed_16" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Cache-accounting size for a fitted context now comes from the backend <em>after</em> <code>fit()</code> runs, not before. <code>TabICLBackend</code> now reports the real <code>torch.cuda.memory_allocated()</code> delta measured across <code>fit()</code> instead of the pre-fit formula-based estimate. Found via extensive multi-tenant load testing on a real A100-40GB: the formula-based estimate was ~14x higher than real GPU memory for a realistic shape (21.85GB accounted vs 1.56GB actually resident), needlessly throttling effective multi-tenant cache capacity to a fraction of what the hardware supports.</li>
+<li>The pre-fit admission-control gate (which must stay conservative, since nothing has run yet to measure) is unchanged -- this fix only affects how much of the cache's capacity budget a <em>successfully</em> fitted context is charged.</li>
+</ul>
+<h3 id="context_2">Context<a class="headerlink" href="#context_2" title="Permanent link">&para;</a></h3>
+<p>Found and fixed during an extensive multi-tenant test suite (concurrent users, cache eviction under pressure, leak detection) run against a real GKE A100-40GB deployment, in direct response to a requirement that this service support several concurrent users at scale.</p>
+<h2 id="020-2026-08-28">[0.2.0] - 2026-08-28<a class="headerlink" href="#020-2026-08-28" title="Permanent link">&para;</a></h2>
+<h3 id="added_13">Added<a class="headerlink" href="#added_13" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>/readyz</code> now reports real GPU memory (<code>torch.cuda.memory_allocated</code>/<code>memory_reserved</code>) alongside the cache's own byte-accounting, so the two can be compared to catch the estimator drifting from reality or evicted contexts not actually releasing GPU memory.</li>
+</ul>
+<h3 id="context_3">Context<a class="headerlink" href="#context_3" title="Permanent link">&para;</a></h3>
+<p>Added while running an extensive multi-tenant test suite (concurrent users, cache eviction under pressure, regression task, dataset_id reuse, repeated fit/evict cycles) against a real GKE A100-40GB deployment, per the requirement that this service support several users at scale and be tested accordingly.</p>
+<h2 id="010-2026-08-28">[0.1.0] - 2026-08-28<a class="headerlink" href="#010-2026-08-28" title="Permanent link">&para;</a></h2>
+<p>Initial release. Multi-tenant context caching engine for tabular ICL models (TabICL backend), calibrated memory estimator, estimator-driven test-row chunking, and a Ray Serve deployment. See README.md for full v1 scope and known gaps.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../roadmap/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Roadmap">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Roadmap
+              </div>
+            </div>
+          </a>
+        
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Built at the <a href="https://vectorinstitute.ai">Vector Institute</a>. Apache 2.0.
+    </div>
+  
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/VectorInstitute/tabctx" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://pypi.org/project/tabctx/" target="_blank" rel="noopener" title="pypi.org" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.8 200.5c-7.7-30.9-22.3-54.2-53.4-54.2h-40.1v47.4c0 36.8-31.2 67.8-66.8 67.8H172.7c-29.2 0-53.4 25-53.4 54.3v101.8c0 29 25.2 46 53.4 54.3 33.8 9.9 66.3 11.7 106.8 0 26.9-7.8 53.4-23.5 53.4-54.3v-40.7H226.2v-13.6h160.2c31.1 0 42.6-21.7 53.4-54.2 11.2-33.5 10.7-65.7 0-108.6M286.2 444.7a20.4 20.4 0 1 1 0-40.7 20.4 20.4 0 1 1 0 40.7M167.8 248.1h106.8c29.7 0 53.4-24.5 53.4-54.3V91.9c0-29-24.4-50.7-53.4-55.6-35.8-5.9-74.7-5.6-106.8.1-45.2 8-53.4 24.7-53.4 55.6v40.7h106.9v13.6h-147c-31.1 0-58.3 18.7-66.8 54.2-9.8 40.7-10.2 66.1 0 108.6 7.6 31.6 25.7 54.2 56.8 54.2H101v-48.8c0-35.3 30.5-66.4 66.8-66.4m-6.6-183.4a20.4 20.4 0 1 1 0 40.8 20.4 20.4 0 1 1 0-40.8"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "navigation.instant", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "content.tabs.link", "content.action.edit", "toc.follow"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
