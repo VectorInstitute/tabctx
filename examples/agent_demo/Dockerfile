@@ -35,8 +35,13 @@ COPY src ./src
 RUN pip install --no-cache-dir ".[mcp]" "fastapi>=0.115" "uvicorn>=0.30"
 
 COPY examples/agent_demo ./examples/agent_demo
-# The demo data (public, from OpenML), prepared at build time. The answers
-# stay in the image for scoring; agents only ever get the workspace copy.
+# The scenario the image serves (scenarios/<name>/), and its data,
+# prepared at build time. The answers stay in the image for scoring; agents
+# only ever get the workspace copy. A scenario with a "clean" step gives
+# Claude Code a sandboxed shell, which on Linux needs bubblewrap and socat
+# (not installed here): the hosted demo serves readmission.
+ARG DEMO_SCENARIO=readmission
+ENV DEMO_SCENARIO=$DEMO_SCENARIO
 RUN python examples/agent_demo/prepare_data.py \
  && rm -rf examples/agent_demo/runs \
  && chmod -R go-rwx examples/agent_demo/answers
@@ -52,7 +57,6 @@ ENV DEMO_HOSTED=1 \
     DEMO_RUNS=/tmp/runs \
     DEMO_RUN_UIDS=20000-20063 \
     CODEX_SANDBOX=danger-full-access \
-    DEMO_WORKSPACE=/app/examples/agent_demo/workspace \
     TABCTX_BASE_URL=https://proxy.vectorinstitute.ai \
     TABCTX_MCP_BIN=/usr/local/bin/tabctx-mcp \
     DISABLE_AUTOUPDATER=1 \
