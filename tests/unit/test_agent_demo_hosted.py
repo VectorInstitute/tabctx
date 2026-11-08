@@ -92,6 +92,9 @@ def hosted(tmp_path, monkeypatch):
     monkeypatch.setenv("DEMO_HOSTED", "1")
     monkeypatch.setenv("DEMO_RUNS", str(tmp_path / "runs"))
     monkeypatch.delenv("TABCTX_API_KEY", raising=False)
+    # The hosted image's scenario and data, whatever this shell exports.
+    monkeypatch.delenv("DEMO_SCENARIO", raising=False)
+    monkeypatch.delenv("DEMO_WORKSPACE", raising=False)
     for name in ("app", "runner"):
         sys.modules.pop(name, None)
     module = importlib.import_module("app")
@@ -143,7 +146,7 @@ def test_sign_in_run_and_sign_out(hosted):
     )
     assert r.status_code == 200
     run = started[-1]
-    assert run["prompt"] == (module.DEMO / "PROMPT.md").read_text()  # the task is fixed
+    assert run["prompt"] == module.PROMPT.read_text()  # the task is fixed
     assert run["env"]["TABCTX_API_KEY"] == KEY and run["env"]["VP_API_KEY"] == KEY
     assert (
         run["env"]["ISOLATE_HOME"] == "1"

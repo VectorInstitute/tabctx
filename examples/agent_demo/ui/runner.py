@@ -1,9 +1,10 @@
 """Starting agents (through ../run.sh) and reading their runs back.
 
 A run lives in a folder: run.sh writes transcript.jsonl, report.md and the
-predictions there. Locally that is ../runs/<agent>; in the hosted demo each
-visitor has their own folder, and ../showcase/<agent> holds the finished
-runs anyone can replay (with score.json in place of the predictions).
+predictions there. Locally that is ../runs/<scenario>/<agent>; in the
+hosted demo each visitor has their own folder, and
+../showcase/<scenario>/<agent> holds the finished runs anyone can replay
+(with score.json in place of the predictions).
 """
 
 from __future__ import annotations
@@ -20,18 +21,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEMO = Path(__file__).resolve().parent.parent
-RUNS = Path(os.environ.get("DEMO_RUNS", DEMO / "runs"))
-SHOWCASE = DEMO / "showcase"
 
 sys.path.insert(0, str(DEMO))
+import scenario as scenarios  # noqa: E402
 from score import score  # noqa: E402
+
+SCENARIO = scenarios.load()
+RUNS = Path(os.environ.get("DEMO_RUNS", SCENARIO.runs))
+SHOWCASE = SCENARIO.showcase
+# What run.sh gives an agent besides the tabctx tools: a shell only when
+# the scenario's task has it run code.
+_SHELL = SCENARIO.needs_shell
 
 AGENTS = {
     "claude": {
         "label": "Claude Code",
         "binary": "claude",
         "llm": "Claude (your login)",
-        "tools": "MCP · no shell",
+        "tools": "MCP · sandboxed shell" if _SHELL else "MCP · no shell",
     },
     "codex": {
         "label": "Codex",
@@ -43,13 +50,13 @@ AGENTS = {
         "label": "Gemini CLI",
         "binary": "gemini",
         "llm": "Gemini (your login)",
-        "tools": "MCP · no shell",
+        "tools": "MCP · shell" if _SHELL else "MCP · no shell",
     },
     "pi": {
         "label": "pi",
         "binary": "pi",
         "llm": "Qwen3.8 27B, on-prem via Vector gateway",
-        "tools": "pi extension · no shell",
+        "tools": "pi extension · bash" if _SHELL else "pi extension · no shell",
     },
 }
 

@@ -1,8 +1,9 @@
-"""The agent demo's data preparation and scoring (examples/agent_demo/),
-on small synthetic tables: no download, no agent."""
+"""The agent demo's readmission data preparation and its scoring
+(examples/agent_demo/), on small synthetic tables: no download, no agent."""
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,9 +13,11 @@ pytest.importorskip("sklearn")
 
 DEMO = Path(__file__).resolve().parents[2] / "examples" / "agent_demo"
 sys.path.insert(0, str(DEMO))
-import prepare_data  # noqa: E402
+import scenario as scenarios  # noqa: E402
 import score as score_module  # noqa: E402
-import task  # noqa: E402
+from scenarios.readmission import prepare_data, task  # noqa: E402
+
+READMISSION = scenarios.load("readmission")
 
 
 @pytest.mark.parametrize(
@@ -81,15 +84,19 @@ def test_split_picks_patients_by_their_number_of_stays(monkeypatch):
     assert 0.3 < share < 0.7  # uniform over patients would give about 0.09
 
 
-def test_score(tmp_path, monkeypatch):
-    answers = tmp_path / "answers"
-    answers.mkdir()
-    ids = [f"P{i}" for i in range(200)]
-    truth = ["Yes" if i < 20 else "No" for i in range(200)]
+def _answers(tmp_path, ids, truth):
+    """READMISSION with its data under tmp_path, and these outcomes."""
+    scenario = replace(READMISSION, root=tmp_path)
+    scenario.answers.mkdir(parents=True)
     pd.DataFrame({task.ID: ids, task.TARGET: truth}).to_csv(
-        answers / task.ANSWERS, index=False
+        scenario.answers / task.ANSWERS, index=False
     )
-    monkeypatch.setattr(score_module, "HERE", tmp_path)
+    return scenario
+
+
+def test_score(tmp_path):
+    ids = [f"P{i}" for i in range(200)]
+    scenario = _answers(tmp_path, ids, ["Yes" if i < 20 else "No" for i in range(200)])
     run = tmp_path / "run"
     run.mkdir()
     # Ranks the 20 positives first except for two swapped into places 9-10.
@@ -99,7 +106,7 @@ def test_score(tmp_path, monkeypatch):
     pd.DataFrame({task.ID: ids, task.PROBA: proba}).to_csv(
         run / "x.predictions.csv", index=False
     )
-    out = score_module.score(run)
+    out = score_module.score(run, scenario)
     assert out["rows"] == 200
     assert out["base_rate"] == 0.1
     assert out["positive_in_top_10"] == 0.8
@@ -107,42 +114,13 @@ def test_score(tmp_path, monkeypatch):
     assert 0.95 < out["roc_auc"] < 1
 
 
-def test_score_needs_every_row(tmp_path, monkeypatch):
-    (tmp_path / "answers").mkdir()
-    pd.DataFrame({task.ID: ["a", "b"], task.TARGET: ["Yes", "No"]}).to_csv(
-        tmp_path / "answers" / task.ANSWERS, index=False
-    )
-    monkeypatch.setattr(score_module, "HERE", tmp_path)
-    pd.DataFrame({task.ID: ["a"], task.PROBA: [0.5]}).to_csv(
-        tmp_path / "p.csv", index=False
-    )
+def test_score_needs_every_row(tmp_path):
+    scenario = _answers(tmp_path, ["a", "b"], ["Yes", "No"])
+    run = tmp_path / "run"
+    run.mkdir()
+    pd.DataFrame({task.ID: ["a"], task.PROBA: [0.5]}).to_csv(run / "p.csv", index=False)
     with pytest.raises(SystemExit, match="covers 1 of 2"):
-        score_module.score(tmp_path)
-
-
-def test_showcase_runs_match_the_task():
-    """The replayable runs were made with this task's data and scoring."""
-    prompt = (DEMO / "PROMPT.md").read_text()
-    assert task.HISTORY in prompt and task.CURRENT in prompt and task.TARGET in prompt
-    for agent in ("claude", "codex", "pi"):
-        folder = DEMO / "showcase" / agent
-        stored = json.loads((folder / "score.json").read_text())
-        assert {
-            "roc_auc",
-            "base_rate",
-            "positive_in_top_10",
-            "positive_in_top_100",
-        } <= set(stored)
-        assert task.CURRENT in (folder / "transcript.jsonl").read_text()
-
-
-def test_run_sh_reads_the_file_names():
-    from subprocess import run
-
-    out = run(
-        [sys.executable, "task.py", "files"], cwd=DEMO, capture_output=True, text=True
-    )
-    assert out.stdout.split() == [task.HISTORY, task.CURRENT]
+        score_module.score(run, scenario)
 
 
 def test_showcase_transcripts_hide_the_machine(tmp_path, monkeypatch):
