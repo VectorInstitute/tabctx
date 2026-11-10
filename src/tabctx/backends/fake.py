@@ -107,6 +107,8 @@ class FakeBackend:
         return_proba: bool = False,
         quantiles: tuple[float, ...] | None = None,
         times: tuple[float, ...] | None = None,
+        rmst_horizon: float | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictOutcome:
         self.predict_calls += 1
         if self._predict_delay_s:
@@ -120,7 +122,13 @@ class FakeBackend:
             row = [fractions[c] for c in classes]
             return classification_outcome([row] * n_test, classes, return_proba)
         if payload.task == "survival":
-            return _survival_outcome(payload, n_test, quantiles, times)
+            return _survival_outcome(payload, n_test, quantiles, times, rmst_horizon)
+        if payload.task == "causal" and potential_outcomes:
+            # Untreated 0, treated the effect.
+            both = [[0.0, payload.mean_y or 0.0] for _ in range(n_test)]
+            return PredictOutcome(
+                predictions=[payload.mean_y] * n_test, potential_outcomes=both
+            )
         # A normal distribution around the training mean, with its spread.
         row = None
         if quantiles is not None:
@@ -144,16 +152,21 @@ def _survival_outcome(
     n_test: int,
     quantiles: tuple[float, ...] | None,
     times: tuple[float, ...] | None,
+    rmst_horizon: float | None = None,
 ) -> PredictOutcome:
-    """The training times' median, quantiles and empirical survival curve,
-    the same for every test row."""
+    """The training times' median, quantiles, empirical survival curve and
+    the mean of the times capped at the horizon, the same for every row."""
     observed = payload.times if payload.times is not None else np.zeros(1)
     q_row = None if quantiles is None else np.quantile(observed, quantiles).tolist()
     s_row = None
     if times is not None:
         s_row = [float((observed > t).mean()) for t in times]
+    rmst = None
+    if rmst_horizon is not None:
+        rmst = [float(np.minimum(observed, rmst_horizon).mean())] * n_test
     return PredictOutcome(
         predictions=[payload.mean_y] * n_test,
         quantiles=None if q_row is None else [list(q_row) for _ in range(n_test)],
         survival=None if s_row is None else [list(s_row) for _ in range(n_test)],
+        rmst=rmst,
     )

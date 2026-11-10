@@ -9,16 +9,19 @@ treated minus if not:
 
 - predictions: the CATE, the mean of the model's outcome distribution
   under treatment minus its mean under control,
+- potential_outcomes: [expected outcome if not treated, if treated]
+  (the two means the CATE is the difference of),
 - quantiles (levels in (0, 1)): quantiles of a treated outcome minus an
-  independent control outcome, from the model's two distributions. This
-  is how CausalPFN makes its own intervals, except that CausalPFN draws
-  random samples; here each row's two distributions are read at a fixed
-  grid of levels, paired the same fixed way for every row, so a row gets
-  the same answer every time. With CausalPFN's temperature calibration
-  off (as here) they are wide: on simulated data they grew with the
-  outcome's noise, and a 5-95% range held the true effect for every row.
-  Read them as the spread of an individual's effect, not as a confidence
-  interval for the CATE.
+  independent control outcome, from the model's two distributions, which
+  is how CausalPFN makes its intervals. CausalPFN draws random samples;
+  here each row's two distributions are read at a fixed grid of levels,
+  paired the same fixed way for every row, so a row gets the same answer
+  every time. The distributions are calibrated at fit, as CausalPFN's
+  `calibrate=True` does: a temperature chosen by 3-fold cross-validation
+  so that the model's outcome intervals cover the held-out outcomes at
+  their stated rates (computed exactly here; CausalPFN samples). Like
+  CausalPFN's, they describe the spread of an individual's effect, not a
+  confidence interval for the CATE.
 
 The average effect over a population (ATE) is the mean of its rows'
 CATEs: predict on those rows and average.
@@ -52,6 +55,7 @@ tier pickles it as it is.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -98,6 +102,9 @@ class CausalPFNContext:
     medians: np.ndarray  # each raw column's training median
     svd: Any  # a fitted TruncatedSVD for a wide table, else None
     nbytes: int
+    # The calibrated temperature of the outcome distributions for
+    # quantiles (set by fit_prepared; 1 when too small to calibrate).
+    temperature: float = 1.0
 
     def features(self, X: np.ndarray) -> np.ndarray:
         X = _fill(X, self.medians)
@@ -180,6 +187,16 @@ class CausalPFNBackend:
         return CausalPFNContext(X_arr, treated, outcome, medians, svd, nbytes)
 
     def fit_prepared(self, prepared: CausalPFNContext) -> CausalPFNContext:
+        """The device half: calibrate the quantiles' temperature."""
+        import torch
+
+        try:
+            with device_scope(self._device), torch.no_grad():
+                prepared.temperature = calibrated_temperature(
+                    self._shared_network(), prepared, self._device
+                )
+        except torch.cuda.OutOfMemoryError as e:
+            raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
         self._last_context_bytes = prepared.nbytes
         return prepared
 
@@ -192,39 +209,47 @@ class CausalPFNBackend:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: tuple[float, ...] | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictOutcome:
         import torch
 
         del return_proba  # a causal context has no class probabilities
         X_arr = payload.features(float32_rows(X_test))
-        effects, spreads = [], []
+        parts = []
         try:
             with device_scope(self._device), torch.no_grad():
                 for start in range(0, len(X_arr), self._batch_rows):
                     batch = X_arr[start : start + self._batch_rows]
-                    effect, spread = self._effects(payload, batch, quantiles)
-                    effects.append(effect)
-                    spreads.append(spread)
+                    parts.append(self._effects(payload, batch, quantiles))
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
-        effect = np.concatenate(effects)
-        if quantiles is None:
-            return regression_outcome(effect)
-        return regression_outcome(effect, np.concatenate(spreads), len(quantiles))
+        effect = np.concatenate([p[0] for p in parts])
+        outcome = (
+            regression_outcome(effect)
+            if quantiles is None
+            else regression_outcome(
+                effect, np.concatenate([p[1] for p in parts]), len(quantiles)
+            )
+        )
+        if not potential_outcomes:
+            return outcome
+        both = np.concatenate([p[2] for p in parts])
+        return dataclasses.replace(outcome, potential_outcomes=both.tolist())
 
     def _effects(
         self,
         context: CausalPFNContext,
         X: np.ndarray,
         quantiles: tuple[float, ...] | None,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
-        """(CATE per row, (rows, levels) quantiles or None) for one batch:
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
+        """(CATE per row, (rows, levels) quantiles or None, (rows, 2)
+        expected outcomes if not treated and if treated) for one batch:
         each row queried as control and as treated, in one pass."""
         import torch
 
         network = self._shared_network()
         n = len(X)
-        probs, (y0_shift, y0_scale, y1_shift, y1_scale) = outcome_distributions(
+        logits, (y0_shift, y0_scale, y1_shift, y1_scale) = outcome_logits(
             network,
             context,
             np.concatenate([X, X]),
@@ -232,27 +257,29 @@ class CausalPFNBackend:
             self._device,
         )
         centers = network.bin_centers
-        mean = probs @ centers
+        # Means at temperature 1, as CausalPFN's point estimates are.
+        mean = torch.softmax(logits, dim=-1) @ centers
         mu0 = mean[:n] * y0_scale + y0_shift
         mu1 = mean[n:] * y1_scale + y1_shift
         effect = (mu1 - mu0).cpu().numpy().astype(float)
+        both = torch.stack([mu0, mu1], dim=1).cpu().numpy().astype(float)
         if quantiles is None:
-            return effect, None
-        # Each row's two distributions read at the same fixed levels, and a
-        # treated point minus a control point by one fixed pairing.
+            return effect, None, both
+        # Each row's two calibrated distributions read at the same fixed
+        # levels, and a treated point minus a control point by one fixed
+        # pairing.
+        probs = torch.softmax(logits / context.temperature, dim=-1)
         levels = (torch.arange(QUANTILE_POINTS, device=probs.device) + 0.5) / (
             QUANTILE_POINTS
         )
-        cdf = torch.cumsum(probs, dim=-1)
-        at = levels.to(cdf.dtype).expand(len(probs), QUANTILE_POINTS).contiguous()
-        index = torch.searchsorted(cdf, at).clamp(max=len(centers) - 1)
-        points = centers[index]
+        points = centers[_read_at(probs, levels)]
         control = points[:n] * y0_scale + y0_shift
         treated = points[n:] * y1_scale + y1_shift
         pairing = torch.as_tensor(self._pairing, device=probs.device)
         diff = treated - control[:, pairing]
         q = torch.tensor(quantiles, dtype=diff.dtype, device=diff.device)
-        return effect, torch.quantile(diff, q, dim=1).T.cpu().numpy().astype(float)
+        spread = torch.quantile(diff, q, dim=1).T.cpu().numpy().astype(float)
+        return effect, spread, both
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
@@ -267,24 +294,27 @@ class CausalPFNBackend:
         return tagged_loads(data, self._spill_tag)
 
 
-def outcome_distributions(
+def outcome_logits(
     network: Any,
-    context: CausalPFNContext,
+    context: CausalPFNContext | tuple[np.ndarray, np.ndarray, np.ndarray],
     X_query: np.ndarray,
     t_query: np.ndarray,
     device: str,
 ) -> tuple[Any, tuple[Any, Any, Any, Any]]:
     """The model's outcome distribution for each query row under its
-    treatment value: (rows, bins) probabilities over network.bin_centers,
-    in the standardized scale, and the (control shift, control scale,
-    treated shift, treated scale) that map it back. This is CausalPFN's
-    InContextModel.predict_cepo up to its logits, at temperature 1."""
+    treatment value: (rows, bins) logits over network.bin_centers, in the
+    standardized scale, and the (control shift, control scale, treated
+    shift, treated scale) that map it back. This is CausalPFN's
+    InContextModel.predict_cepo up to its logits. context: a context, or
+    its (X, treated, outcome) arrays."""
     import torch
 
     def tensor(a: np.ndarray) -> Any:
         return torch.from_numpy(np.ascontiguousarray(a)).to(device).float().unsqueeze(0)
 
-    X_c, t_c, y_c = tensor(context.X), tensor(context.treated), tensor(context.outcome)
+    if isinstance(context, CausalPFNContext):
+        context = (context.X, context.treated, context.outcome)
+    X_c, t_c, y_c = (tensor(a) for a in context)
     X_q, t_q = tensor(X_query), tensor(t_query)
     y0_shift, y0_scale, y1_shift, y1_scale = network._get_y0_y1_shift_scale(t_c, y_c)
     y_standard = torch.where(
@@ -301,9 +331,68 @@ def outcome_distributions(
     logits = network.model(x_src.transpose(0, 1), y_src.transpose(0, 1)).transpose(
         0, 1
     )[:, :, -network.nbins :]
-    probs = torch.softmax(logits[0], dim=-1)
     scale = tuple(v.squeeze() for v in (y0_shift, y0_scale, y1_shift, y1_scale))
-    return probs, scale
+    return logits[0], scale
+
+
+def _read_at(probs: Any, levels: Any) -> Any:
+    """Each row's bin index at each level (rows, levels): the first bin
+    whose cumulative probability reaches it."""
+    import torch
+
+    cdf = torch.cumsum(probs, dim=-1)
+    at = levels.to(cdf.dtype).expand(*cdf.shape[:-1], len(levels)).contiguous()
+    return torch.searchsorted(cdf, at).clamp(max=probs.shape[-1] - 1)
+
+
+# Calibration: CausalPFN's grid of temperatures and interval levels.
+TEMPERATURES = np.logspace(np.log10(0.001), np.log10(10.0), 500)
+_ALPHAS = np.linspace(0.01, 1.0, 10)
+CALIBRATION_FOLDS = 3
+# Below this many rows per fold there is too little to calibrate on.
+_MIN_CALIBRATION_ROWS = 10
+_TEMPERATURE_BATCH = 25
+
+
+def calibrated_temperature(
+    network: Any, context: CausalPFNContext, device: str
+) -> float:
+    """The temperature whose outcome intervals best cover held-out
+    outcomes: CausalPFN's calibration (3 folds; for each temperature, the
+    mean gap between each interval's coverage and its stated rate, over
+    10 interval widths), with intervals read exactly from each held-out
+    row's distribution instead of from samples. 1.0 for a table too small
+    to calibrate on."""
+    import torch
+
+    n = len(context.X)
+    if n < CALIBRATION_FOLDS * _MIN_CALIBRATION_ROWS:
+        return 1.0
+    order = np.random.default_rng(_SEED).permutation(n)
+    temperatures = torch.tensor(TEMPERATURES, device=device, dtype=torch.float32)
+    alphas = torch.tensor(_ALPHAS, device=device, dtype=torch.float32)
+    levels = torch.cat([alphas / 2, 1 - alphas / 2])
+    gap = torch.zeros(len(TEMPERATURES), device=device)
+    centers = network.bin_centers
+    for held in np.array_split(order, CALIBRATION_FOLDS):
+        rest = np.setdiff1d(order, held)
+        arrays = (context.X[rest], context.treated[rest], context.outcome[rest])
+        t_held = context.treated[held]
+        logits, (y0_shift, y0_scale, y1_shift, y1_scale) = outcome_logits(
+            network, arrays, context.X[held], t_held, device
+        )
+        treated = torch.as_tensor(t_held, device=device) == 1
+        shift = torch.where(treated, y1_shift, y0_shift)[:, None]
+        scale = torch.where(treated, y1_scale, y0_scale)[:, None]
+        y = torch.as_tensor(context.outcome[held], device=device)[:, None]
+        for start in range(0, len(TEMPERATURES), _TEMPERATURE_BATCH):
+            batch = temperatures[start : start + _TEMPERATURE_BATCH]
+            probs = torch.softmax(logits[None] / batch[:, None, None], dim=-1)
+            bounds = centers[_read_at(probs, levels)] * scale + shift
+            low, high = bounds[..., : len(alphas)], bounds[..., len(alphas) :]
+            covered = ((low <= y) & (y <= high)).float().mean(dim=1)
+            gap[start : start + len(batch)] += (covered - (1 - alphas)).abs().mean(-1)
+    return float(TEMPERATURES[int(torch.argmin(gap))])
 
 
 def _column_medians(X: np.ndarray) -> np.ndarray:

@@ -8,7 +8,10 @@ predict gives each row's event-time distribution, as
 
 - predictions: its median event time,
 - quantiles (levels in (0, 1)): its event-time quantiles,
-- survival (times): the probability of no event by each time.
+- survival (times): the probability of no event by each time,
+- rmst (rmst_horizon): the restricted mean survival time, the expected
+  event-free time up to the horizon (the area under the survival curve
+  from 0 to it).
 
 Each is None past the longest time in the training context: the data
 says nothing beyond its follow-up, and the model puts next to no
@@ -153,17 +156,25 @@ class SurvivalPFNBackend:
         return_proba: bool = False,
         quantiles: tuple[float, ...] | None = None,
         times: tuple[float, ...] | None = None,
+        rmst_horizon: float | None = None,
     ) -> PredictOutcome:
         import torch
 
         del return_proba  # a survival context has no class probabilities
+        if rmst_horizon is not None and rmst_horizon > payload.longest:
+            raise InvalidInputError(
+                f"rmst_horizon {rmst_horizon:g} is past the longest time in the "
+                f"training data ({payload.longest:g}), where nothing is estimated"
+            )
         X_arr = float32_rows(X_test)
         parts = []
         try:
             with device_scope(self._device), torch.no_grad():
                 for start in range(0, len(X_arr), self._batch_rows):
                     batch = X_arr[start : start + self._batch_rows]
-                    parts.append(self._predict(payload, batch, quantiles, times))
+                    parts.append(
+                        self._predict(payload, batch, quantiles, times, rmst_horizon)
+                    )
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         except ValueError as e:  # the estimator's own input checks
@@ -176,6 +187,7 @@ class SurvivalPFNBackend:
         X: np.ndarray,
         quantiles: tuple[float, ...] | None,
         times: tuple[float, ...] | None,
+        rmst_horizon: float | None = None,
     ) -> PredictOutcome:
         import torch
 
@@ -191,7 +203,10 @@ class SurvivalPFNBackend:
             probs = dist.survival_function(at).cpu().numpy().astype(float)
             past = np.asarray(times) > limit
             s = _within(np.where(past[None, :], np.inf, probs), np.inf)
-        return PredictOutcome(predictions=medians, quantiles=q, survival=s)
+        rmst = None
+        if rmst_horizon is not None:
+            rmst = restricted_mean(dist, rmst_horizon).astype(float).tolist()
+        return PredictOutcome(predictions=medians, quantiles=q, survival=s, rmst=rmst)
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
         del n_train, n_features
@@ -231,6 +246,26 @@ def event_time_quantiles(dist: Any, levels: tuple[float, ...]) -> np.ndarray:
     values = left + alpha * (right - left)
     values = torch.where(residual, torch.full_like(values, float("inf")), values)
     return values.cpu().numpy()
+
+
+def restricted_mean(dist: Any, horizon: float) -> np.ndarray:
+    """Each row's restricted mean survival time: the area under its
+    survival curve from 0 to horizon. The curve is linear between the
+    bin edges (survival_function interpolates it so), so the trapezoid
+    rule over the edges below the horizon is exact."""
+    import torch
+
+    edges = dist.bin_edges.reshape(-1, dist.bin_edges.shape[-1])[0]
+    inside = edges[(edges > 0) & (edges < horizon)]
+    grid = torch.cat(
+        [
+            torch.zeros(1, dtype=edges.dtype, device=edges.device),
+            inside,
+            torch.tensor([horizon], dtype=edges.dtype, device=edges.device),
+        ]
+    )
+    curve = dist.survival_function(grid)  # (rows, points)
+    return torch.trapezoid(curve, grid, dim=-1).cpu().numpy()
 
 
 def _within(values: np.ndarray, limit: float) -> list:

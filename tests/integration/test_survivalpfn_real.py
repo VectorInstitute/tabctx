@@ -91,6 +91,19 @@ def test_nothing_is_estimated_past_the_follow_up(backend):
     assert all(row[1] is None or row[1] <= longest for row in out.quantiles)
 
 
+def test_rmst_is_the_area_under_the_survival_curve(backend, data):
+    X, y = data
+    context = backend.fit(X[:500], y[:500], "survival")
+    horizon = 2.0
+    grid = tuple(np.linspace(0.0, horizon, 2001))
+    curve = np.array(backend.predict(context, X[500:510], times=grid).survival)
+    out = backend.predict(context, X[500:510], rmst_horizon=horizon)
+    np.testing.assert_allclose(out.rmst, np.trapezoid(curve, grid, axis=1), rtol=1e-3)
+    assert all(0 < r <= horizon for r in out.rmst)
+    with pytest.raises(InvalidInputError, match="past the longest time"):
+        backend.predict(context, X[500:510], rmst_horizon=1e6)
+
+
 def test_quantiles_in_the_open_ended_last_bin_are_inf():
     import torch
     from survivalpfn.models.utils import HistogramDistribution

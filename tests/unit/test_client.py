@@ -897,6 +897,29 @@ class TestSurvivalAndCausal:
         assert json.loads(seen[0].data)["times"] == [1.0, 5.0]
         assert (result.survival, result.survival_times) == ([[0.9, 0.4]], [1.0, 5.0])
 
+    def test_rmst_and_potential_outcomes(self, monkeypatch):
+        response = {
+            "predictions": [2.0],
+            "rmst": [1.5],
+            "potential_outcomes": [[1.0, 3.0]],
+            "latency_ms": 1.0,
+        }
+        seen = self._capture(monkeypatch, response)
+        client = TabctxClient("http://x")
+        result = client.predict("s", [[1.0]], rmst_horizon=30, potential_outcomes=True)
+        body = json.loads(seen[0].data)
+        assert (body["rmst_horizon"], body["potential_outcomes"]) == (30.0, True)
+        assert (result.rmst, result.potential_outcomes) == ([1.5], [[1.0, 3.0]])
+        client.predict_file("s", b"a\n1\n", rmst_horizon=30, potential_outcomes=True)
+        form = b"".join(seen[-1].data)
+        assert b'name="rmst_horizon"\r\n\r\n30.0\r\n' in form
+        assert b'name="potential_outcomes"\r\n\r\ntrue\r\n' in form
+
+    def test_a_server_without_rmst_is_an_error(self, monkeypatch):
+        self._capture(monkeypatch, {"predictions": [2.0], "latency_ms": 1.0})
+        with pytest.raises(TabctxError, match="no rmst"):
+            TabctxClient("http://x").predict("s", [[1.0]], rmst_horizon=5)
+
     def test_a_server_without_survival_is_an_error_not_silence(self, monkeypatch):
         self._capture(monkeypatch, {"predictions": [2.0], "latency_ms": 1.0})
         with pytest.raises(TabctxError, match="no survival probabilities"):

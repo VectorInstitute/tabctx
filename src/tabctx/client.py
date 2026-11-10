@@ -60,11 +60,12 @@ from tabctx.errors import (
     TabctxError,
     UploadNotFoundError,
 )
+from tabctx.outputs import NONE as NO_OUTPUTS
+from tabctx.outputs import PredictOutputs
 from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
 from tabctx.serve.tenancy import TENANT_HEADER
 from tabctx.tasks import infer_task_with_second
 from tabctx.types import ArrayLike, Task
-from tabctx.uncertainty import check_quantiles, check_times
 
 BASE_URL_ENV = "TABCTX_BASE_URL"
 API_KEY_ENV = "TABCTX_API_KEY"
@@ -118,6 +119,11 @@ class PredictResult:
     # by each time, and the times (as survival_times).
     survival: list[list[float | None]] | None = None
     survival_times: list[float] | None = None
+    # Survival with rmst_horizon: per row, the expected event-free time up
+    # to it. Causal with potential_outcomes: per row, [if not treated, if
+    # treated].
+    rmst: list[float] | None = None
+    potential_outcomes: list[list[float]] | None = None
 
 
 # The tabular models tabctx serves, preferred first, and the tasks each
@@ -352,13 +358,22 @@ class TabctxClient:
         model: str | None = None,
         quantiles: Sequence[float] | None = None,
         times: Sequence[float] | None = None,
+        rmst_horizon: float | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictResult:
         """model: needed through a gateway, which routes predicts by it;
-        a deployment reached directly knows it from the fit. quantiles
-        (regression, survival, causal): also return each row's predicted
-        distribution at these levels in (0, 1), as PredictResult.quantiles.
-        times (survival): also return each row's probability of no event
-        by each time, as PredictResult.survival."""
+        a deployment reached directly knows it from the fit. What to return
+        besides the predictions (tabctx.outputs; checked before sending):
+
+        - quantiles (regression, survival, causal): each row's predicted
+          distribution at these levels in (0, 1), as PredictResult.quantiles;
+        - times (survival): each row's probability of no event by each
+          time, as PredictResult.survival;
+        - rmst_horizon (survival): each row's expected event-free time up
+          to the horizon, as PredictResult.rmst;
+        - potential_outcomes (causal): each row's expected outcome if not
+          treated and if treated, as PredictResult.potential_outcomes."""
+        asked = PredictOutputs.of(quantiles, times, rmst_horizon, potential_outcomes)
         body: dict = _without_none(
             {
                 "dataset_id": dataset_id,
@@ -366,12 +381,14 @@ class TabctxClient:
                 "test_X": None if X_test is None else _json_rows(X_test),
                 "test_upload_id": test_upload_id,
                 "model": model,
-                "quantiles": _levels(quantiles),
-                "times": _times(times),
+                **{
+                    k: list(v) if isinstance(v, tuple) else v
+                    for k, v in asked.asked().items()
+                },
             }
         )
         resp = self._post("/v1/tabctx/predict", body, session_id=dataset_id)
-        return _predict_result(resp, quantiles is not None, times is not None)
+        return _predict_result(resp, asked)
 
     def predict_file(
         self,
@@ -381,23 +398,22 @@ class TabctxClient:
         model: str | None = None,
         quantiles: Sequence[float] | None = None,
         times: Sequence[float] | None = None,
+        rmst_horizon: float | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictResult:
         """predict() on a table file sent with the request (path or bytes).
         When the training table was a file, columns are matched by name."""
-        at = _times(times)
+        asked = PredictOutputs.of(quantiles, times, rmst_horizon, potential_outcomes)
         fields = {
             "dataset_id": dataset_id,
             "return_proba": "true" if return_proba else "false",
             "model": model,
-            "quantiles": None
-            if quantiles is None
-            else ",".join(repr(q) for q in _levels(quantiles)),
-            "times": None if at is None else ",".join(repr(t) for t in at),
+            **{k: _form_value(v) for k, v in asked.asked().items()},
         }
         resp = self._post_file(
             "/v1/tabctx/predict", fields, file, session_id=dataset_id
         )
-        return _predict_result(resp, quantiles is not None, times is not None)
+        return _predict_result(resp, asked)
 
     def fit_predict(
         self,
@@ -641,10 +657,13 @@ def _json_cell(value: object) -> object:
     return value
 
 
-def _levels(quantiles: Sequence[float] | None) -> list[float] | None:
-    """Levels as plain floats (numpy ones too), checked before sending."""
-    levels = check_quantiles(quantiles)
-    return None if levels is None else list(levels)
+def _form_value(value: object) -> str:
+    """An output's value as one form field: a list comma-separated."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, tuple):
+        return ",".join(repr(v) for v in value)
+    return repr(value)
 
 
 def _named_task(task: Task | None, event: object, treatment: object) -> Task | None:
@@ -657,25 +676,25 @@ def _named_task(task: Task | None, event: object, treatment: object) -> Task | N
     return infer_task_with_second(event is not None, treatment is not None)
 
 
-def _times(times: Sequence[float] | None) -> list[float] | None:
-    """Survival times as plain floats, checked before sending."""
-    at = check_times(times)
-    return None if at is None else list(at)
+# Each output's response field, what to call it, and the release that
+# added it: a deployment that returns no field asked for predates it (or a
+# gateway in front of it drops it).
+_RETURNED = {
+    "quantiles": ("quantiles", "quantiles", "0.19"),
+    "times": ("survival", "survival probabilities", "0.21"),
+    "rmst_horizon": ("rmst", "rmst", "0.21"),
+    "potential_outcomes": ("potential_outcomes", "potential outcomes", "0.21"),
+}
 
 
-def _predict_result(
-    resp: dict, asked_quantiles: bool = False, asked_times: bool = False
-) -> PredictResult:
-    if asked_quantiles and resp.get("quantiles") is None:
-        raise TabctxError(
-            "the deployment returned no quantiles: it predates them (tabctx "
-            "0.19), or a gateway in front of it drops the field; upgrade it"
-        )
-    if asked_times and resp.get("survival") is None:
-        raise TabctxError(
-            "the deployment returned no survival probabilities: it predates "
-            "them (tabctx 0.21), or a gateway in front of it drops the field"
-        )
+def _predict_result(resp: dict, asked: PredictOutputs = NO_OUTPUTS) -> PredictResult:
+    for name in asked.asked():
+        field, label, since = _RETURNED[name]
+        if resp.get(field) is None:
+            raise TabctxError(
+                f"the deployment returned no {label}: it predates them (tabctx "
+                f"{since}), or a gateway in front of it drops the field; upgrade it"
+            )
     return PredictResult(
         predictions=resp["predictions"],
         probabilities=resp.get("probabilities"),
@@ -687,6 +706,8 @@ def _predict_result(
         cache_outcome=resp.get("cache_outcome"),
         survival=resp.get("survival"),
         survival_times=resp.get("survival_times"),
+        rmst=resp.get("rmst"),
+        potential_outcomes=resp.get("potential_outcomes"),
     )
 
 

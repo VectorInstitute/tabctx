@@ -331,6 +331,20 @@ class TabctxPredictRequest(BaseModel):
         description="Survival only: also return each row's probability of no "
         "event by each of these times (in train_y's units), e.g. [30, 90, 365].",
     )
+    rmst_horizon: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Survival only: also return each row's restricted mean "
+        "survival time up to this horizon (the expected event-free time within "
+        "it, in train_y's units). At most the longest time in the training data.",
+    )
+    potential_outcomes: bool = Field(
+        default=False,
+        description="Causal only: also return each row's expected outcome if "
+        "not treated and if treated (the two the treatment effect is the "
+        "difference of).",
+    )
 
     @field_validator("quantiles")
     @classmethod
@@ -374,6 +388,19 @@ class TabctxPredictResponse(BaseModel):
     )
     survival_times: list[float] | None = Field(
         default=None, description="The times the survival probabilities are at."
+    )
+    rmst: list[float] | None = Field(
+        default=None,
+        description="Survival, with rmst_horizon: each row's restricted mean "
+        "survival time up to rmst_horizon.",
+    )
+    rmst_horizon: float | None = Field(
+        default=None, description="The horizon rmst is up to, as asked."
+    )
+    potential_outcomes: list[list[float]] | None = Field(
+        default=None,
+        description="Causal, when asked for: per test row, [expected outcome if "
+        "not treated, if treated].",
     )
     n_test: int
     latency_ms: float
@@ -1088,6 +1115,8 @@ class TabctxService:
                 return_proba=req.return_proba,
                 quantiles=req.quantiles,
                 times=req.times,
+                rmst_horizon=req.rmst_horizon,
+                potential_outcomes=req.potential_outcomes,
             )
         except (
             *_AUTH_ERRORS,
@@ -1107,6 +1136,9 @@ class TabctxService:
             quantile_levels=req.quantiles if outcome.quantiles is not None else None,
             survival=outcome.survival,
             survival_times=req.times if outcome.survival is not None else None,
+            rmst=outcome.rmst,
+            rmst_horizon=req.rmst_horizon if outcome.rmst is not None else None,
+            potential_outcomes=outcome.potential_outcomes,
             n_test=len(X_test),
             latency_ms=latency_ms,
             # The engine counts a restore from the disk tier; a worker's or

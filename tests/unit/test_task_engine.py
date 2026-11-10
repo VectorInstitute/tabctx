@@ -84,6 +84,23 @@ class TestPredictOutputs:
         assert out.quantiles == [[2.5], [2.5]]
         assert out.survival == [[1.0, 0.5, 0.0]] * 2
 
+    def test_rmst_and_potential_outcomes(self, engine):
+        eng, _, _ = engine
+        eng.fit(X, SURVIVAL_Y, task="survival", dataset_id="s")
+        # The fake: the mean of the training times capped at the horizon.
+        assert eng.predict("s", X[:1], rmst_horizon=3.0).rmst == [2.25]
+        eng.fit(X, CAUSAL_Y, task="causal", dataset_id="c")
+        out = eng.predict("c", X[:2], potential_outcomes=True)
+        assert out.potential_outcomes == [[0.0, pytest.approx(1.5)]] * 2
+
+    def test_no_class_probabilities_for_survival_or_causal(self, engine):
+        eng, _, _ = engine
+        eng.fit(X, SURVIVAL_Y, task="survival", dataset_id="s")
+        with pytest.raises(
+            InvalidInputError, match="return_proba is for classification"
+        ):
+            eng.predict("s", X, return_proba=True)
+
     def test_times_are_for_survival_contexts(self, engine):
         eng, _, _ = engine
         eng.fit(X, CAUSAL_Y, task="causal", dataset_id="c")
@@ -116,7 +133,7 @@ class TestPredictOutputs:
             cache=ContextCacheManager(capacity_bytes=est.ceiling_bytes()),
         )
         eng.fit(X, SURVIVAL_Y, task="survival", dataset_id="s")
-        with pytest.raises(InvalidInputError, match="can't take times"):
+        with pytest.raises(InvalidInputError, match="can't return times"):
             eng.predict("s", X, times=[1.0])
         assert eng.predict("s", X).predictions  # every other predict works
 

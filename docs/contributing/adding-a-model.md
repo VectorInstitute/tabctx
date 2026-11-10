@@ -33,8 +33,16 @@ in a `tasks` attribute (e.g. `tasks = frozenset({"survival"})`); the
 engine sends it only those fits, and a fit that names no model goes to
 the first one that serves its task. A survival or causal fit's `y` has
 two columns (`tabctx.tasks.split_targets`): time and event flag, or
-outcome and treatment flag. A survival model's `predict` may also take
-`times` and return `PredictOutcome.survival`. `backends/survivalpfn.py`
+outcome and treatment flag.
+
+### Outputs beyond the predictions
+
+`tabctx/outputs.py` lists what a predict can ask for besides its
+predictions (`quantiles`, `times`, `rmst_horizon`, `potential_outcomes`)
+and which tasks each is for. A backend gives an output by taking a
+keyword argument of that name in `predict` and filling the matching
+`PredictOutcome` field; it is passed only the outputs asked for, and a
+request for one its `predict` doesn't take is a 422 before any work. `backends/survivalpfn.py`
 and `backends/causalpfn.py` are the examples.
 
 ### The rules that matter

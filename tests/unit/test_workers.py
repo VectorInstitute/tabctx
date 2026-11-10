@@ -399,3 +399,12 @@ def test_tasks_and_survival_times_cross_the_process_boundary(built):
         assert out.survival == [[2 / 3, 0.0]]
     finally:
         engine.evict("surv")
+
+
+def test_new_outputs_cross_the_process_boundary(built):
+    engine = built.engine
+    engine.fit([[0.0], [1.0]], [[1.0, 1], [3.0, 0]], task="survival", dataset_id="rm")
+    try:
+        assert engine.predict("rm", [[0.0]], rmst_horizon=2.0).rmst == [1.5]
+    finally:
+        engine.evict("rm")

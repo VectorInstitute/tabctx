@@ -9,13 +9,13 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import gc
-import inspect
 import logging
 import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
+from typing import Any
 
 from tabctx import timing
 from tabctx.backends._cuda import release_cached_device_memory
@@ -32,10 +32,11 @@ from tabctx.errors import (
 from tabctx.labels import resolve_task
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
+from tabctx.outputs import NONE as NO_OUTPUTS
+from tabctx.outputs import PredictOutputs
 from tabctx.schema import TableSchema
-from tabctx.tasks import WITH_QUANTILES, choose_model, tasks_of
+from tabctx.tasks import SECOND_COLUMN, choose_model, tasks_of
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
-from tabctx.uncertainty import check_quantiles, check_times
 
 logger = logging.getLogger(__name__)
 
@@ -137,8 +138,7 @@ def _predict_splitting_on_oom(
     payload: object,
     X_test: ArrayLike,
     return_proba: bool,
-    quantiles: tuple[float, ...] | None = None,
-    times: tuple[float, ...] | None = None,
+    outputs: PredictOutputs = NO_OUTPUTS,
 ) -> list[PredictOutcome]:
     """Predict, halving the chunk on a CUDA OOM until it fits (or one row
     still doesn't). Chunk sizing estimates can't see everything on a nearly
@@ -146,56 +146,24 @@ def _predict_splitting_on_oom(
     and a model may pick a single batch with no OOM retry of its own. The
     halves run after the except block, whose traceback would otherwise keep
     the failed attempt's tensors alive."""
-    # Only callers that asked pass quantiles (or times), so a backend
-    # without the argument still serves every other predict.
-    extra: dict = {} if quantiles is None else {"quantiles": quantiles}
-    if times is not None:
-        extra["times"] = times
+    # Only the outputs asked for are passed, so a backend without an
+    # output's argument still serves every other predict.
     try:
-        return [backend.predict(payload, X_test, return_proba=return_proba, **extra)]
+        return [
+            backend.predict(
+                payload, X_test, return_proba=return_proba, **outputs.asked()
+            )
+        ]
     except BackendComputeError:
         if len(X_test) <= 1:
             raise
     gc.collect()
     half = len(X_test) // 2
     return _predict_splitting_on_oom(
-        backend, payload, X_test[:half], return_proba, quantiles, times
+        backend, payload, X_test[:half], return_proba, outputs
     ) + _predict_splitting_on_oom(
-        backend, payload, X_test[half:], return_proba, quantiles, times
+        backend, payload, X_test[half:], return_proba, outputs
     )
-
-
-def _check_quantiles_supported(task: Task, backend: TabularICLBackend) -> None:
-    """InvalidInputError (422) unless this context can return quantiles: a
-    task whose predicts are a distribution (regression, survival, causal),
-    by a backend whose predict takes them (a model that predicts only a
-    point doesn't)."""
-    if task not in WITH_QUANTILES:
-        raise InvalidInputError(
-            "quantiles are for regression, survival and causal contexts; a "
-            "classification context returns class probabilities "
-            "(return_proba) instead"
-        )
-    _check_accepts(backend, "quantiles", "a distribution: it can't return quantiles")
-
-
-def _check_times_supported(task: Task, backend: TabularICLBackend) -> None:
-    """InvalidInputError (422) unless this context can return survival
-    probabilities: a survival context, by a backend whose predict takes
-    times."""
-    if task != "survival":
-        raise InvalidInputError(
-            f"times are for survival contexts (the probability of no event by "
-            f"each time); this context is {task}"
-        )
-    _check_accepts(backend, "times", "survival probabilities: it can't take times")
-
-
-def _check_accepts(backend: TabularICLBackend, argument: str, missing: str) -> None:
-    if argument not in inspect.signature(backend.predict).parameters:
-        raise InvalidInputError(
-            f"model {backend.name!r} predicts a single value, not {missing}"
-        )
 
 
 def _start_expiry_sweep(engine: TabctxEngine, interval_s: float) -> threading.Thread:
@@ -746,15 +714,14 @@ class TabctxEngine:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
-        quantiles: Sequence[float] | None = None,
-        times: Sequence[float] | None = None,
+        **outputs: Any,
     ) -> PredictOutcome:
         """Predict against a previously-fit context, reusing its cached
-        training-context encoding. quantiles (regression, survival, causal):
-        also return each row's predicted distribution at these levels in
-        (0, 1) (tabctx.uncertainty); InvalidInputError for a classification
-        context. times (survival only): also return each row's probability
-        of no event by each time. Large test sets are automatically chunked
+        training-context encoding. outputs: what to return besides the
+        predictions, by name (quantiles=, times=, rmst_horizon=,
+        potential_outcomes=; tabctx.outputs says which tasks give each);
+        InvalidInputError for one the context's task or model can't give.
+        Large test sets are automatically chunked
         (see chunking.py) against the memory ceiling -- this is the one
         thing that must never let a single request take down the replica,
         which the naive one-shot wrapper this library replaces did not do.
@@ -763,8 +730,7 @@ class TabctxEngine:
         rows) runs beside a fit on this device; larger ones wait for the
         device's fits, and a spilled context is restored first.
         """
-        levels = check_quantiles(quantiles)
-        at = check_times(times)
+        asked = PredictOutputs.of(**outputs)
         self._check_not_expired(dataset_id)
         exclusive = len(X_test) > LIGHT_PREDICT_ROWS
         with self._cache.pinned(dataset_id), timing.counting_compiles():
@@ -773,7 +739,7 @@ class TabctxEngine:
                     with timing.phase("restore"):
                         self._restore(dataset_id)
                 outcome = self._predict_resident(
-                    dataset_id, X_test, return_proba, exclusive, levels, at
+                    dataset_id, X_test, return_proba, exclusive, asked
                 )
                 if outcome is not None:
                     return outcome
@@ -789,8 +755,7 @@ class TabctxEngine:
         X_test: ArrayLike,
         return_proba: bool,
         exclusive: bool,
-        quantiles: tuple[float, ...] | None = None,
-        times: tuple[float, ...] | None = None,
+        outputs: PredictOutputs = NO_OUTPUTS,
     ) -> PredictOutcome | None:
         """Run a predict if the context is resident once this call has the
         device (None if it was evicted meanwhile). Holds no reference to the
@@ -809,10 +774,12 @@ class TabctxEngine:
                 "serves -- re-fit with one of "
                 f"{sorted(self._backends)}"
             )
-        if quantiles is not None:
-            _check_quantiles_supported(context.task, backend)
-        if times is not None:
-            _check_times_supported(context.task, backend)
+        outputs.check(context.task, backend)
+        if return_proba and context.task in SECOND_COLUMN:
+            raise InvalidInputError(
+                f"return_proba is for classification; a {context.task} context "
+                "has no class probabilities"
+            )
         estimator = self._estimators[context.backend_name]
         n_features = context.n_features
         # Chunk against the usage-aware transient headroom (what the
@@ -853,8 +820,7 @@ class TabctxEngine:
                             context.payload,
                             chunk,
                             return_proba,
-                            quantiles,
-                            times,
+                            outputs,
                         )
                     ]
             finally:

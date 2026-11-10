@@ -85,6 +85,21 @@ class TestSurvival:
         assert p.status_code == 200, p.text
         assert p.json()["survival"] == [[0.5, 0.0]]
 
+    def test_rmst(self, app):
+        fit(app, train_X=X, train_y=TIMES, train_event=FLAGS, dataset_id="s")
+        p = predict(app, dataset_id="s", test_X=X[:1], rmst_horizon=3)
+        assert p.status_code == 200, p.text
+        assert (p.json()["rmst"], p.json()["rmst_horizon"]) == ([2.25], 3)
+        form = _request(
+            app,
+            "POST",
+            "/v1/tabctx/predict",
+            data={"dataset_id": "s", "rmst_horizon": "3"},
+            files={"file": ("t.csv", b"a,b\n0,1\n", "text/csv")},
+        )
+        assert form.status_code == 200, form.text
+        assert predict(app, dataset_id="s", test_X=X, rmst_horizon=0).status_code == 422
+
     def test_needs_its_event_column(self, app):
         r = fit(app, train_X=X, train_y=TIMES, task="survival")
         assert r.status_code == 422
@@ -120,6 +135,24 @@ class TestCausal:
         assert r.json()["task"] == "causal"
         p = predict(app, dataset_id="c", test_X=X[:1])
         assert p.json()["predictions"] == [pytest.approx(1.5)]
+
+    def test_potential_outcomes(self, app):
+        fit(
+            app,
+            train_X=X,
+            train_y=[1.0, 2.0, 1.5, 3.5],
+            train_treatment=[0, 1, 0, 1],
+            dataset_id="c",
+        )
+        p = predict(app, dataset_id="c", test_X=X[:1], potential_outcomes=True)
+        assert p.status_code == 200, p.text
+        assert p.json()["potential_outcomes"] == [[0.0, pytest.approx(1.5)]]
+        assert (
+            predict(app, dataset_id="c", test_X=X[:1]).json()["potential_outcomes"]
+            is None
+        )
+        r = predict(app, dataset_id="c", test_X=X[:1], return_proba=True)
+        assert r.status_code == 422
 
     def test_both_arms_are_needed(self, app):
         r = fit(app, train_X=X, train_y=TIMES, train_treatment=[1, 1, 1, 1])

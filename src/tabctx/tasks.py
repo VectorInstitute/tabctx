@@ -41,8 +41,6 @@ TASKS: tuple[Task, ...] = get_args(Task)
 PREDICTIVE: frozenset[Task] = frozenset({"classification", "regression"})
 # Tasks whose fit carries a second column, and its name in the API.
 SECOND_COLUMN: dict[Task, str] = {"survival": "event", "causal": "treatment"}
-# Tasks whose predicts are a distribution, so they can return quantiles.
-WITH_QUANTILES: frozenset[Task] = frozenset({"regression", "survival", "causal"})
 
 
 def tasks_of(backend: Any) -> frozenset[Task]:

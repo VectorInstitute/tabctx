@@ -46,7 +46,6 @@ import pickle
 import threading
 import time
 import weakref
-from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -56,6 +55,7 @@ from typing import Any
 
 from tabctx import timing
 from tabctx.errors import BackendComputeError
+from tabctx.outputs import PredictOutputs
 from tabctx.schema import TableSchema
 from tabctx.serve.reporting import PeriodicReport, spill_stats
 from tabctx.tasks import choose_model
@@ -708,16 +708,12 @@ class ProcessShard:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
-        quantiles: Sequence[float] | None = None,
-        times: Sequence[float] | None = None,
+        **outputs: Any,
     ) -> PredictOutcome:
+        # Plain values across the pipe (a caller's numpy levels included).
+        asked = PredictOutputs.of(**outputs).asked()
         return self._call(
-            "predict",
-            dataset_id,
-            X_test,
-            return_proba=return_proba,
-            quantiles=None if quantiles is None else tuple(quantiles),
-            times=None if times is None else tuple(times),
+            "predict", dataset_id, X_test, return_proba=return_proba, **asked
         )
 
     def schema(self, dataset_id: str) -> TableSchema | None:

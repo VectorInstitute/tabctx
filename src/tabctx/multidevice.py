@@ -49,9 +49,9 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
-from typing import Protocol
+from typing import Any, Protocol
 
 from tabctx import timing
 from tabctx.engine import _validate_fit_input
@@ -59,6 +59,7 @@ from tabctx.errors import CacheUnavailableError, DatasetNotFoundError
 from tabctx.events import EventBus, EventKind, ResidencyEvent
 from tabctx.keyed_locks import KeyedLocks
 from tabctx.labels import resolve_task
+from tabctx.outputs import PredictOutputs
 from tabctx.placement import (
     DeviceView,
     FitRequest,
@@ -124,8 +125,7 @@ class Shard(Protocol):
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
-        quantiles: Sequence[float] | None = None,
-        times: Sequence[float] | None = None,
+        **outputs: Any,
     ) -> PredictOutcome: ...
 
     def schema(self, dataset_id: str) -> TableSchema | None: ...
@@ -421,9 +421,10 @@ class MultiDeviceEngine:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
-        quantiles: Sequence[float] | None = None,
-        times: Sequence[float] | None = None,
+        **outputs: Any,
     ) -> PredictOutcome:
+        """outputs: as TabctxEngine.predict's."""
+        PredictOutputs.of(**outputs)  # a bad request fails before any device
         tried: set[int] = set()
         # Two passes: a re-fit can move the id to another device between
         # the first snapshot and the calls (it lands there, then the old
@@ -439,8 +440,7 @@ class MultiDeviceEngine:
                             dataset_id,
                             X_test,
                             return_proba=return_proba,
-                            quantiles=quantiles,
-                            times=times,
+                            **outputs,
                         )
                 except DatasetNotFoundError:
                     # Moved or evicted between the snapshot and the call.

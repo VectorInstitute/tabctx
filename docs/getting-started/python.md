@@ -87,6 +87,7 @@ client.fit(X_train, days, event=cancelled, dataset_id="retention")
 r = client.predict("retention", X_now, times=[90, 365], quantiles=[0.25, 0.75])
 r.predictions   # each row's median time to the event
 r.survival      # per row, the probability of no event by day 90 and day 365
+client.predict("retention", X_now, rmst_horizon=365).rmst  # expected event-free days in the year
 ```
 
 **Treatment effects** (`causalpfn-v0`): each training row has an outcome
@@ -94,8 +95,10 @@ and a treatment flag (1 treated, 0 control), from observational data.
 
 ```python
 client.fit(X_train, spend, treatment=got_offer, dataset_id="offer")
-effect = client.predict("offer", X_now).predictions  # per row: if treated minus if not
-sum(effect) / len(effect)                            # the average effect over these rows
+r = client.predict("offer", X_now, potential_outcomes=True, quantiles=[0.05, 0.95])
+r.predictions          # per row: the expected outcome if treated minus if not
+r.potential_outcomes   # per row: [expected outcome if not treated, if treated]
+sum(r.predictions) / len(r.predictions)   # the average effect over these rows
 ```
 
 Nothing is estimated past the longest time in the training data: a
@@ -113,9 +116,10 @@ assume: the survival model, that censoring is independent of the event
 given the features; the causal model, that every confounder of treatment
 and outcome is a feature, and that every kind of row could have been
 treated or not. No data can confirm the causal one. The causal model's
-`quantiles` are wide (CausalPFN's own interval method, uncalibrated): read
-them as the spread of an individual's effect, not as a confidence
-interval for the average.
+`quantiles` are of a treated outcome minus an untreated one for the row,
+calibrated at fit to cover held-out outcomes at their stated rates: the
+spread of an individual's effect, outcome noise included, not a
+confidence interval for the average effect.
 
 ## Errors
 

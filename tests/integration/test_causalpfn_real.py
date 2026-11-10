@@ -90,6 +90,31 @@ def test_quantiles_come_with_the_same_effect_and_repeat(backend, data):
     assert (q[:, 0] <= q[:, 1]).all() and (q[:, 1] <= q[:, 2]).all()
 
 
+def test_potential_outcomes_are_the_two_means_of_the_effect(backend, data):
+    X, y, _ = data
+    context = backend.fit(X[:600], y[:600], "causal")
+    out = backend.predict(context, X[600:650], potential_outcomes=True)
+    both = np.array(out.potential_outcomes)
+    np.testing.assert_allclose(both[:, 1] - both[:, 0], out.predictions, atol=1e-5)
+    assert backend.predict(context, X[600:610]).potential_outcomes is None
+
+
+def test_calibration_fits_the_intervals_to_the_noise(backend):
+    """Uncalibrated, a 90% range ran ~5x wider than the outcome noise
+    allows at noise 0.1; calibrated, it is about the spread of a treated
+    minus an untreated outcome (2 x 1.645 x sqrt(2) x noise)."""
+    rng = np.random.default_rng(4)
+    X = rng.normal(size=(1200, 5)).astype(np.float32)
+    treated = rng.binomial(1, 0.5, 1200)
+    outcome = X[:, 0] + treated * (1 + X[:, 1]) + rng.normal(scale=0.1, size=1200)
+    context = backend.fit(
+        X[:1000], np.column_stack([outcome, treated])[:1000], "causal"
+    )
+    assert context.temperature < 1.0
+    q = np.array(backend.predict(context, X[1000:], quantiles=(0.05, 0.95)).quantiles)
+    assert np.mean(q[:, 1] - q[:, 0]) < 3 * 2 * 1.645 * np.sqrt(2) * 0.1
+
+
 def test_concurrent_fits_are_each_charged_their_own_size(backend):
     big = backend.prepare_fit(*make(900)[:2], "causal")
     small = backend.prepare_fit(*make(40, seed=2)[:2], "causal")

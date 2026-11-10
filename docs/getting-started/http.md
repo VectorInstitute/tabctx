@@ -52,9 +52,13 @@ A survival fit sends each row's time as `train_y` and its event flag as
 `train_event` (1: the event happened then; 0: censored), or names the
 columns of a file (`target`, `event_column`); its predicts return each
 row's median event time and, with `times`, the probability of no event
-by each time (`survival`). A causal fit sends each row's outcome and its
-treatment flag (`train_treatment`, or `treatment_column`); its predicts
-return each row's treatment effect. `GET /v1/models` lists each model's
+by each time (`survival`), and with `rmst_horizon` the expected
+event-free time up to it (`rmst`). A causal fit sends each row's outcome
+and its treatment flag (`train_treatment`, or `treatment_column`); its
+predicts return each row's treatment effect, and with
+`potential_outcomes: true` the expected outcome if not treated and if
+treated. Predicting a survival or causal context with `return_proba` is a
+422: there are no class probabilities. `GET /v1/models` lists each model's
 `tasks`.
 
 ```bash
