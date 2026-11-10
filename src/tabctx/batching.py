@@ -73,7 +73,7 @@ from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
 from tabctx.types import ArrayLike, PredictOutcome
-from tabctx.uncertainty import check_quantiles
+from tabctx.uncertainty import check_quantiles, check_times
 
 
 def _concat_rows(tables: list[ArrayLike]) -> ArrayLike:
@@ -97,6 +97,7 @@ class _Key(NamedTuple):
     dataset_id: str
     return_proba: bool
     quantiles: tuple[float, ...] | None
+    times: tuple[float, ...] | None = None
 
 
 @dataclass
@@ -119,7 +120,7 @@ class _Batch:
 class CoalescingPredictor:
     """Wraps TabctxEngine.predict with same-context request coalescing.
 
-    Groups by (dataset_id, return_proba, quantiles): rows from concurrent requests
+    Groups by (dataset_id, return_proba, quantiles, times): rows from concurrent requests
     against one context are concatenated into a single engine.predict()
     call and the results split back per request. Correctness contract:
     every caller receives exactly the predictions (and probabilities,
@@ -148,9 +149,10 @@ class CoalescingPredictor:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
     ) -> PredictOutcome:
         levels = check_quantiles(quantiles)
-        key = _Key(dataset_id, return_proba, levels)
+        key = _Key(dataset_id, return_proba, levels, check_times(times))
         if self._window_s == 0:
             with self._lock:
                 self.engine_calls += 1
@@ -211,6 +213,7 @@ class CoalescingPredictor:
             X_test,
             return_proba=key.return_proba,
             quantiles=key.quantiles,
+            times=key.times,
         )
 
     def _execute(self, key: _Key, batch: _Batch) -> None:

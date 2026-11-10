@@ -37,8 +37,8 @@ categories and missing values go as they are.
 
 ## 3. On a GPU server
 
-The container image includes TabICL, TabPFN and TabDPT; each
-model's weights download when the server starts.
+The container image includes TabICL, TabPFN, TabDPT, SurvivalPFN and
+CausalPFN; each model's weights download when the server starts.
 
 ```bash
 docker run --gpus all -p 8000:8000 -e TABCTX_BACKEND=tabicl ghcr.io/vectorinstitute/tabctx

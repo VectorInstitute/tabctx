@@ -44,6 +44,15 @@ tabpfn = ["tabpfn", "torch"]
 # >=1.3.2: the release with the network-sharing hook (_load_model) this
 # backend uses; <1.4: the served model id follows the checkpoint version.
 tabdpt = ["tabdpt>=1.3.2,<1.4", "torch"]
+# CausalPFN (treatment effects; the `causal` task): Apache-2.0 code and
+# weights; the weights download from Hugging Face on first use. <0.2: the
+# backend uses the estimator's internals (backends/causalpfn.py).
+causalpfn = ["causalpfn>=0.1.5,<0.2", "torch"]
+# SurvivalPFN (the `survival` task) is not on PyPI, so it is not an extra
+# here: a dependency of that name would install whatever someone else
+# published under it. It is the `survivalpfn` dependency group below
+# (pinned to a commit, for uv and the image); with pip:
+#   pip install "survivalpfn @ https://github.com/rgklab/SurvivalPFN/archive/960f8c6b5ce0f128bdde1426e537e197f1ff7b99.tar.gz" omegaconf
 # ray>=2.58 is required for the consistent-hash request router that makes
 # multi-replica deployments correct (see serve/app.py and ROADMAP.md).
 # jinja2 is imported unconditionally by ray.serve's haproxy module but
@@ -92,6 +101,9 @@ dev = [
     # in-process (no server, no ray) via httpx's ASGI transport.
     "fastapi",
 ]
+# SurvivalPFN at a pinned commit (see the note by the extras): `uv sync
+# --group survivalpfn`. omegaconf: survivalpfn imports it without listing it.
+survivalpfn = ["survivalpfn", "omegaconf", "torch"]
 # The docs site (mkdocs.yml): `uv sync --group docs && uv run mkdocs serve`.
 # The service's deps too: the build writes the HTTP API's OpenAPI spec.
 docs = [
@@ -142,3 +154,6 @@ omit = [
     "src/tabctx/backends/tabicl.py",
     "src/tabctx/backends/tabpfn.py",
 ]
+
+[tool.uv.sources]
+survivalpfn = { url = "https://github.com/rgklab/SurvivalPFN/archive/960f8c6b5ce0f128bdde1426e537e197f1ff7b99.tar.gz" }

@@ -1,13 +1,16 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
     "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32'",
+    "python_full_version < '3.13' and sys_platform == 'win32'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -185,6 +188,28 @@ wheels = [
 ]
 
 [[package]]
+name = "autograd"
+version = "1.9.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/ac/4a8b58364ba865ab545251edbe475e5a35326814a5d274a2211d33ed8a5d/autograd-1.9.1.tar.gz", hash = "sha256:7818c5c69ddf9efb7da74097bd741a4c7920133f41966f68537223a15ef798bc", size = 2566975, upload-time = "2026-07-02T07:43:58.255Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/ce/8c98e6604bb1ec9d03c8493c328185b69bb7533fe08f3640f0f3641bd9d1/autograd-1.9.1-py3-none-any.whl", hash = "sha256:b788bae3fa010cbffb4cfb7b8ba2a3f0daa6072a8506da6164c779fe9cf3e05a", size = 54387, upload-time = "2026-07-02T07:43:56.502Z" },
+]
+
+[[package]]
+name = "autograd-gamma"
+version = "0.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "autograd" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/ae/7f2031ea76140444b2453fa139041e5afd4a09fc5300cfefeb1103291f80/autograd-gamma-0.5.0.tar.gz", hash = "sha256:f27abb7b8bb9cffc8badcbf59f3fe44a9db39e124ecacf1992b6d952934ac9c4", size = 3952, upload-time = "2020-10-15T16:51:06.785Z" }
+
+[[package]]
 name = "babel"
 version = "2.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -205,6 +230,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b8/6b/fe1b6162d8293bd2fa3ec92f0b16e4926db33baea7b20a47bc972d750c59/backrefs-8.2-py313-none-any.whl", hash = "sha256:c229c7dbf5140f369afd87a61549122c0be631df34171920006f289dcd082715", size = 399642, upload-time = "2026-11-03T14:25:53.395Z" },
     { url = "https://files.pythonhosted.org/packages/43/2a/017b27795de641b549d6d7eec6e5755d8151568c2d728e2cc27e199347af/backrefs-8.2-py314-none-any.whl", hash = "sha256:4374f7a590d0cadf646a5bbdd71c2eebc1a093564d3c0b105aa8958fc1a46413", size = 411524, upload-time = "2026-11-03T14:25:54.81Z" },
     { url = "https://files.pythonhosted.org/packages/62/b9/dcfb422e33138ca8b2af8c54f8fc4d507e6dd466a2cf8d771d08d7dcf1fb/backrefs-8.2-py315-none-any.whl", hash = "sha256:50362d9133634aff2c5225f43e6786ad056d47259cdb2d625126cb7c73ef7a45", size = 417004, upload-time = "2026-11-03T14:25:56.268Z" },
+]
+
+[[package]]
+name = "causalpfn"
+version = "0.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/0e/0ce66b258ddb57fbec2655f9bfcc513428410d79361f61699237f3c16805/causalpfn-0.1.5.tar.gz", hash = "sha256:d0af643a819e45613b91d355f82257c7d3196e195cea0be71997760588cfd6a2", size = 32803, upload-time = "2026-09-27T18:52:28.341Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c8/b3/fa919f219b8028a4d44c9de95832927eb87b9c8e7bf46bcc2adbdf55e1e5/causalpfn-0.1.5-py3-none-any.whl", hash = "sha256:c129280a40bdf1b5639ec9ecdf91a308f539c80d93990a9d997b886cd9a08d8f", size = 29204, upload-time = "2026-09-27T18:52:26.667Z" },
 ]
 
 [[package]]
@@ -945,6 +986,24 @@ wheels = [
 ]
 
 [[package]]
+name = "formulaic"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "interface-meta" },
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scipy" },
+    { name = "typing-extensions" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/87/e7b9b39d218793f159d7425e264c0ac196da07f1decc333001502fac02fb/formulaic-1.2.2.tar.gz", hash = "sha256:c99e8f11ff7d327eaecaf63855ca69b7fa0da100ad6c0041ef80912fbac667e6", size = 657522, upload-time = "2026-06-02T18:24:42.632Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/75/0576b03f7889ad25b5385b4f6c69e0543713425a6f193b056c9b0a2e65ce/formulaic-1.2.2-py3-none-any.whl", hash = "sha256:0f84ff49e3fc9dc0e68ab08a0a9427874021aa6c558e66b44dc634a35739b09b", size = 118939, upload-time = "2026-06-02T18:24:41.344Z" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1329,6 +1388,15 @@ wheels = [
 ]
 
 [[package]]
+name = "interface-meta"
+version = "2.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/5b/202a48a1ccdef721a95357fbe263c54ef87c18c4972df1ab5c22fe0f33d5/interface_meta-2.0.1.tar.gz", hash = "sha256:902bd9a95a12f195f15753a1080075d4eca7a2cb934fac7ac03c9e362b50796a", size = 15281, upload-time = "2026-04-30T22:35:36.882Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/d3/20a61a248feb1249cd81f83ce731f0bdf5170ed96a08a298f7081cda9e90/interface_meta-2.0.1-py3-none-any.whl", hash = "sha256:f38016bef9a4429b6d0792d809be7b65e9781820c674bf7f463999086b6e6323", size = 15330, upload-time = "2026-04-30T22:35:35.201Z" },
+]
+
+[[package]]
 name = "jinja2"
 version = "3.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -1484,6 +1552,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a9/c4/1407df7512a5b36cc79840e01710dc575733c461b13ab866cae77eaf87f3/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:482676e5bd48d70ac99d9fc78863469845421e01184fa83f1f9366dc49f7e974", size = 134002, upload-time = "2026-08-28T10:28:08.881Z" },
     { url = "https://files.pythonhosted.org/packages/16/45/c37a21ad5c0ab581a93c55ad544721aaa1f0ae94edb29c6a678a23d013e6/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:072bdb15a3c19a5b5dbc8f8fb1f4e1884bf4f3507eeb4cc6334401274d37a5c0", size = 194292, upload-time = "2026-08-28T10:28:11.06Z" },
     { url = "https://files.pythonhosted.org/packages/a6/c1/69f00d627949580e43d57af0aa465df46868d7c29801c137a55374101294/kiwisolver-1.5.1-graalpy312-graalpy250_312_native-win_amd64.whl", hash = "sha256:a5a00665d1a0e26763a7338d7e911d4598fbc1d50dd0d6b7919b7dc6c5d6569f", size = 73362, upload-time = "2026-08-28T10:28:12.449Z" },
+]
+
+[[package]]
+name = "lifelines"
+version = "0.30.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "autograd" },
+    { name = "autograd-gamma" },
+    { name = "formulaic" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ea/4f/f0b363278d40baf7d7a03217bee839cb880946c62109f243391c8754bb09/lifelines-0.30.0.tar.gz", hash = "sha256:f7f6f6275fcb167fe0f5b1ef98f868993f9c074cb74b1dd6e92736efa854be18", size = 383221, upload-time = "2024-10-29T12:00:43.513Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/14/f7/379e185a75ac8166ac70756d0ba68d9a2b02b555c7fde4983246752396bd/lifelines-0.30.0-py3-none-any.whl", hash = "sha256:ac7c602c8aceced9770d3977817c9d99c250ed8cd86f2567fa0d23e4e8014bf9", size = 349319, upload-time = "2024-10-29T12:00:41.749Z" },
 ]
 
 [[package]]
@@ -3700,6 +3786,49 @@ wheels = [
 ]
 
 [[package]]
+name = "survivalpfn"
+version = "0.1.0"
+source = { url = "https://github.com/rgklab/SurvivalPFN/archive/960f8c6b5ce0f128bdde1426e537e197f1ff7b99.tar.gz" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "lifelines" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "torch" },
+    { name = "tqdm" },
+]
+sdist = { hash = "sha256:702df7ce6069f116de1751304b1cda930d3c0ea1c7b8f3f6c55b44ce3fa1819f" }
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'" },
+    { name = "build", marker = "extra == 'dev'" },
+    { name = "h5py", marker = "extra == 'benchmark'" },
+    { name = "huggingface-hub" },
+    { name = "hydra-core", marker = "extra == 'train'" },
+    { name = "isort", marker = "extra == 'dev'" },
+    { name = "lifelines" },
+    { name = "matplotlib", marker = "extra == 'benchmark'" },
+    { name = "ninja", marker = "extra == 'train'" },
+    { name = "numpy" },
+    { name = "omegaconf", marker = "extra == 'train'" },
+    { name = "pandas", marker = "extra == 'benchmark'" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "schedulefree", marker = "extra == 'train'" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "survivaleval", marker = "extra == 'benchmark'" },
+    { name = "survset", marker = "extra == 'benchmark'" },
+    { name = "torch", specifier = ">=2.5.1,<3" },
+    { name = "tqdm" },
+    { name = "twine", marker = "extra == 'dev'" },
+    { name = "wandb", marker = "extra == 'train'" },
+]
+provides-extras = ["benchmark", "dev", "train"]
+
+[[package]]
 name = "sympy"
 version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3720,6 +3849,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+causalpfn = [
+    { name = "causalpfn" },
+    { name = "torch" },
+]
 client = [
     { name = "pandas" },
     { name = "pyarrow" },
@@ -3783,9 +3916,15 @@ docs = [
     { name = "python-multipart" },
     { name = "uvicorn" },
 ]
+survivalpfn = [
+    { name = "omegaconf" },
+    { name = "survivalpfn" },
+    { name = "torch" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "causalpfn", marker = "extra == 'causalpfn'", specifier = ">=0.1.5,<0.2" },
     { name = "fastapi", marker = "extra == 'serve'" },
     { name = "fastapi", marker = "extra == 'standalone'" },
     { name = "httpx", marker = "extra == 'dev'" },
@@ -3807,13 +3946,14 @@ requires-dist = [
     { name = "tabdpt", marker = "extra == 'tabdpt'", specifier = ">=1.3.2,<1.4" },
     { name = "tabicl", marker = "extra == 'tabicl'", specifier = ">=2.2.0" },
     { name = "tabpfn", marker = "extra == 'tabpfn'" },
+    { name = "torch", marker = "extra == 'causalpfn'" },
     { name = "torch", marker = "extra == 'tabdpt'" },
     { name = "torch", marker = "extra == 'tabicl'" },
     { name = "torch", marker = "extra == 'tabpfn'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'serve'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'standalone'" },
 ]
-provides-extras = ["tabicl", "tabpfn", "tabdpt", "serve", "standalone", "client", "mcp", "dev"]
+provides-extras = ["tabicl", "tabpfn", "tabdpt", "causalpfn", "serve", "standalone", "client", "mcp", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3834,6 +3974,11 @@ docs = [
     { name = "pyarrow", specifier = ">=14" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn" },
+]
+survivalpfn = [
+    { name = "omegaconf" },
+    { name = "survivalpfn", url = "https://github.com/rgklab/SurvivalPFN/archive/960f8c6b5ce0f128bdde1426e537e197f1ff7b99.tar.gz" },
+    { name = "torch" },
 ]
 
 [[package]]

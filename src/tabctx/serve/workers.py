@@ -58,6 +58,7 @@ from tabctx import timing
 from tabctx.errors import BackendComputeError
 from tabctx.schema import TableSchema
 from tabctx.serve.reporting import PeriodicReport, spill_stats
+from tabctx.tasks import choose_model
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ class Snapshot:
 class _Ready:
     backend_names: list[str]
     default_backend: str
+    backend_tasks: dict[str, frozenset[Task]]
     snapshot: Snapshot
 
 
@@ -277,7 +279,14 @@ def _worker_main(
         with send_lock:
             conn.send((_REPORT_ID, True, report, snapshot(), {}))
 
-    conn.send(_Ready(list(engine.backend_names), engine.default_backend, snapshot()))
+    conn.send(
+        _Ready(
+            list(engine.backend_names),
+            engine.default_backend,
+            engine.backend_tasks,
+            snapshot(),
+        )
+    )
     reporter = PeriodicReport(
         lambda: _report(shard, device), name=f"w-{device}-report", publish=send_report
     )
@@ -357,6 +366,7 @@ class ProcessShard:
         self._snapshot: Snapshot | None = None
         self._backend_names: list[str] = []
         self._default_backend = ""
+        self._backend_tasks: dict[str, frozenset[Task]] = {}
         self._reader: threading.Thread | None = None
         # The latest device report the worker sent, and when it arrived.
         self._report: tuple[dict, float] | None = None
@@ -384,6 +394,7 @@ class ProcessShard:
         self._backend_names = first.backend_names
         self._ready_at = time.monotonic()
         self._default_backend = first.default_backend
+        self._backend_tasks = first.backend_tasks
         self._snapshot = first.snapshot
         self._reader = threading.Thread(
             target=self._read_loop, name=f"tabctx-reader-{self.device}", daemon=True
@@ -609,9 +620,19 @@ class ProcessShard:
     def default_backend(self) -> str:
         return self._default_backend
 
-    def resolve_backend_name(self, backend: str | None) -> str:
+    @property
+    def backend_tasks(self) -> dict[str, frozenset[Task]]:
+        return dict(self._backend_tasks)
+
+    def resolve_backend_name(
+        self, backend: str | None, task: Task | None = None
+    ) -> str:
         from tabctx.errors import InvalidInputError
 
+        if task is not None:
+            return choose_model(
+                task, backend, self._backend_tasks, self._default_backend
+            )
         name = backend or self._default_backend
         if name not in self._backend_names:
             raise InvalidInputError(
@@ -688,6 +709,7 @@ class ProcessShard:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
     ) -> PredictOutcome:
         return self._call(
             "predict",
@@ -695,6 +717,7 @@ class ProcessShard:
             X_test,
             return_proba=return_proba,
             quantiles=None if quantiles is None else tuple(quantiles),
+            times=None if times is None else tuple(times),
         )
 
     def schema(self, dataset_id: str) -> TableSchema | None:

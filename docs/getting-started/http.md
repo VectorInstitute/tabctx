@@ -48,6 +48,22 @@ can also ask for `quantiles` of the predicted distribution, e.g.
 gets `quantiles` (one row per test row) and `quantile_levels` back. When the training table
 was a file, a test file's columns are matched by name.
 
+A survival fit sends each row's time as `train_y` and its event flag as
+`train_event` (1: the event happened then; 0: censored), or names the
+columns of a file (`target`, `event_column`); its predicts return each
+row's median event time and, with `times`, the probability of no event
+by each time (`survival`). A causal fit sends each row's outcome and its
+treatment flag (`train_treatment`, or `treatment_column`); its predicts
+return each row's treatment effect. `GET /v1/models` lists each model's
+`tasks`.
+
+```bash
+curl localhost:8000/v1/tabctx/fit -F dataset_id=retention -F target=days \
+  -F event_column=cancelled -F file=@policies.csv
+curl localhost:8000/v1/tabctx/predict -F dataset_id=retention \
+  -F times=90,365 -F file=@current.csv
+```
+
 ## Large tables
 
 A table file sent with the fit or predict is fine up to

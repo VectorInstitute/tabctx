@@ -106,7 +106,14 @@ class TestHttpContract:
     def test_models_lists_the_fake_backend(self, app):
         r = _request(app, "GET", "/v1/models")
         assert r.status_code == 200
-        assert r.json()["data"] == [{"id": "fake", "object": "model", "default": True}]
+        assert r.json()["data"] == [
+            {
+                "id": "fake",
+                "object": "model",
+                "default": True,
+                "tasks": ["classification", "regression", "survival", "causal"],
+            }
+        ]
 
     def test_health_routes(self, app):
         assert _request(app, "GET", "/healthz").json() == {"status": "ok"}

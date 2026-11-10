@@ -6,7 +6,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-Task = Literal["classification", "regression"]
+# What a fit learns (tabctx.tasks says what each needs and returns).
+Task = Literal["classification", "regression", "survival", "causal"]
 
 # Accept anything array-like (list-of-lists, numpy array, etc.) at the API
 # boundary; backends are responsible for coercing to whatever they need.
@@ -25,9 +26,13 @@ class PredictOutcome:
     predictions: list
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
-    # Regression only, when asked for: one row per test row, the predicted
-    # distribution's value at each requested level (in the order asked).
-    quantiles: list[list[float]] | None = None
+    # When asked for (regression, survival, causal): one row per test row,
+    # the predicted distribution's value at each requested level (in the
+    # order asked). A survival quantile with no finite estimate is None.
+    quantiles: list[list[float | None]] | None = None
+    # Survival only, when asked for: one row per test row, the probability
+    # of no event by each requested time (in the order asked).
+    survival: list[list[float]] | None = None
 
     def rows(self, start: int, stop: int) -> PredictOutcome:
         """The outcome for test rows [start, stop)."""
@@ -36,6 +41,7 @@ class PredictOutcome:
             probabilities=_slice(self.probabilities, start, stop),
             classes=self.classes,
             quantiles=_slice(self.quantiles, start, stop),
+            survival=_slice(self.survival, start, stop),
         )
 
     @staticmethod
@@ -47,6 +53,7 @@ class PredictOutcome:
             probabilities=_join([o.probabilities for o in outcomes]),
             classes=next((o.classes for o in outcomes if o.classes), first.classes),
             quantiles=_join([o.quantiles for o in outcomes]),
+            survival=_join([o.survival for o in outcomes]),
         )
 
 

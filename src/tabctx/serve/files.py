@@ -30,7 +30,9 @@ Labels (the target column) keep their text as written: ``"1.0"`` and
 labels. A target whose present values are all numbers is numeric: a
 missing value among them is a missing label (an error: every training
 row needs one), and the numbers decide the task when none is given
-(labels.infer_task). Regression needs numbers.
+(labels.infer_task). Regression needs numbers, and so do survival and
+causal fits, whose second column (the event or treatment flag, named by
+the request) is read the same way and taken out of the features too.
 
 Malformed content raises InvalidInputError naming the problem, so a
 caller's bad file is a 422, never a 500. pyarrow is imported on first
@@ -48,6 +50,7 @@ import numpy as np
 
 from tabctx.errors import InvalidInputError
 from tabctx.labels import infer_task
+from tabctx.tasks import SECOND_COLUMN, pack_targets
 from tabctx.types import Task
 
 # Spellings of a missing value, compared case-insensitively after strip.
@@ -56,6 +59,9 @@ _MISSING = frozenset({"", "na", "n/a", "nan", "null", "none"})
 _ARROW_NULLS = sorted(
     {f(m) for m in _MISSING for f in (str.lower, str.upper, str.title)}
 )
+
+# Tasks whose labels must be numbers.
+_NUMERIC: frozenset[Task | None] = frozenset({"regression", "survival", "causal"})
 
 _PARQUET_MAGIC = b"PAR1"
 _COMPRESSION_MAGIC = {b"\x1f\x8b": "gzip", b"\x28\xb5\x2f\xfd": "zstd"}
@@ -80,11 +86,17 @@ def read_table(path: Path, text_columns: Collection[str] = ()) -> Table:
 
 
 def read_training_table(
-    path: Path, target: str | None, task: Task | None
+    path: Path, target: str | None, task: Task | None, second: str | None = None
 ) -> tuple[Table, list]:
     """(features, labels) of a training table file. target: the label
     column's name, default the last column. Labels are floats for
-    regression and text for classification."""
+    regression and text for classification. second: a survival or causal
+    fit's event or treatment column, which `task` must name; the labels
+    are then both columns, as tasks.pack_targets gives them."""
+    if second is not None and task not in SECOND_COLUMN:
+        raise InvalidInputError(
+            f"an event or treatment column is for survival and causal fits, not {task}"
+        )
     pa = _pyarrow()
     if target is None and not _is_parquet(path):
         # Known before reading, so the label column is read as text.
@@ -108,6 +120,25 @@ def read_training_table(
     labels = _labels(arrow.column(position), task, pa)
     arrow = arrow.remove_column(position)
     del names[position]
+    if task in SECOND_COLUMN:
+        flags = None
+        if second is not None:
+            second = second.strip()
+            if second == target or second not in names:
+                raise InvalidInputError(
+                    f"{SECOND_COLUMN[task]} column {second!r} is not among the "
+                    f"table's feature columns {names[:20]}"
+                )
+            if len(names) < 2:
+                raise InvalidInputError(
+                    "the training table needs at least one feature column "
+                    f"besides the target and the {SECOND_COLUMN[task]} column"
+                )
+            position = names.index(second)
+            flags = _labels(arrow.column(position), "regression", pa)
+            arrow = arrow.remove_column(position)
+            del names[position]
+        labels = pack_targets(task, labels, flags)
     keep = _kept_text(path, names, ())
     return Table(names, list(_features(arrow, names, keep))), labels
 
@@ -133,9 +164,9 @@ def _labels(col, task: Task | None, pa) -> list:
         or pa.types.is_decimal(kind)
     )
     if not numeric:
-        if task == "regression":
+        if task in _NUMERIC:
             raise InvalidInputError(
-                f"regression needs numeric labels; the target has {kind}"
+                f"{task} needs numeric labels; the target has {kind}"
             )
         return [str(v) for v in values]
     numbers = col.cast(pa.float64()).to_pylist()
@@ -149,10 +180,10 @@ def _text_labels(texts: list[str | None], task: Task | None) -> list:
     present = [t for t in texts if t.lower() not in _MISSING]
     numbers = _floats_or_none(present)
     if numbers is None:
-        if task == "regression":
+        if task in _NUMERIC:
             example = next(t for t in texts if _floats_or_none([t]) is None)
             raise InvalidInputError(
-                f"regression needs numeric labels; the target has text ({example!r})"
+                f"{task} needs numeric labels; the target has text ({example!r})"
             )
         return texts  # text classes: "NA" among them is a class
     if len(present) < len(texts):  # "NA" among numbers is a missing label
@@ -163,7 +194,7 @@ def _text_labels(texts: list[str | None], task: Task | None) -> list:
 def _numeric_labels(texts: list[str], numbers: list[float], task: Task | None) -> list:
     if task is None:
         task = infer_task(numbers)
-    return numbers if task == "regression" else texts
+    return numbers if task in _NUMERIC else texts
 
 
 def _floats_or_none(texts: list[str]) -> list[float] | None:

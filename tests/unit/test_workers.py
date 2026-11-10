@@ -382,3 +382,20 @@ def test_reports_keep_arriving_while_fits_fill_the_workers_pool(monkeypatch):
         parent.send(None)
         loop.join(30)
     assert not loop.is_alive()
+
+
+def test_tasks_and_survival_times_cross_the_process_boundary(built):
+    engine = built.engine
+    assert "survival" in engine.backend_tasks["fake"]
+    assert engine.resolve_backend_name(None, "causal") == "fake"
+    engine.fit(
+        [[0.0], [1.0], [2.0]],
+        [[1.0, 1], [2.0, 0], [3.0, 1]],
+        task="survival",
+        dataset_id="surv",
+    )
+    try:
+        out = engine.predict("surv", [[0.0]], times=[1.5, 5.0])
+        assert out.survival == [[2 / 3, 0.0]]
+    finally:
+        engine.evict("surv")

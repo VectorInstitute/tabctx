@@ -11,7 +11,9 @@ Environment variables:
   one endpoint (requests pick one via their ``model`` field; the FIRST
   listed is the default). Known kinds: ``"tabicl"`` (default; requires
   torch + tabicl), ``"tabpfn"`` (requires torch + tabpfn), ``"tabdpt"``
-  (requires torch + tabdpt), ``"fake"``
+  (requires torch + tabdpt), ``"survivalpfn"`` (time-to-event; requires
+  torch + survivalpfn), ``"causalpfn"`` (treatment effects; requires torch +
+  causalpfn), ``"fake"``
   (deterministic stand-in, no GPU/torch -- what makes serving testable
   on a laptop or in CI). E.g. ``TABCTX_BACKEND=tabicl,tabpfn`` serves
   both models over one shared cache and GPU budget.
@@ -136,12 +138,20 @@ MAX_CONTEXT_AGE_S_ENV_VAR = "TABCTX_MAX_CONTEXT_AGE_S"
 EXPIRY_SWEEP_S = 30.0
 TABDPT_CONTEXT_SIZE_ENV_VAR = "TABCTX_TABDPT_CONTEXT_SIZE"
 TABDPT_ENSEMBLES_ENV_VAR = "TABCTX_TABDPT_ENSEMBLES"
+SURVIVALPFN_CONTEXT_SIZE_ENV_VAR = "TABCTX_SURVIVALPFN_CONTEXT_SIZE"
 
 logger = logging.getLogger(__name__)
 
-BackendKind = Literal["tabicl", "tabpfn", "tabdpt", "fake"]
+BackendKind = Literal["tabicl", "tabpfn", "tabdpt", "survivalpfn", "causalpfn", "fake"]
 KvCacheMode = Literal["kv", "repr", "off"]
-BACKEND_KINDS: tuple[BackendKind, ...] = ("tabicl", "tabpfn", "tabdpt", "fake")
+BACKEND_KINDS: tuple[BackendKind, ...] = (
+    "tabicl",
+    "tabpfn",
+    "tabdpt",
+    "survivalpfn",
+    "causalpfn",
+    "fake",
+)
 KV_CACHE_MODES: tuple[KvCacheMode, ...] = ("kv", "repr", "off")
 
 
@@ -180,6 +190,9 @@ class ServeSettings:
     # ensemble size (backends/tabdpt.py).
     tabdpt_context_size: int = 2048
     tabdpt_ensembles: int = 4
+    # SurvivalPFN: the most training rows kept as context (a larger table
+    # is subsampled at fit; backends/survivalpfn.py).
+    survivalpfn_context_size: int = 10_000
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -295,6 +308,9 @@ class ServeSettings:
             ),
             tabdpt_ensembles=_positive_int(
                 TABDPT_ENSEMBLES_ENV_VAR, cls.tabdpt_ensembles
+            ),
+            survivalpfn_context_size=_positive_int(
+                SURVIVALPFN_CONTEXT_SIZE_ENV_VAR, cls.survivalpfn_context_size
             ),
         )
 
@@ -614,10 +630,20 @@ def _build_real_backend(
     # docstrings. Isolated in its own function so the pragma doesn't also
     # exclude the (fully unit-tested) fake-backend and dispatch logic in
     # _build_backend below.
-    if kind == "tabdpt":
+    if kind == "survivalpfn":
+        from tabctx.backends.survivalpfn import SurvivalPFNBackend
+
+        backend: TabularICLBackend = SurvivalPFNBackend(
+            device=device, context_size=settings.survivalpfn_context_size
+        )
+    elif kind == "causalpfn":
+        from tabctx.backends.causalpfn import CausalPFNBackend
+
+        backend = CausalPFNBackend(device=device)
+    elif kind == "tabdpt":
         from tabctx.backends.tabdpt import TabDPTBackend
 
-        backend: TabularICLBackend = TabDPTBackend(
+        backend = TabDPTBackend(
             device=device,
             context_size=settings.tabdpt_context_size,
             n_ensembles=settings.tabdpt_ensembles,

@@ -22,6 +22,7 @@ import numbers
 import numpy as np
 
 from tabctx.errors import InvalidInputError
+from tabctx.tasks import has_second_column, validate_targets
 from tabctx.types import ArrayLike, Task
 
 _REGRESSION_HINT = "if train_y is a continuous target, pass task='regression'"
@@ -82,11 +83,28 @@ def infer_task(y: ArrayLike) -> Task:
 
 def resolve_task(y: ArrayLike, task: Task | None) -> Task:
     """The task to fit: the caller's, checked against the labels, or the
-    one the labels imply when the caller didn't say."""
+    one the labels imply when the caller didn't say. Only classification
+    and regression are inferred: a survival or causal fit's two target
+    columns (tabctx.tasks) don't say which of the two it is."""
     if task is None:
+        if _two_columns(y):
+            raise InvalidInputError(
+                "train_y has two values per row: name the task "
+                "(task='survival' or task='causal')"
+            )
         return infer_task(y)
     validate_labels(y, task)
     return task
+
+
+def _two_columns(y: ArrayLike) -> bool:
+    """Several values per row rather than one label (a column vector is
+    still one label per row)."""
+    shape = getattr(y, "shape", None)
+    if shape is not None:
+        return len(shape) == 2 and shape[1] > 1
+    first = next(iter(y), None)
+    return isinstance(first, (list, tuple, np.ndarray)) and len(first) > 1
 
 
 def validate_labels(y: ArrayLike, task: Task) -> None:
@@ -94,7 +112,15 @@ def validate_labels(y: ArrayLike, task: Task) -> None:
     labels that can only be a continuous target: numbers that aren't whole.
     Integer-coded classes are left alone -- they're legitimate, and a
     backend's class limit catches the rest (with regression_hint in its
-    message)."""
+    message). Survival and causal targets: tabctx.tasks.validate_targets."""
+    if has_second_column(task):
+        validate_targets(y, task)
+        return
+    if _two_columns(y):
+        raise InvalidInputError(
+            f"train_y must be one label per row for {task} (two values per row "
+            "are a survival or causal fit's targets)"
+        )
     values = _as_numbers(y)
     if values is None:
         return

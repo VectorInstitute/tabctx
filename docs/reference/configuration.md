@@ -7,7 +7,7 @@ Flags take `1`/`true` or `0`/`false`.
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `tabdpt`, `fake` (no GPU or weights; for tests). The first is the default model. `tabicl,tabdpt` serves both from one cache. |
+| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `tabdpt`, `survivalpfn` (time to an event), `causalpfn` (treatment effects), `fake` (no GPU or weights; for tests). The first is the default model; a survival or causal fit that names no model goes to the first listed that fits its task. `tabicl,tabdpt` serves both from one cache. |
 | `TABCTX_DEVICES` | `auto` | `auto`: every visible GPU, else the CPU. Or a list such as `cuda:0,cuda:1`. Two or more devices place each table on one GPU. |
 | `TABCTX_WORKER_PROCESSES` | `1` | With several GPUs, one worker process per GPU (`0`: threads of one process). |
 | `TABCTX_GPU_MEMORY_FRACTION` | `1.0` | The share of each GPU this server may use, in (0, 1]. Lower it when replicas share a GPU. |
@@ -35,6 +35,12 @@ Flags take `1`/`true` or `0`/`false`.
 |---|---|---|
 | `TABCTX_TABDPT_CONTEXT_SIZE` | `2048` | Training rows sampled as each predict's context. TabDPT keeps no encoding of the table, so a predict's cost grows with this, not with the table. |
 | `TABCTX_TABDPT_ENSEMBLES` | `4` | Ensemble members per predict. |
+
+## SurvivalPFN
+
+| Variable | Default | |
+|---|---|---|
+| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `10000` | The most training rows kept as context; a larger table is subsampled at fit (seeded). SurvivalPFN keeps no encoding of the table, so each predict runs over the kept rows. The model was trained on contexts up to 2,048 rows and evaluated on tables up to about 14,000. |
 
 The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
 

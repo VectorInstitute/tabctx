@@ -72,6 +72,42 @@ client.models(), client.limits()
 `TABCTX_API_KEY`. The key is sent as a bearer token, never appears in
 the client's `repr`, and is left out when the client is pickled.
 
+## Survival and treatment effects
+
+Two more tasks, each served by its own model (`GET /v1/models` lists
+every model's `tasks`; a fit that names no model goes to one that fits
+its task).
+
+**Time to an event** (`survivalpfn-v0.1`): each training row has a time
+and an event flag, 1 if the event happened at that time and 0 if the row
+was censored then (still event-free when follow-up ended).
+
+```python
+client.fit(X_train, days, event=cancelled, dataset_id="retention")
+r = client.predict("retention", X_now, times=[90, 365], quantiles=[0.25, 0.75])
+r.predictions   # each row's median time to the event (None: no finite estimate)
+r.survival      # per row, the probability of no event by day 90 and day 365
+```
+
+**Treatment effects** (`causalpfn-v0`): each training row has an outcome
+and a treatment flag (1 treated, 0 control), from observational data.
+
+```python
+client.fit(X_train, spend, treatment=got_offer, dataset_id="offer")
+effect = client.predict("offer", X_now).predictions  # per row: if treated minus if not
+sum(effect) / len(effect)                            # the average effect over these rows
+```
+
+From a file, name the columns: `fit_file(path, target="days",
+event_column="cancelled")` or `treatment_column=`. What the models
+assume: the survival model, that censoring is independent of the event
+given the features; the causal model, that every confounder of treatment
+and outcome is a feature, and that every kind of row could have been
+treated or not. No data can confirm the causal one. The causal model's
+`quantiles` are wide (CausalPFN's own interval method, uncalibrated): read
+them as the spread of an individual's effect, not as a confidence
+interval for the average.
+
 ## Errors
 
 Server errors come back as tabctx exceptions, importable from `tabctx`.

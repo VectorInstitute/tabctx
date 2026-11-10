@@ -72,14 +72,15 @@ against the result.
 
     [:octicons-arrow-right-24: The context cache](how-it-works.md#how-it-works)
 
--   :material-swap-horizontal:{ .lg .middle } **Three models, one endpoint**
+-   :material-swap-horizontal:{ .lg .middle } **Five models, one endpoint**
 
     ---
 
-    `tabicl-v2`, `tabpfn-3.5` and `tabdpt-1.3` behind `GET /v1/models`
-    (two licensed for commercial use); pick one per
-    request. Adding a model is one backend class and a few lines of
-    wiring.
+    `tabicl-v2`, `tabpfn-3.5` and `tabdpt-1.3` for classification and
+    regression, `survivalpfn-v0.1` for time to an event and
+    `causalpfn-v0` for treatment effects, behind `GET /v1/models`; pick
+    one per request. Adding a model is one backend class and a few lines
+    of wiring.
 
     [:octicons-arrow-right-24: Add a model](contributing/adding-a-model.md)
 
@@ -140,5 +141,7 @@ against the result.
 | `tabicl-v2` | [TabICLv2](https://github.com/soda-inria/tabicl) (Inria) | BSD-3-Clause: commercial use OK |
 | `tabpfn-3.5` | [TabPFN-3.5](https://github.com/PriorLabs/TabPFN) (Prior Labs) | Non-commercial; production use needs a [license from Prior Labs](https://priorlabs.ai/pricing) |
 | `tabdpt-1.3` | [TabDPT](https://github.com/layer6ai-labs/TabDPT-inference) (Layer 6) | Apache-2.0: commercial use OK |
+| `survivalpfn-v0.1` | [SurvivalPFN](https://github.com/rgklab/SurvivalPFN) (University of Toronto): time to an event, with censoring | Apache-2.0: commercial use OK |
+| `causalpfn-v0` | [CausalPFN](https://github.com/vdblm/CausalPFN) (University of Toronto, Layer 6): treatment effects from observational data | Apache-2.0 per its model card (the repository's LICENSE file is the Apache 2.0 text under its own name) |
 
 tabctx itself is Apache 2.0; each model's weights keep their own license.

@@ -23,7 +23,19 @@ models: Mitra ([#102](https://github.com/VectorInstitute/tabctx/issues/102)).
   at predict. The model can treat every column as numeric.
 - **`y`**: the labels. For classification, any values (tabctx returns
   them as strings); for regression, numbers.
-- **`task`**: `"classification"` or `"regression"`.
+- **`task`**: `"classification"` or `"regression"`, or `"survival"` or
+  `"causal"` for a model that serves those (below).
+
+### Which tasks
+
+A backend serves classification and regression unless it says otherwise
+in a `tasks` attribute (e.g. `tasks = frozenset({"survival"})`); the
+engine sends it only those fits, and a fit that names no model goes to
+the first one that serves its task. A survival or causal fit's `y` has
+two columns (`tabctx.tasks.split_targets`): time and event flag, or
+outcome and treatment flag. A survival model's `predict` may also take
+`times` and return `PredictOutcome.survival`. `backends/survivalpfn.py`
+and `backends/causalpfn.py` are the examples.
 
 ### The rules that matter
 
@@ -65,9 +77,9 @@ version needs none of them:
 2. **The server**: in `src/tabctx/serve/factory.py`, add its kind to
    `BackendKind` and `BACKEND_KINDS`, and a branch for it in
    `_build_real_backend`.
-3. **The client**: add its id to `KNOWN_MODELS` in
+3. **The client**: add its id and tasks to `KNOWN_MODELS` in
    `src/tabctx/client.py`, so the client finds it among a gateway's
-   models.
+   models (a gateway's listing has no `tasks`).
 4. **Packaging**: an extra in `pyproject.toml` (`tabctx[<model>]`), added
    to the `Dockerfile`'s export and to the image check in
    `.github/workflows/docker_image.yml`, and a row in the README's models

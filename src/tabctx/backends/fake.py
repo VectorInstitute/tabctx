@@ -1,7 +1,9 @@
 """Deterministic backend with no GPU/torch/tabicl dependency, for unit tests.
 
 Not a serious model: classification predicts the training majority class for
-every test row, regression predicts the training mean. What matters for
+every test row, regression predicts the training mean, survival the training
+times' median (and their empirical survival curve), causal the difference of
+the treated and control means. What matters for
 tabctx's own tests is the *shape* of the contract (fit returns an opaque
 payload, predict does one pass, context_bytes_hint is controllable), not
 prediction quality.
@@ -15,7 +17,10 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
+
 from tabctx.backends._outcome import classification_outcome
+from tabctx.tasks import TASKS, split_targets
 from tabctx.types import ArrayLike, PredictOutcome, Task
 
 
@@ -27,6 +32,8 @@ class _FakePayload:
     class_fractions: dict[str, float] | None = None
     mean_y: float | None = None
     std_y: float = 0.0
+    # Survival: the training times, sorted.
+    times: np.ndarray | None = None
 
 
 class FakeBackend:
@@ -34,6 +41,7 @@ class FakeBackend:
     without a real GPU, e.g. to assert cache reuse actually skips fit()."""
 
     name = "fake"
+    tasks = frozenset(TASKS)
 
     def __init__(
         self,
@@ -66,6 +74,21 @@ class FakeBackend:
                 n_features=n_features,
                 class_fractions={k: v / total for k, v in counts.items()},
             )
+        if task == "survival":
+            times, _ = split_targets(y)
+            return _FakePayload(
+                task=task,
+                n_train=n_train,
+                n_features=n_features,
+                mean_y=float(np.median(times)),
+                times=np.sort(times),
+            )
+        if task == "causal":
+            outcome, treated = split_targets(y)
+            effect = outcome[treated == 1].mean() - outcome[treated == 0].mean()
+            return _FakePayload(
+                task=task, n_train=n_train, n_features=n_features, mean_y=float(effect)
+            )
         values = [float(v) for v in y]
         mean_y = statistics.fmean(values) if values else 0.0
         std_y = statistics.pstdev(values) if len(values) > 1 else 0.0
@@ -83,6 +106,7 @@ class FakeBackend:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: tuple[float, ...] | None = None,
+        times: tuple[float, ...] | None = None,
     ) -> PredictOutcome:
         self.predict_calls += 1
         if self._predict_delay_s:
@@ -95,6 +119,8 @@ class FakeBackend:
                 return PredictOutcome(predictions=[None] * n_test)
             row = [fractions[c] for c in classes]
             return classification_outcome([row] * n_test, classes, return_proba)
+        if payload.task == "survival":
+            return _survival_outcome(payload, n_test, quantiles, times)
         # A normal distribution around the training mean, with its spread.
         row = None
         if quantiles is not None:
@@ -111,3 +137,23 @@ class FakeBackend:
 
     def fit_peak_bytes_hint(self) -> int | None:
         return self._peak_bytes_hint
+
+
+def _survival_outcome(
+    payload: _FakePayload,
+    n_test: int,
+    quantiles: tuple[float, ...] | None,
+    times: tuple[float, ...] | None,
+) -> PredictOutcome:
+    """The training times' median, quantiles and empirical survival curve,
+    the same for every test row."""
+    observed = payload.times if payload.times is not None else np.zeros(1)
+    q_row = None if quantiles is None else np.quantile(observed, quantiles).tolist()
+    s_row = None
+    if times is not None:
+        s_row = [float((observed > t).mean()) for t in times]
+    return PredictOutcome(
+        predictions=[payload.mean_y] * n_test,
+        quantiles=None if q_row is None else [list(q_row) for _ in range(n_test)],
+        survival=None if s_row is None else [list(s_row) for _ in range(n_test)],
+    )

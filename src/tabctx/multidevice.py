@@ -87,7 +87,12 @@ class Shard(Protocol):
     @property
     def default_backend(self) -> str: ...
 
-    def resolve_backend_name(self, backend: str | None) -> str: ...
+    @property
+    def backend_tasks(self) -> dict[str, frozenset[Task]]: ...
+
+    def resolve_backend_name(
+        self, backend: str | None, task: Task | None = None
+    ) -> str: ...
 
     def estimate_fit_bytes(
         self, n_train: int, n_features: int, backend: str | None = None
@@ -120,6 +125,7 @@ class Shard(Protocol):
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
     ) -> PredictOutcome: ...
 
     def schema(self, dataset_id: str) -> TableSchema | None: ...
@@ -181,6 +187,16 @@ class MultiDeviceEngine:
     @property
     def default_backend(self) -> str:
         return self._shards[0].default_backend
+
+    @property
+    def backend_tasks(self) -> dict[str, frozenset[Task]]:
+        return self._shards[0].backend_tasks
+
+    def resolve_backend_name(
+        self, backend: str | None, task: Task | None = None
+    ) -> str:
+        """The model a fit would use (every device serves the same ones)."""
+        return self._shards[0].resolve_backend_name(backend, task)
 
     def admission_headroom_bytes(self, backend: str | None = None) -> int:
         """The best any one device offers: a fit lands on a single device."""
@@ -291,7 +307,7 @@ class MultiDeviceEngine:
         throwaway contexts, which would flood subscribers)."""
         n_features = _validate_fit_input(X, y)
         task = resolve_task(y, task)
-        name = self._shards[0].resolve_backend_name(backend)
+        name = self._shards[0].resolve_backend_name(backend, task)
         request = FitRequest(len(X), n_features, name, dataset_id)
         if dataset_id is None:
             with timing.phase("place"):
@@ -406,6 +422,7 @@ class MultiDeviceEngine:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
     ) -> PredictOutcome:
         tried: set[int] = set()
         # Two passes: a re-fit can move the id to another device between
@@ -423,6 +440,7 @@ class MultiDeviceEngine:
                             X_test,
                             return_proba=return_proba,
                             quantiles=quantiles,
+                            times=times,
                         )
                 except DatasetNotFoundError:
                     # Moved or evicted between the snapshot and the call.
