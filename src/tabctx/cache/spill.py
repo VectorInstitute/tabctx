@@ -37,10 +37,13 @@ context costs its own tensors only.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import pickle
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -59,6 +62,62 @@ def _is_out_of_memory(error: BaseException) -> bool:
     return (
         isinstance(error, BackendComputeError) or "OutOfMemory" in type(error).__name__
     )
+
+
+#: Longest hex stem used as is: 255 bytes (the file name limit) less
+#: ".meta.json". Exactly the ids that worked before hashed names existed keep
+#: their hex names, so a store spilled by an older tabctx still loads.
+_MAX_HEX_STEM = 255 - len(".meta.json")
+_HASHED = "sha256-"
+
+
+def _file_stem(dataset_id: str) -> str:
+    """A filesystem-safe, collision-free file name stem for a dataset_id.
+
+    dataset_ids may contain ':' (tenant scoping) and any length of caller
+    chosen name, so they are hex-encoded; one whose hex would pass the
+    file name limit is named by its SHA-256 instead (fixed length), and
+    its meta file records the id itself."""
+    hexed = dataset_id.encode().hex()
+    if len(hexed) <= _MAX_HEX_STEM:
+        return hexed
+    return _HASHED + hashlib.sha256(dataset_id.encode()).hexdigest()
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Write a file whole or not at all: a crash mid-write leaves the old file
+    (or none), never a torn one. The temporary name is short, so it fits the
+    file name limit whatever the final name's length."""
+    tmp = path.with_name(f".tmp-{uuid.uuid4().hex}")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _id_of(meta_path: Path) -> str | None:
+    """The dataset_id a meta file belongs to, or None if it isn't one of
+    ours. Hex stems decode to the id; hashed stems name it in the file."""
+    stem = meta_path.name[: -len(".meta.json")]
+    if stem.startswith(_HASHED):
+        try:
+            dataset_id = json.loads(meta_path.read_text())["dataset_id"]
+        except (OSError, ValueError, KeyError, TypeError):
+            # Its id is unrecoverable, so nothing could ever load or evict it:
+            # drop the pair rather than leak its disk forever. (Writes are
+            # atomic, so this is a damaged file, never one being written.)
+            meta_path.unlink(missing_ok=True)
+            meta_path.with_name(stem + ".payload").unlink(missing_ok=True)
+            return None
+        if not isinstance(dataset_id, str) or _file_stem(dataset_id) != stem:
+            return None
+        return dataset_id
+    try:
+        return bytes.fromhex(stem).decode()
+    except ValueError:
+        return None
 
 
 class DiskSpillStore:
@@ -89,21 +148,17 @@ class DiskSpillStore:
         # retention checks needn't read metadata files.
         self._retention: dict[str, tuple[float | None, float | None]] = {}
         for meta_path in self._dir.glob("*.meta.json"):
-            # File names are hex-encoded dataset_ids (see _paths); index by
-            # the id itself, like entries this process spills.
-            stem = meta_path.name[: -len(".meta.json")]
-            try:
-                dataset_id = bytes.fromhex(stem).decode()
-            except ValueError:
+            # File names come from dataset_ids (see _paths); index by the id
+            # itself, like entries this process spills.
+            dataset_id = _id_of(meta_path)
+            if dataset_id is None:
                 continue  # not one of ours
             self._index[dataset_id] = 0.0
             self._retention[dataset_id] = _retention_of(self._meta(dataset_id))
 
     def _paths(self, dataset_id: str) -> tuple[Path, Path]:
-        # dataset_ids may contain ':' (tenant scoping) -- hex-encode for
-        # a filesystem-safe, collision-free name.
-        safe = dataset_id.encode().hex()
-        return (self._dir / f"{safe}.meta.json", self._dir / f"{safe}.payload")
+        stem = _file_stem(dataset_id)
+        return (self._dir / f"{stem}.meta.json", self._dir / f"{stem}.payload")
 
     def spill(self, context: CachedContext) -> bool:
         """Serialize an evicted context to disk. Returns False (and
@@ -118,8 +173,9 @@ class DiskSpillStore:
             return False
         try:
             self._make_room(len(blob))
-            payload_path.write_bytes(blob)
-            meta_path.write_text(
+            _write_atomic(payload_path, blob)
+            _write_atomic(
+                meta_path,
                 json.dumps(
                     {
                         "dataset_id": context.dataset_id,
@@ -138,7 +194,7 @@ class DiskSpillStore:
                             else None
                         ),
                     }
-                )
+                ).encode(),
             )
         except OSError:
             payload_path.unlink(missing_ok=True)
