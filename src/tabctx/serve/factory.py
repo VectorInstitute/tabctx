@@ -139,6 +139,7 @@ EXPIRY_SWEEP_S = 30.0
 TABDPT_CONTEXT_SIZE_ENV_VAR = "TABCTX_TABDPT_CONTEXT_SIZE"
 TABDPT_ENSEMBLES_ENV_VAR = "TABCTX_TABDPT_ENSEMBLES"
 SURVIVALPFN_CONTEXT_SIZE_ENV_VAR = "TABCTX_SURVIVALPFN_CONTEXT_SIZE"
+CAUSALPFN_CONTEXT_SIZE_ENV_VAR = "TABCTX_CAUSALPFN_CONTEXT_SIZE"
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +191,11 @@ class ServeSettings:
     # ensemble size (backends/tabdpt.py).
     tabdpt_context_size: int = 2048
     tabdpt_ensembles: int = 4
-    # SurvivalPFN: the most training rows kept as context (a larger table
-    # is subsampled at fit; backends/survivalpfn.py).
-    survivalpfn_context_size: int = 10_000
+    # SurvivalPFN and CausalPFN: the most training rows kept as context (a
+    # larger table is subsampled at fit; backends/survivalpfn.py,
+    # backends/causalpfn.py).
+    survivalpfn_context_size: int = 4096
+    causalpfn_context_size: int = 4096
 
     @classmethod
     def from_env(cls) -> ServeSettings:
@@ -311,6 +314,9 @@ class ServeSettings:
             ),
             survivalpfn_context_size=_positive_int(
                 SURVIVALPFN_CONTEXT_SIZE_ENV_VAR, cls.survivalpfn_context_size
+            ),
+            causalpfn_context_size=_positive_int(
+                CAUSALPFN_CONTEXT_SIZE_ENV_VAR, cls.causalpfn_context_size
             ),
         )
 
@@ -639,7 +645,9 @@ def _build_real_backend(
     elif kind == "causalpfn":
         from tabctx.backends.causalpfn import CausalPFNBackend
 
-        backend = CausalPFNBackend(device=device)
+        backend = CausalPFNBackend(
+            device=device, context_size=settings.causalpfn_context_size
+        )
     elif kind == "tabdpt":
         from tabctx.backends.tabdpt import TabDPTBackend
 

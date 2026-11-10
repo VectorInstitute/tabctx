@@ -62,6 +62,7 @@ from tabctx.errors import (
 )
 from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
 from tabctx.serve.tenancy import TENANT_HEADER
+from tabctx.tasks import infer_task_with_second
 from tabctx.types import ArrayLike, Task
 from tabctx.uncertainty import check_quantiles, check_times
 
@@ -115,7 +116,7 @@ class PredictResult:
     cache_outcome: Literal["hit", "restored"] | None = None
     # Survival with times asked for: per row, the probability of no event
     # by each time, and the times (as survival_times).
-    survival: list[list[float]] | None = None
+    survival: list[list[float | None]] | None = None
     survival_times: list[float] | None = None
 
 
@@ -251,7 +252,7 @@ class TabctxClient:
                 "train_treatment": None
                 if treatment is None
                 else _json_cells(treatment),
-                "task": task,
+                "task": _named_task(task, event, treatment),
                 "ttl_s": ttl_s,
                 "dataset_id": dataset_id,
                 "model": model,
@@ -304,7 +305,7 @@ class TabctxClient:
                     "target_column": target_column,
                     "event_column": event_column,
                     "treatment_column": treatment_column,
-                    "task": task,
+                    "task": _named_task(task, event_column, treatment_column),
                     "ttl_s": ttl_s,
                     "dataset_id": dataset_id,
                     "model": model,
@@ -336,7 +337,7 @@ class TabctxClient:
             "treatment_column": treatment_column,
             "dataset_id": dataset_id,
             "model": model,
-            "task": task,
+            "task": _named_task(task, event_column, treatment_column),
             "ttl_s": None if ttl_s is None else repr(float(ttl_s)),
         }
         resp = self._post_file("/v1/tabctx/fit", fields, file, session_id=dataset_id)
@@ -646,6 +647,16 @@ def _levels(quantiles: Sequence[float] | None) -> list[float] | None:
     return None if levels is None else list(levels)
 
 
+def _named_task(task: Task | None, event: object, treatment: object) -> Task | None:
+    """The task a fit sends: as given, or the one its event or treatment
+    column implies. Sent rather than left to the server, so a server that
+    predates these tasks rejects the fit instead of ignoring the column
+    and fitting a regression."""
+    if task is not None:
+        return task
+    return infer_task_with_second(event is not None, treatment is not None)
+
+
 def _times(times: Sequence[float] | None) -> list[float] | None:
     """Survival times as plain floats, checked before sending."""
     at = check_times(times)
@@ -663,7 +674,7 @@ def _predict_result(
     if asked_times and resp.get("survival") is None:
         raise TabctxError(
             "the deployment returned no survival probabilities: it predates "
-            "them (tabctx 0.20), or a gateway in front of it drops the field"
+            "them (tabctx 0.21), or a gateway in front of it drops the field"
         )
     return PredictResult(
         predictions=resp["predictions"],

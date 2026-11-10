@@ -872,6 +872,9 @@ class TestSurvivalAndCausal:
         body = json.loads(seen[0].data)
         assert (body["train_y"], body["train_event"]) == ([3.0, 4.0], [1, 0])
         assert "train_treatment" not in body
+        # Named, so a server that predates survival refuses the fit rather
+        # than ignoring train_event and fitting a regression.
+        assert body["task"] == "survival"
 
     def test_a_causal_fit_from_a_file_names_its_treatment_column(self, monkeypatch):
         seen = self._capture(monkeypatch, {"dataset_id": "c"})
@@ -880,6 +883,7 @@ class TestSurvivalAndCausal:
         )
         body = b"".join(seen[0].data)
         assert b'name="treatment_column"\r\n\r\nt\r\n' in body
+        assert b'name="task"\r\n\r\ncausal\r\n' in body
 
     def test_survival_times_and_result(self, monkeypatch):
         response = {

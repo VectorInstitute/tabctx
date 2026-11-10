@@ -415,3 +415,37 @@ class TestSecondColumn:
                 "survival",
                 "flag",
             )
+
+    @pytest.mark.parametrize(
+        "flags",
+        [("True", "False", "true"), ("yes", "no", "Y"), ("1.0", "0", "1")],
+    )
+    def test_flags_as_booleans_or_words(self, tmp_path, flags):
+        csv = "x,flag,time\n" + "".join(
+            f"{i},{f},{i + 1}\n" for i, f in enumerate(flags)
+        )
+        _, y = read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+        assert np.asarray(y)[:, 1].tolist() == [1.0, 0.0, 1.0]
+
+    def test_a_parquet_boolean_flag(self, tmp_path):
+        table = pa.table({"x": [1.0, 2.0], "treated": [True, False], "y": [3.0, 4.0]})
+        _, y = read_training_table(
+            write(tmp_path, parquet(table)), "y", "causal", "treated"
+        )
+        assert np.asarray(y)[:, 1].tolist() == [1.0, 0.0]
+
+    def test_a_bad_flag_names_its_column(self, tmp_path):
+        csv = "x,flag,time\n1,maybe,2\n2,0,3\n"
+        with pytest.raises(InvalidInputError, match="event column 'flag' must be 0/1"):
+            read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+        csv = "x,flag,time\n1,,2\n2,0,3\n"
+        with pytest.raises(InvalidInputError, match="'flag': row 1 has no value"):
+            read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+
+    def test_the_default_target_skips_the_flag_column(self, tmp_path):
+        csv = "x,time,died\n0.5,3.0,1\n0.1,5.5,0\n"
+        features, y = read_training_table(
+            write(tmp_path, csv), None, "survival", "died"
+        )
+        assert features.names == ["x"]
+        assert np.asarray(y).tolist() == [[3.0, 1.0], [5.5, 0.0]]

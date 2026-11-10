@@ -7,16 +7,20 @@ way:
 - Weights are tensors only. Their packages load checkpoints with
   torch.load(weights_only=False), which runs whatever the file's pickle
   says; tabctx loads them itself with weights_only=True (both published
-  checkpoints are a state dict and a plain config) and hands the network
-  to each fit. A checkpoint that needs arbitrary unpickling fails to load.
+  checkpoints are a state dict and a plain config). A checkpoint that
+  needs arbitrary unpickling fails to load.
 - Revisions are pinned, so a served model id always means the same
   weights. hf_hub_download honours HF_HUB_CACHE and HF_HUB_OFFLINE, so
   weights staged on a node load without network access.
 - One network per device, shared by every context (the context is the
   table; the network is the same for every tenant).
-- A cached context is its table, on the host; the spill tier pickles it
-  without the network and re-attaches this device's on load (the
-  network is always payload.estimator.icl_model).
+- The context is the training table, at most a fixed number of rows of
+  it: a larger table is subsampled at fit, keeping each group's share
+  (events and censored rows; treated and control rows), seeded. Test rows
+  attend only to the context, so a row's answer never depends on the
+  other rows in its request (the server merges and splits requests).
+- A cached context lives on the host; the spill tier pickles it without
+  any network, tagged with the model version.
 """
 
 from __future__ import annotations
@@ -44,26 +48,53 @@ def load_checkpoint(repo_id: str, filename: str, revision: str) -> dict:
     return ckpt
 
 
+def subsample(groups: np.ndarray, size: int, seed: int) -> np.ndarray:
+    """Sorted indices of at most `size` rows, keeping each group's share
+    of the rows (rounded, at least one row of every group present). All
+    rows when there are no more than `size`."""
+    n = len(groups)
+    if n <= size:
+        return np.arange(n)
+    rng = np.random.default_rng(seed)
+    values, counts = np.unique(groups, return_counts=True)
+    quota = np.maximum(1, np.round(counts * size / n).astype(int))
+    while quota.sum() > size:  # rounding up the small groups overshot
+        quota[np.argmax(quota)] -= 1
+    picked = [
+        rng.choice(np.flatnonzero(groups == value), k, replace=False)
+        for value, k in zip(values, quota, strict=True)
+    ]
+    return np.sort(np.concatenate(picked))
+
+
+def tagged_dumps(obj: Any, tag: bytes) -> bytes:
+    """obj pickled, prefixed with tag (the model version it was fit with)."""
+    return tag + pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def tagged_loads(data: bytes, tag: bytes) -> Any:
+    """The inverse of tagged_dumps. ValueError for data from another model
+    version."""
+    if not data.startswith(tag):
+        raise ValueError(f"not a context from this model version ({tag!r})")
+    return pickle.load(io.BytesIO(data[len(tag) :]))
+
+
 def dumps_context(payload: Any, tag: bytes) -> bytes:
-    """A context (whose network is payload.estimator.icl_model) pickled
-    without its network, prefixed with tag (the model version it was fit
-    with)."""
+    """A context whose network is payload.estimator.icl_model, pickled
+    without it (tagged_dumps)."""
     estimator = payload.estimator
     network = estimator.icl_model
     try:
         estimator.icl_model = None
-        data = pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL)
+        return tagged_dumps(payload, tag)
     finally:
         estimator.icl_model = network
-    return tag + data
 
 
 def loads_context(data: bytes, tag: bytes, network: Any, device: str) -> Any:
-    """The inverse of dumps_context, on this device's network. ValueError
-    for a context from another model version."""
-    if not data.startswith(tag):
-        raise ValueError(f"not a context from this model version ({tag!r})")
-    payload = pickle.load(io.BytesIO(data[len(tag) :]))
+    """The inverse of dumps_context, on this device's network."""
+    payload = tagged_loads(data, tag)
     payload.estimator.icl_model = network
     payload.estimator.device = device
     return payload

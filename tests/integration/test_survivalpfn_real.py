@@ -74,6 +74,38 @@ def test_wide_tables_are_reduced(backend, data):
     assert len(backend.predict(context, wide[:10]).predictions) == 10
 
 
+def test_nothing_is_estimated_past_the_follow_up(backend):
+    """Every row censored by t=1 (true survival exp(-t/10)): survival and
+    quantiles past the longest training time are None, not near-zero."""
+    rng = np.random.default_rng(3)
+    X = rng.normal(size=(400, 3)).astype(np.float32)
+    event = rng.exponential(10.0, 400)
+    y = np.column_stack([np.minimum(event, 1.0), event <= 1.0])
+    context = backend.fit(X, y, "survival")
+    longest = float(y[:, 0].max())
+    out = backend.predict(context, X[:5], quantiles=(0.05, 0.5), times=(0.5, 3.0))
+    assert all(row[1] is None for row in out.survival)
+    assert all(row[0] is not None and 0.0 < row[0] <= 1.0 for row in out.survival)
+    medians = [m for m in out.predictions if m is not None]
+    assert all(m <= longest for m in medians)
+    assert all(row[1] is None or row[1] <= longest for row in out.quantiles)
+
+
+def test_quantiles_in_the_open_ended_last_bin_are_inf():
+    import torch
+    from survivalpfn.models.utils import HistogramDistribution
+
+    from tabctx.backends.survivalpfn import event_time_quantiles
+
+    edges = torch.tensor([[0.0, 1.0, 2.0, 3.0]])
+    # 0.3 in each finite bin, 0.1 past the last edge.
+    logits = torch.log(torch.tensor([[0.3, 0.3, 0.3, 0.1]]))
+    dist = HistogramDistribution(edges, (edges[:, 1:] + edges[:, :-1]) / 2, logits)
+    q = event_time_quantiles(dist, (0.15, 0.5, 0.95))
+    np.testing.assert_allclose(q[0, :2], [0.5, 1 + 0.2 / 0.3], rtol=1e-5)
+    assert np.isinf(q[0, 2])
+
+
 def test_only_survival(backend, data):
     X, y = data
     with pytest.raises(InvalidInputError, match="fits survival, not regression"):

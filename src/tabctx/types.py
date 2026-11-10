@@ -31,8 +31,9 @@ class PredictOutcome:
     # order asked). A survival quantile with no finite estimate is None.
     quantiles: list[list[float | None]] | None = None
     # Survival only, when asked for: one row per test row, the probability
-    # of no event by each requested time (in the order asked).
-    survival: list[list[float]] | None = None
+    # of no event by each requested time (in the order asked); None past
+    # the training follow-up.
+    survival: list[list[float | None]] | None = None
 
     def rows(self, start: int, stop: int) -> PredictOutcome:
         """The outcome for test rows [start, stop)."""

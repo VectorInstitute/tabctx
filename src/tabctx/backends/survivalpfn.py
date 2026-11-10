@@ -6,23 +6,26 @@ The task (tabctx.tasks): each training row has a time and an event flag
 (1: the event happened then; 0: censored, still event-free then). A
 predict gives each row's event-time distribution, as
 
-- predictions: its median event time, or None when the model has no
-  finite estimate: the median falls in its open-ended last bin, the mass
-  it puts past every time it can place (it may still place times beyond
-  the longest training time),
-- quantiles (levels in (0, 1)): its event-time quantiles, None in that
-  last bin likewise,
+- predictions: its median event time,
+- quantiles (levels in (0, 1)): its event-time quantiles,
 - survival (times): the probability of no event by each time.
+
+Each is None past the longest time in the training context: the data
+says nothing beyond its follow-up, and the model puts next to no
+probability there, so a median or survival probability out there would
+read as an estimate when it isn't one (with heavy censoring, true
+survival of 0.74 came back as 0.001 past the follow-up).
 
 How it is served: SurvivalPFN keeps no encoding of the table. Its fit
 stores the table; every predict runs the transformer over the table and
 the test rows, which attend to the table only (never to each other), so
 test rows are batched freely without changing their answers. Its own
 estimator passes the whole table as context; here a table above
-`context_size` rows is subsampled at fit (seeded, so repeatable). The
-model was trained on contexts up to 2,048 rows (16,384 in an earlier
-phase) and evaluated on tables up to about 14,000, so the default keeps
-up to 10,000 rows. A table wider than the model's 99 features is reduced
+`context_size` rows is subsampled at fit, keeping the share of events,
+seeded. The model was trained on contexts up to 2,048 rows (16,384 in
+an earlier phase); the default keeps 4,096 (on one simulated 10,500-row
+table, contexts of 1,024 to 10,000 rows scored the same C-index, while a
+predict took 20 times longer at 10,000). A table wider than the model's 99 features is reduced
 by truncated SVD, as SurvivalPFN does.
 
 Assumptions the model makes, which a caller should know: censoring
@@ -49,6 +52,7 @@ from tabctx.backends._pfn_common import (
     float32_rows,
     load_checkpoint,
     loads_context,
+    subsample,
 )
 from tabctx.errors import BackendComputeError, InvalidInputError
 from tabctx.tasks import split_targets
@@ -62,7 +66,7 @@ CHECKPOINT = "survivalpfn_v0.1.pt"
 REVISION = "a4ccf9950c73723ca20296f624e649f344e2165a"
 MODEL_ID = "survivalpfn-v0.1"
 
-DEFAULT_CONTEXT_SIZE = 10_000
+DEFAULT_CONTEXT_SIZE = 4096
 # Test rows per forward pass.
 DEFAULT_BATCH_ROWS = 2048
 # The context subsample of a table above context_size rows.
@@ -71,9 +75,11 @@ _SEED = 0
 
 @dataclass
 class SurvivalPFNContext:
-    """A fitted SurvivalEstimator (its table and feature transform)."""
+    """A fitted SurvivalEstimator (its table and feature transform), and
+    the longest time in it: nothing is estimated past it."""
 
     estimator: Any
+    longest: float
 
 
 class SurvivalPFNBackend:
@@ -122,18 +128,8 @@ class SurvivalPFNBackend:
             raise InvalidInputError(f"{self.name} fits survival, not {task}")
         X_arr = float32_rows(X)
         times, events = (a.astype(np.float32) for a in split_targets(y))
-        if len(X_arr) > self._context_size:
-            keep = np.sort(
-                np.random.default_rng(_SEED).choice(
-                    len(X_arr), self._context_size, replace=False
-                )
-            )
-            X_arr, times, events = X_arr[keep], times[keep], events[keep]
-            if not events.any():
-                raise InvalidInputError(
-                    f"the {self._context_size}-row sample of this table has no "
-                    "events; a survival fit needs some"
-                )
+        keep = subsample(events, self._context_size, _SEED)
+        X_arr, times, events = X_arr[keep], times[keep], events[keep]
         estimator = SurvivalEstimator(
             device=self._device, model_path=None, icl_model=self._shared_network()
         )
@@ -148,7 +144,7 @@ class SurvivalPFNBackend:
         self._last_context_bytes = array_bytes(
             estimator.X_train, estimator.delta_train, estimator.T_train
         )
-        return SurvivalPFNContext(estimator=estimator)
+        return SurvivalPFNContext(estimator=estimator, longest=float(times.max()))
 
     def predict(
         self,
@@ -184,14 +180,17 @@ class SurvivalPFNBackend:
         import torch
 
         dist = context.estimator.predict_event_distribution(X)
-        medians = _finite_or_none(dist.median().cpu().numpy())
+        limit = context.longest
+        medians = _within(dist.median().cpu().numpy(), limit)
         q = None
         if quantiles is not None:
-            q = _finite_or_none(event_time_quantiles(dist, quantiles))
+            q = _within(event_time_quantiles(dist, quantiles), limit)
         s = None
         if times is not None:
             at = torch.tensor(times, dtype=torch.float32, device=dist.bin_edges.device)
-            s = dist.survival_function(at).cpu().numpy().astype(float).tolist()
+            probs = dist.survival_function(at).cpu().numpy().astype(float)
+            past = np.asarray(times) > limit
+            s = _within(np.where(past[None, :], np.inf, probs), np.inf)
         return PredictOutcome(predictions=medians, quantiles=q, survival=s)
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:
@@ -234,11 +233,11 @@ def event_time_quantiles(dist: Any, levels: tuple[float, ...]) -> np.ndarray:
     return values.cpu().numpy()
 
 
-def _finite_or_none(values: np.ndarray) -> list:
+def _within(values: np.ndarray, limit: float) -> list:
     """Values as JSON-able floats, None where not finite (the open-ended
-    last bin)."""
+    last bin) or past `limit` (the training follow-up)."""
     arr = np.asarray(values, dtype=float)
-    out = np.where(np.isfinite(arr), arr, np.nan).tolist()
+    out = np.where(np.isfinite(arr) & (arr <= limit), arr, np.nan).tolist()
     if arr.ndim == 1:
         return [None if v != v else v for v in out]
     return [[None if v != v else v for v in row] for row in out]

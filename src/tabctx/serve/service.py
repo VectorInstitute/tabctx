@@ -199,9 +199,8 @@ _PREDICTIONS_DOC = (
 _FIT_PREDICTIONS_DOC = (
     _PREDICTIONS_DOC
     + " Survival: each row's median event time, in train_y's units (null when "
-    "the model has no finite estimate: over half the probability is in its "
-    "open-ended last bin). Causal: each row's treatment effect (expected "
-    "outcome if treated minus if not)."
+    "it would be past the longest time in the training data). Causal: each "
+    "row's treatment effect (expected outcome if treated minus if not)."
 )
 
 
@@ -361,16 +360,17 @@ class TabctxPredictResponse(BaseModel):
         default=None,
         description="With quantiles requested: one row per test row, the value "
         "at each requested level, in the order of quantile_levels. Survival: "
-        "null where the event time's quantile has no finite estimate (the "
-        "model's open-ended last bin).",
+        "null where the event time's quantile would be past the longest time in "
+        "the training data.",
     )
     quantile_levels: list[float] | None = Field(
         default=None, description="The levels the quantiles are at, as asked."
     )
-    survival: list[list[float]] | None = Field(
+    survival: list[list[float | None]] | None = Field(
         default=None,
         description="Survival, with times requested: one row per test row, the "
-        "probability of no event by each time, in the order of survival_times.",
+        "probability of no event by each time, in the order of survival_times; "
+        "null past the longest time in the training data.",
     )
     survival_times: list[float] | None = Field(
         default=None, description="The times the survival probabilities are at."
@@ -447,11 +447,14 @@ def _requested_task(req: FitRequest) -> Task | None:
     if req.task is None:
         return implied
     if implied is not None and implied != req.task:
-        name = SECOND_COLUMN[implied]
         raise InvalidInputError(
-            f"a {name} column is for {implied} fits, not {req.task}"
+            f"{_ARTICLE[implied]} {SECOND_COLUMN[implied]} column is for "
+            f"{implied} fits, not {req.task}"
         )
     return req.task
+
+
+_ARTICLE = {"survival": "an", "causal": "a"}
 
 
 def _inline_second(req: FitRequest) -> list[float] | None:

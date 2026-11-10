@@ -4,9 +4,16 @@ the models: missing values, JSON-safe outputs, the spill format."""
 import numpy as np
 import pytest
 
-from tabctx.backends._pfn_common import array_bytes, dumps_context, loads_context
+from tabctx.backends._pfn_common import (
+    array_bytes,
+    dumps_context,
+    loads_context,
+    subsample,
+    tagged_dumps,
+    tagged_loads,
+)
 from tabctx.backends.causalpfn import _column_medians, _fill
-from tabctx.backends.survivalpfn import _finite_or_none
+from tabctx.backends.survivalpfn import _within
 
 
 def test_missing_values_are_filled_with_each_columns_median():
@@ -19,12 +26,36 @@ def test_missing_values_are_filled_with_each_columns_median():
     assert _fill(whole, medians) is whole
 
 
-def test_times_past_follow_up_are_none():
-    assert _finite_or_none(np.array([1.5, np.inf])) == [1.5, None]
-    assert _finite_or_none(np.array([[1.0, np.inf], [2.0, 3.0]])) == [
+def test_answers_past_follow_up_or_in_the_last_bin_are_none():
+    assert _within(np.array([1.5, np.inf, 4.0]), limit=3.0) == [1.5, None, None]
+    assert _within(np.array([[1.0, np.inf], [2.0, 3.0]]), limit=3.0) == [
         [1.0, None],
         [2.0, 3.0],
     ]
+
+
+class TestSubsample:
+    def test_every_row_when_few_enough(self):
+        assert subsample(np.array([0, 1, 1]), 3, seed=0).tolist() == [0, 1, 2]
+
+    def test_keeps_each_groups_share_and_repeats(self):
+        groups = np.array([1] * 900 + [0] * 100)
+        keep = subsample(groups, 100, seed=0)
+        assert len(keep) == 100 and (np.diff(keep) > 0).all()
+        assert (groups[keep] == 0).sum() == 10
+        assert keep.tolist() == subsample(groups, 100, seed=0).tolist()
+
+    def test_a_rare_group_keeps_a_row(self):
+        groups = np.array([1] * 999 + [0])
+        keep = subsample(groups, 10, seed=0)
+        assert len(keep) == 10 and 999 in keep
+
+
+def test_tagged_pickles():
+    data = tagged_dumps({"a": 1}, b"T1:")
+    assert tagged_loads(data, b"T1:") == {"a": 1}
+    with pytest.raises(ValueError, match="model version"):
+        tagged_loads(data, b"T2:")
 
 
 class _Estimator:

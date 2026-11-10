@@ -36,11 +36,12 @@ Flags take `1`/`true` or `0`/`false`.
 | `TABCTX_TABDPT_CONTEXT_SIZE` | `2048` | Training rows sampled as each predict's context. TabDPT keeps no encoding of the table, so a predict's cost grows with this, not with the table. |
 | `TABCTX_TABDPT_ENSEMBLES` | `4` | Ensemble members per predict. |
 
-## SurvivalPFN
+## SurvivalPFN and CausalPFN
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `10000` | The most training rows kept as context; a larger table is subsampled at fit (seeded). SurvivalPFN keeps no encoding of the table, so each predict runs over the kept rows. The model was trained on contexts up to 2,048 rows and evaluated on tables up to about 14,000. |
+| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `4096` | The most training rows SurvivalPFN keeps as context; a larger table is subsampled at fit, keeping the share of events (seeded). It keeps no encoding of the table, so each predict runs over the kept rows. The model was trained on contexts up to 2,048 rows. |
+| `TABCTX_CAUSALPFN_CONTEXT_SIZE` | `4096` | The same for CausalPFN, keeping each arm's share. Every test row is predicted against this one context, so a row's answer never depends on the rest of its request. |
 
 The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
 

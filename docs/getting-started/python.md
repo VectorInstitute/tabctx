@@ -85,7 +85,7 @@ was censored then (still event-free when follow-up ended).
 ```python
 client.fit(X_train, days, event=cancelled, dataset_id="retention")
 r = client.predict("retention", X_now, times=[90, 365], quantiles=[0.25, 0.75])
-r.predictions   # each row's median time to the event (None: no finite estimate)
+r.predictions   # each row's median time to the event
 r.survival      # per row, the probability of no event by day 90 and day 365
 ```
 
@@ -98,8 +98,17 @@ effect = client.predict("offer", X_now).predictions  # per row: if treated minus
 sum(effect) / len(effect)                            # the average effect over these rows
 ```
 
+Nothing is estimated past the longest time in the training data: a
+median, quantile or survival probability out there is `None`. Each model
+uses at most 4,096 training rows as its context (a larger table is
+subsampled, keeping the share of events or of each arm;
+`TABCTX_SURVIVALPFN_CONTEXT_SIZE`, `TABCTX_CAUSALPFN_CONTEXT_SIZE`), and
+every test row is predicted against that same context, so a row's answer
+never depends on the other rows sent with it.
+
 From a file, name the columns: `fit_file(path, target="days",
-event_column="cancelled")` or `treatment_column=`. What the models
+event_column="cancelled")` or `treatment_column=`; a flag column may be
+0/1, true/false or yes/no. What the models
 assume: the survival model, that censoring is independent of the event
 given the features; the causal model, that every confounder of treatment
 and outcome is a feature, and that every kind of row could have been
