@@ -1,8 +1,6 @@
 # Changelog
 
 ## [Unreleased]
-
-## [0.20.0] - 2026-11-10
 ### Added
 - **Two new tasks, survival and causal, with SurvivalPFN and CausalPFN** (`TABCTX_BACKEND=...,survivalpfn,causalpfn`). Both models are about 20M parameters (75 MB of weights) and fit beside the others on one GPU.
   - **Survival** (`survivalpfn-v0.1`, [SurvivalPFN](https://github.com/rgklab/SurvivalPFN), Apache-2.0): time to an event with right censoring. A fit sends each row's time as `train_y` and its event flag as `train_event` (or a file's `event_column`); a predict returns each row's median event time, `quantiles` of the event time, and with `times` the probability of no event by each (`survival`, `survival_times`). Nothing is estimated past the longest training time: those values are `null` (with heavy censoring the model put near-zero survival there, against a true 0.74).
@@ -14,6 +12,9 @@
   - `pip install "tabctx[causalpfn]"`. SurvivalPFN is not on PyPI, so it is a uv dependency group (`uv sync --group survivalpfn`), pinned to a commit; the image includes both.
   - Event and treatment columns in files may be 0/1, true/false or yes/no; with no target named, the target is the last column that isn't the flag.
   - The client: `fit(..., event=)` / `treatment=` (sending the task they imply, so a server without these tasks refuses the fit rather than fitting a regression), `fit_file` and `fit_uploaded` with `event_column` / `treatment_column`, `predict(..., times=)`, and `tabular_models(task)` / `default_model(task)`; the scikit-learn estimators and the MCP tools only pick models that fit their task.
+
+## [0.20.0] - 2026-11-10
+### Added
 - **An insurance scenario for the agent demo.** A coding agent gets two messy raw exports from a made-up insurer's policy system (synthetic data: dates in four formats, a province spelled five ways, rows exported twice, test policies, a totals row), writes and runs a cleaning script, then finds which policyholders will cancel at renewal, why, and which retention offers move their risk, and writes a report for the head of retention. `DEMO_SCENARIO=insurance` picks it; readmission stays the default and the hosted demo. Scenarios are now folders in `examples/agent_demo/scenarios/` (task, prompt, data), found through `scenario.py`; a task with a "clean" step gives each agent its shell (Claude Code's only inside its sandbox, which keeps it out of the answers). A Claude Code run against TabICL on a laptop took about five minutes.
 ### Fixed
 - **A long table name no longer breaks every fit when the disk tier is on.** The disk tier named its files with the hex of the full id (tenant plus the caller's name), which doubles its length, so a name over about 80 characters passed the 255-byte file name limit and every fit of it failed with a 500 (`OSError: File name too long`, raised while dropping a stale spilled copy). On prod a lab's descriptive names failed all morning. Ids whose hex name would pass the limit are now named by their SHA-256, with the id kept in the metadata file; every id that had a working hex name keeps it, so files spilled before this change still load. Spill files are written whole or not at all (a temporary file, then a rename), and a hashed pair whose metadata can't be read is removed at startup instead of holding disk forever.
