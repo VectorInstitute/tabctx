@@ -101,6 +101,11 @@ class TestPredictOutputs:
         ):
             eng.predict("s", X, return_proba=True)
 
+    def test_quantiles_stay_positional(self, engine):
+        eng, _, _ = engine
+        eng.fit(X, SURVIVAL_Y, task="survival", dataset_id="s")
+        assert eng.predict("s", X[:1], False, [0.5]).quantiles == [[2.5]]
+
     def test_times_are_for_survival_contexts(self, engine):
         eng, _, _ = engine
         eng.fit(X, CAUSAL_Y, task="causal", dataset_id="c")
@@ -133,7 +138,9 @@ class TestPredictOutputs:
             cache=ContextCacheManager(capacity_bytes=est.ceiling_bytes()),
         )
         eng.fit(X, SURVIVAL_Y, task="survival", dataset_id="s")
-        with pytest.raises(InvalidInputError, match="can't return times"):
+        with pytest.raises(
+            InvalidInputError, match="can't return survival probabilities"
+        ):
             eng.predict("s", X, times=[1.0])
         assert eng.predict("s", X).predictions  # every other predict works
 

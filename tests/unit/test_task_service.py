@@ -54,6 +54,7 @@ class TestSurvival:
         r = fit(app, train_X=X, train_y=TIMES, train_event=FLAGS, dataset_id="s")
         assert r.status_code == 200, r.text
         assert r.json()["task"] == "survival"
+        assert r.json()["summary"] == {"max_time": 4.0, "events": 3, "censored": 1}
 
         p = predict(app, dataset_id="s", test_X=X[:2], times=[0, 2.5], quantiles=[0.5])
         assert p.status_code == 200, p.text
@@ -133,6 +134,7 @@ class TestCausal:
         )
         assert r.status_code == 200, r.text
         assert r.json()["task"] == "causal"
+        assert r.json()["summary"] == {"treated": 2, "control": 2}
         p = predict(app, dataset_id="c", test_X=X[:1])
         assert p.json()["predictions"] == [pytest.approx(1.5)]
 
@@ -189,3 +191,15 @@ class TestRequestShape:
     def test_two_values_per_row_without_a_task(self, app):
         r = fit(app, train_X=X, train_y=[[1.0, 1]] * 4)
         assert r.status_code == 422
+
+
+def test_the_openapi_form_examples_fit_their_fields(app):
+    spec = _request(app, "GET", "/openapi.json").json()
+    form = spec["paths"]["/v1/tabctx/predict"]["post"]["requestBody"]["content"][
+        "multipart/form-data"
+    ]["schema"]["properties"]
+    assert form["times"]["examples"] == ["30,90,365"]
+    fit_form = spec["paths"]["/v1/tabctx/fit"]["post"]["requestBody"]["content"][
+        "multipart/form-data"
+    ]["schema"]["properties"]
+    assert fit_form["train_event"]["examples"] == ["1,0,1"]

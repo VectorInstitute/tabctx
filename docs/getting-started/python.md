@@ -117,7 +117,8 @@ given the features; the causal model, that every confounder of treatment
 and outcome is a feature, and that every kind of row could have been
 treated or not. No data can confirm the causal one. The causal model's
 `quantiles` are of a treated outcome minus an untreated one for the row,
-calibrated at fit to cover held-out outcomes at their stated rates: the
+calibrated (on the first predict that asks for them) to cover held-out
+outcomes at their stated rates: the
 spread of an individual's effect, outcome noise included, not a
 confidence interval for the average effect.
 

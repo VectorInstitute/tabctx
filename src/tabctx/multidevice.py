@@ -49,7 +49,7 @@ import logging
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Protocol
 
@@ -91,6 +91,9 @@ class Shard(Protocol):
     @property
     def backend_tasks(self) -> dict[str, frozenset[Task]]: ...
 
+    @property
+    def backend_outputs(self) -> dict[str, list[str]]: ...
+
     def resolve_backend_name(
         self, backend: str | None, task: Task | None = None
     ) -> str: ...
@@ -125,6 +128,7 @@ class Shard(Protocol):
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
         **outputs: Any,
     ) -> PredictOutcome: ...
 
@@ -191,6 +195,10 @@ class MultiDeviceEngine:
     @property
     def backend_tasks(self) -> dict[str, frozenset[Task]]:
         return self._shards[0].backend_tasks
+
+    @property
+    def backend_outputs(self) -> dict[str, list[str]]:
+        return self._shards[0].backend_outputs
 
     def resolve_backend_name(
         self, backend: str | None, task: Task | None = None
@@ -421,10 +429,13 @@ class MultiDeviceEngine:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
         **outputs: Any,
     ) -> PredictOutcome:
         """outputs: as TabctxEngine.predict's."""
-        PredictOutputs.of(**outputs)  # a bad request fails before any device
+        PredictOutputs.of(
+            quantiles=quantiles, **outputs
+        )  # a bad request fails before any device
         tried: set[int] = set()
         # Two passes: a re-fit can move the id to another device between
         # the first snapshot and the calls (it lands there, then the old
@@ -440,6 +451,7 @@ class MultiDeviceEngine:
                             dataset_id,
                             X_test,
                             return_proba=return_proba,
+                            quantiles=quantiles,
                             **outputs,
                         )
                 except DatasetNotFoundError:

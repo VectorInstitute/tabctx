@@ -54,6 +54,20 @@ def test_matches_causalpfns_estimator_when_the_table_is_the_context(backend, dat
     np.testing.assert_allclose(
         ours.predictions, theirs.estimate_cate(X[600:650]), rtol=1e-4, atol=1e-4
     )
+    # Each expected outcome, not just their difference.
+    test = X[600:650]
+    mu = theirs._predict_cepo(
+        X_context=theirs.X_train,
+        t_context=theirs.t_train,
+        y_context=theirs.y_train,
+        X_query=np.concatenate([test, test]),
+        t_query=np.concatenate([np.zeros(50), np.ones(50)]).astype(np.float32),
+        temperature=1.0,
+    )
+    both = backend.predict(
+        backend.fit(X[:600], y[:600], "causal"), test, potential_outcomes=True
+    ).potential_outcomes
+    np.testing.assert_allclose(np.array(both).T.ravel(), mu, rtol=1e-4, atol=1e-4)
 
 
 def test_effects_track_the_truth(backend, data):
@@ -99,20 +113,42 @@ def test_potential_outcomes_are_the_two_means_of_the_effect(backend, data):
     assert backend.predict(context, X[600:610]).potential_outcomes is None
 
 
-def test_calibration_fits_the_intervals_to_the_noise(backend):
-    """Uncalibrated, a 90% range ran ~5x wider than the outcome noise
-    allows at noise 0.1; calibrated, it is about the spread of a treated
-    minus an untreated outcome (2 x 1.645 x sqrt(2) x noise)."""
+def test_calibrated_intervals_cover_individual_effects_at_their_rate(backend):
+    """Each arm with its own noise, so a row's individual effect is
+    y1 - y0: a calibrated 90% range should hold about 90% of them, and
+    the calibration runs at the first predict asking for quantiles."""
     rng = np.random.default_rng(4)
-    X = rng.normal(size=(1200, 5)).astype(np.float32)
-    treated = rng.binomial(1, 0.5, 1200)
-    outcome = X[:, 0] + treated * (1 + X[:, 1]) + rng.normal(scale=0.1, size=1200)
+    n = 2000
+    X = rng.normal(size=(n, 5)).astype(np.float32)
+    treated = rng.binomial(1, 0.5, n)
+    base, effect = X[:, 0], 1 + X[:, 1]
+    y0 = base + rng.normal(scale=0.5, size=n)
+    y1 = base + effect + rng.normal(scale=0.5, size=n)
+    outcome = np.where(treated == 1, y1, y0)
     context = backend.fit(
-        X[:1000], np.column_stack([outcome, treated])[:1000], "causal"
+        X[:1500], np.column_stack([outcome, treated])[:1500], "causal"
     )
-    assert context.temperature < 1.0
-    q = np.array(backend.predict(context, X[1000:], quantiles=(0.05, 0.95)).quantiles)
-    assert np.mean(q[:, 1] - q[:, 0]) < 3 * 2 * 1.645 * np.sqrt(2) * 0.1
+    assert context.temperature is None  # not until quantiles are asked for
+    q = np.array(backend.predict(context, X[1500:], quantiles=(0.05, 0.95)).quantiles)
+    assert context.temperature is not None
+    individual = (y1 - y0)[1500:]
+    covered = ((q[:, 0] <= individual) & (individual <= q[:, 1])).mean()
+    assert 0.8 <= covered <= 0.97
+
+
+def test_an_outcome_too_large_for_the_model_is_rejected(backend, data):
+    X, y, _ = data
+    huge = y[:300].copy()
+    huge[:, 0] *= 1e30
+    context = backend.fit(X[:300], huge, "causal")
+    with pytest.raises(InvalidInputError, match="rescale the outcome"):
+        backend.predict(context, X[300:310])
+
+
+def test_a_wide_table_it_cannot_reduce_is_rejected(backend, data):
+    _, y, _ = data
+    with pytest.raises(InvalidInputError, match="couldn't reduce"):
+        backend.fit(np.zeros((60, 120), dtype=np.float32), y[:60], "causal")
 
 
 def test_concurrent_fits_are_each_charged_their_own_size(backend):

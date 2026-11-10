@@ -112,6 +112,7 @@ class TestHttpContract:
                 "object": "model",
                 "default": True,
                 "tasks": ["classification", "regression", "survival", "causal"],
+                "outputs": ["quantiles", "times", "rmst_horizon", "potential_outcomes"],
             }
         ]
 

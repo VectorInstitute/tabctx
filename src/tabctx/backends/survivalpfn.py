@@ -13,7 +13,8 @@ predict gives each row's event-time distribution, as
   event-free time up to the horizon (the area under the survival curve
   from 0 to it).
 
-Each is None past the longest time in the training context: the data
+Each is None past the longest time in the training table (that row is
+always kept in the context; FitResponse.summary reports it): the data
 says nothing beyond its follow-up, and the model puts next to no
 probability there, so a median or survival probability out there would
 read as an estimate when it isn't one (with heavy censoring, true
@@ -43,10 +44,12 @@ SurvivalEstimator around it (its `icl_model` argument).
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from scipy.sparse.linalg import ArpackError
 
 from tabctx.backends._cuda import device_scope, ensure_initialized
 from tabctx.backends._pfn_common import (
@@ -104,10 +107,15 @@ class SurvivalPFNBackend:
         self._context_size = context_size
         self._batch_rows = batch_rows
         self._network: Any = None
+        self._network_lock = threading.Lock()
         self._spill_tag = f"S1:{MODEL_ID}:".encode()
         self._last_context_bytes: int | None = None
 
     def _shared_network(self) -> Any:
+        with self._network_lock:  # two first fits must not load it twice
+            return self._load_network()
+
+    def _load_network(self) -> Any:
         if self._network is None:
             from survivalpfn.models import InContextModel
 
@@ -130,16 +138,24 @@ class SurvivalPFNBackend:
         if task != "survival":
             raise InvalidInputError(f"{self.name} fits survival, not {task}")
         X_arr = float32_rows(X)
-        times, events = (a.astype(np.float32) for a in split_targets(y))
-        keep = subsample(events, self._context_size, _SEED)
-        X_arr, times, events = X_arr[keep], times[keep], events[keep]
+        exact_times, events = split_targets(y)
+        # The longest time, in the caller's precision (float32 would round
+        # the caller's own maximum below itself), and its row always in the
+        # context, so it is the table's follow-up, not a subsample's.
+        longest = float(exact_times.max())
+        keep = np.union1d(
+            subsample(events, self._context_size, _SEED), [int(exact_times.argmax())]
+        )
+        X_arr = X_arr[keep]
+        times = exact_times[keep].astype(np.float32)
+        events = events[keep].astype(np.float32)
         estimator = SurvivalEstimator(
             device=self._device, model_path=None, icl_model=self._shared_network()
         )
         try:
             with device_scope(self._device):
                 estimator.fit(X_arr, events, times)
-        except ValueError as e:  # e.g. a wide table too small to reduce
+        except (ValueError, ArpackError) as e:  # a wide table it can't reduce
             self._last_context_bytes = None
             raise InvalidInputError(
                 f"{self.name} rejected the training table: {e}"
@@ -147,7 +163,7 @@ class SurvivalPFNBackend:
         self._last_context_bytes = array_bytes(
             estimator.X_train, estimator.delta_train, estimator.T_train
         )
-        return SurvivalPFNContext(estimator=estimator, longest=float(times.max()))
+        return SurvivalPFNContext(estimator=estimator, longest=longest)
 
     def predict(
         self,
@@ -161,11 +177,6 @@ class SurvivalPFNBackend:
         import torch
 
         del return_proba  # a survival context has no class probabilities
-        if rmst_horizon is not None and rmst_horizon > payload.longest:
-            raise InvalidInputError(
-                f"rmst_horizon {rmst_horizon:g} is past the longest time in the "
-                f"training data ({payload.longest:g}), where nothing is estimated"
-            )
         X_arr = float32_rows(X_test)
         parts = []
         try:
@@ -205,7 +216,13 @@ class SurvivalPFNBackend:
             s = _within(np.where(past[None, :], np.inf, probs), np.inf)
         rmst = None
         if rmst_horizon is not None:
-            rmst = restricted_mean(dist, rmst_horizon).astype(float).tolist()
+            # None past the follow-up, as for the other outputs.
+            area = (
+                restricted_mean(dist, rmst_horizon)
+                if rmst_horizon <= limit
+                else np.full(len(X), np.inf)
+            )
+            rmst = _within(area, np.inf)
         return PredictOutcome(predictions=medians, quantiles=q, survival=s, rmst=rmst)
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:

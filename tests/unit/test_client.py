@@ -917,7 +917,9 @@ class TestSurvivalAndCausal:
 
     def test_a_server_without_rmst_is_an_error(self, monkeypatch):
         self._capture(monkeypatch, {"predictions": [2.0], "latency_ms": 1.0})
-        with pytest.raises(TabctxError, match="no rmst"):
+        with pytest.raises(
+            TabctxError, match=r"no restricted mean survival times \(rmst\)"
+        ):
             TabctxClient("http://x").predict("s", [[1.0]], rmst_horizon=5)
 
     def test_a_server_without_survival_is_an_error_not_silence(self, monkeypatch):

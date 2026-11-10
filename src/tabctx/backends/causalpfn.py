@@ -16,8 +16,9 @@ treated minus if not:
   is how CausalPFN makes its intervals. CausalPFN draws random samples;
   here each row's two distributions are read at a fixed grid of levels,
   paired the same fixed way for every row, so a row gets the same answer
-  every time. The distributions are calibrated at fit, as CausalPFN's
-  `calibrate=True` does: a temperature chosen by 3-fold cross-validation
+  every time. The distributions are calibrated, as CausalPFN's
+  `calibrate=True` does, at the context's first predict that asks for
+  quantiles (so a fit never asked for them never pays for it): a temperature chosen by 3-fold cross-validation
   so that the model's outcome intervals cover the held-out outcomes at
   their stated rates (computed exactly here; CausalPFN samples). Like
   CausalPFN's, they describe the spread of an individual's effect, not a
@@ -57,10 +58,12 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+from scipy.sparse.linalg import ArpackError
 
 from tabctx.backends._cuda import device_scope, ensure_initialized
 from tabctx.backends._outcome import regression_outcome
@@ -103,8 +106,9 @@ class CausalPFNContext:
     svd: Any  # a fitted TruncatedSVD for a wide table, else None
     nbytes: int
     # The calibrated temperature of the outcome distributions for
-    # quantiles (set by fit_prepared; 1 when too small to calibrate).
-    temperature: float = 1.0
+    # quantiles: found at the first predict that asks for quantiles (None
+    # until then), so a fit never asked for them never pays for it.
+    temperature: float | None = None
 
     def features(self, X: np.ndarray) -> np.ndarray:
         X = _fill(X, self.medians)
@@ -132,12 +136,17 @@ class CausalPFNBackend:
         self._context_size = context_size
         self._batch_rows = batch_rows
         self._network: Any = None
+        self._network_lock = threading.Lock()
         self._spill_tag = f"C2:{MODEL_ID}:".encode()
         self._last_context_bytes: int | None = None
         # One fixed pairing of the two arms' points, the same for every row.
         self._pairing = np.random.default_rng(_SEED).permutation(QUANTILE_POINTS)
 
     def _shared_network(self) -> Any:
+        with self._network_lock:  # two first fits must not load it twice
+            return self._load_network()
+
+    def _load_network(self) -> Any:
         if self._network is None:
             from causalpfn.models import InContextModel
 
@@ -180,23 +189,19 @@ class CausalPFNBackend:
             svd = TruncatedSVD(
                 n_components=components, algorithm="arpack", random_state=_SEED
             )
-            X_arr = svd.fit_transform(X_arr).astype(np.float32)
+            try:
+                X_arr = svd.fit_transform(X_arr).astype(np.float32)
+            except ArpackError as e:  # e.g. every column constant
+                raise InvalidInputError(
+                    f"{self.name} couldn't reduce this wide table (too few "
+                    f"columns that vary): {e}"
+                ) from e
         nbytes = sum(a.nbytes for a in (X_arr, treated, outcome, medians))
         if svd is not None:
             nbytes += svd.components_.nbytes
         return CausalPFNContext(X_arr, treated, outcome, medians, svd, nbytes)
 
     def fit_prepared(self, prepared: CausalPFNContext) -> CausalPFNContext:
-        """The device half: calibrate the quantiles' temperature."""
-        import torch
-
-        try:
-            with device_scope(self._device), torch.no_grad():
-                prepared.temperature = calibrated_temperature(
-                    self._shared_network(), prepared, self._device
-                )
-        except torch.cuda.OutOfMemoryError as e:
-            raise BackendComputeError(f"CUDA OOM during fit(): {e}") from e
         self._last_context_bytes = prepared.nbytes
         return prepared
 
@@ -218,12 +223,22 @@ class CausalPFNBackend:
         parts = []
         try:
             with device_scope(self._device), torch.no_grad():
+                if quantiles is not None and payload.temperature is None:
+                    # Predicts of a context run one at a time per device.
+                    payload.temperature = calibrated_temperature(
+                        self._shared_network(), payload, self._device
+                    )
                 for start in range(0, len(X_arr), self._batch_rows):
                     batch = X_arr[start : start + self._batch_rows]
                     parts.append(self._effects(payload, batch, quantiles))
         except torch.cuda.OutOfMemoryError as e:
             raise BackendComputeError(f"CUDA OOM during predict(): {e}") from e
         effect = np.concatenate([p[0] for p in parts])
+        if not np.isfinite(effect).all():
+            raise InvalidInputError(
+                f"{self.name} overflowed on this table's outcomes (too large for "
+                "float32): rescale the outcome, e.g. to thousands"
+            )
         outcome = (
             regression_outcome(effect)
             if quantiles is None
@@ -268,7 +283,7 @@ class CausalPFNBackend:
         # Each row's two calibrated distributions read at the same fixed
         # levels, and a treated point minus a control point by one fixed
         # pairing.
-        probs = torch.softmax(logits / context.temperature, dim=-1)
+        probs = torch.softmax(logits / (context.temperature or 1.0), dim=-1)
         levels = (torch.arange(QUANTILE_POINTS, device=probs.device) + 0.5) / (
             QUANTILE_POINTS
         )
@@ -349,9 +364,12 @@ def _read_at(probs: Any, levels: Any) -> Any:
 TEMPERATURES = np.logspace(np.log10(0.001), np.log10(10.0), 500)
 _ALPHAS = np.linspace(0.01, 1.0, 10)
 CALIBRATION_FOLDS = 3
-# Below this many rows per fold there is too little to calibrate on.
+# Below this many rows per fold there is too little to calibrate on;
+# above this many held-out rows per fold, a sample of them (bounding the
+# calibration's time and its memory: batch x rows x bins floats).
 _MIN_CALIBRATION_ROWS = 10
-_TEMPERATURE_BATCH = 25
+_MAX_HELD_ROWS = 1024
+_TEMPERATURE_BATCH = 10
 
 
 def calibrated_temperature(
@@ -376,6 +394,7 @@ def calibrated_temperature(
     centers = network.bin_centers
     for held in np.array_split(order, CALIBRATION_FOLDS):
         rest = np.setdiff1d(order, held)
+        held = held[:_MAX_HELD_ROWS]  # already in random order
         arrays = (context.X[rest], context.treated[rest], context.outcome[rest])
         t_held = context.treated[held]
         logits, (y0_shift, y0_scale, y1_shift, y1_scale) = outcome_logits(

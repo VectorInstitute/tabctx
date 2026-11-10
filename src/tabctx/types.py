@@ -36,8 +36,9 @@ class PredictOutcome:
     # Survival: the probability of no event by each requested time (in the
     # order asked); None past the training follow-up.
     survival: list[list[float | None]] | None = None
-    # Survival: the expected event-free time up to the requested horizon.
-    rmst: list[float] | None = None
+    # Survival: the expected event-free time up to the requested horizon;
+    # None past the training follow-up.
+    rmst: list[float | None] | None = None
     # Causal: [expected outcome if not treated, if treated].
     potential_outcomes: list[list[float]] | None = None
 

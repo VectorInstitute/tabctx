@@ -57,6 +57,16 @@ def test_a_model_that_cannot_give_an_output():
         def predict(self, payload, X_test, return_proba=False):
             return super().predict(payload, X_test, return_proba)
 
-    with pytest.raises(InvalidInputError, match="can't return rmst horizon"):
+    with pytest.raises(
+        InvalidInputError, match="can't return restricted mean survival times"
+    ):
         PredictOutputs.of(rmst_horizon=1.0).check("survival", PointOnly())
     PredictOutputs.of().check("survival", PointOnly())  # nothing asked: fine
+
+
+def test_potential_outcomes_must_be_a_boolean():
+    assert PredictOutputs.of(potential_outcomes=True).asked() == {
+        "potential_outcomes": True
+    }
+    with pytest.raises(InvalidInputError, match="true or false"):
+        PredictOutputs.of(potential_outcomes="false")

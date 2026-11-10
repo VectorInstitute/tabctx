@@ -186,3 +186,22 @@ def infer_task_with_second(event: bool, treatment: bool) -> Task | None:
     if treatment:
         return "causal"
     return None
+
+
+def summarize(task: Task, y: ArrayLike) -> dict[str, float | int] | None:
+    """What a survival or causal fit's targets hold that a caller needs to
+    ask its predicts well: the longest time (survival outputs past it are
+    null) and the event counts, or the size of each arm. None for
+    classification and regression."""
+    if not has_second_column(task):
+        return None
+    first, flag = split_targets(y)
+    if task == "survival":
+        events = int(flag.sum())
+        return {
+            "max_time": float(first.max()),
+            "events": events,
+            "censored": len(flag) - events,
+        }
+    treated = int(flag.sum())
+    return {"treated": treated, "control": len(flag) - treated}

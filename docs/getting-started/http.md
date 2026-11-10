@@ -59,7 +59,9 @@ predicts return each row's treatment effect, and with
 `potential_outcomes: true` the expected outcome if not treated and if
 treated. Predicting a survival or causal context with `return_proba` is a
 422: there are no class probabilities. `GET /v1/models` lists each model's
-`tasks`.
+`tasks` and `outputs`. A survival or causal fit's response has a
+`summary`: `max_time` (outputs past it are `null`), `events` and
+`censored`, or `treated` and `control`.
 
 ```bash
 curl localhost:8000/v1/tabctx/fit -F dataset_id=retention -F target=days \

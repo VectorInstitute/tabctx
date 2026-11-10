@@ -100,8 +100,32 @@ def test_rmst_is_the_area_under_the_survival_curve(backend, data):
     out = backend.predict(context, X[500:510], rmst_horizon=horizon)
     np.testing.assert_allclose(out.rmst, np.trapezoid(curve, grid, axis=1), rtol=1e-3)
     assert all(0 < r <= horizon for r in out.rmst)
-    with pytest.raises(InvalidInputError, match="past the longest time"):
-        backend.predict(context, X[500:510], rmst_horizon=1e6)
+    assert backend.predict(context, X[500:502], rmst_horizon=1e6).rmst == [None, None]
+
+
+def test_the_follow_up_is_the_tables_own_longest_time(backend):
+    """The limit is the caller's longest time exactly (float32 rounds 100.1
+    below itself), and is kept when the context is subsampled."""
+    rng = np.random.default_rng(5)
+    X = rng.normal(size=(900, 3)).astype(np.float32)
+    times = rng.uniform(1.0, 90.0, 900)
+    times[rng.integers(900)] = 100.1  # the one longest row
+    y = np.column_stack([times, rng.binomial(1, 0.6, 900)])
+    context = backend.fit(X, y, "survival")  # context_size 600: subsampled
+    assert context.longest == 100.1
+    out = backend.predict(context, X[:2], times=(100.1, 100.2), rmst_horizon=100.1)
+    assert [row[0] is None for row in out.survival] == [False, False]
+    assert [row[1] for row in out.survival] == [None, None]
+    assert all(r is not None for r in out.rmst)
+    past = backend.predict(context, X[:2], rmst_horizon=100.2)
+    assert past.rmst == [None, None]
+
+
+def test_a_wide_table_it_cannot_reduce_is_rejected(backend):
+    X = np.zeros((60, 120), dtype=np.float32)
+    y = np.column_stack([np.arange(1.0, 61.0), np.ones(60)])
+    with pytest.raises(InvalidInputError, match="rejected the training table"):
+        backend.fit(X, y, "survival")
 
 
 def test_quantiles_in_the_open_ended_last_bin_are_inf():

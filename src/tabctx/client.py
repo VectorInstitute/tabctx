@@ -61,7 +61,7 @@ from tabctx.errors import (
     UploadNotFoundError,
 )
 from tabctx.outputs import NONE as NO_OUTPUTS
-from tabctx.outputs import PredictOutputs
+from tabctx.outputs import OUTPUTS, PredictOutputs
 from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
 from tabctx.serve.tenancy import TENANT_HEADER
 from tabctx.tasks import infer_task_with_second
@@ -122,7 +122,8 @@ class PredictResult:
     # Survival with rmst_horizon: per row, the expected event-free time up
     # to it. Causal with potential_outcomes: per row, [if not treated, if
     # treated].
-    rmst: list[float] | None = None
+    rmst: list[float | None] | None = None
+    rmst_horizon: float | None = None
     potential_outcomes: list[list[float]] | None = None
 
 
@@ -676,24 +677,14 @@ def _named_task(task: Task | None, event: object, treatment: object) -> Task | N
     return infer_task_with_second(event is not None, treatment is not None)
 
 
-# Each output's response field, what to call it, and the release that
-# added it: a deployment that returns no field asked for predates it (or a
-# gateway in front of it drops it).
-_RETURNED = {
-    "quantiles": ("quantiles", "quantiles", "0.19"),
-    "times": ("survival", "survival probabilities", "0.21"),
-    "rmst_horizon": ("rmst", "rmst", "0.21"),
-    "potential_outcomes": ("potential_outcomes", "potential outcomes", "0.21"),
-}
-
-
 def _predict_result(resp: dict, asked: PredictOutputs = NO_OUTPUTS) -> PredictResult:
     for name in asked.asked():
-        field, label, since = _RETURNED[name]
-        if resp.get(field) is None:
+        output = OUTPUTS[name]
+        if resp.get(output.field) is None:
             raise TabctxError(
-                f"the deployment returned no {label}: it predates them (tabctx "
-                f"{since}), or a gateway in front of it drops the field; upgrade it"
+                f"the deployment returned no {output.label}: it predates them "
+                f"(tabctx {output.since}), or a gateway in front of it drops the "
+                "field; upgrade it"
             )
     return PredictResult(
         predictions=resp["predictions"],
@@ -707,6 +698,7 @@ def _predict_result(resp: dict, asked: PredictOutputs = NO_OUTPUTS) -> PredictRe
         survival=resp.get("survival"),
         survival_times=resp.get("survival_times"),
         rmst=resp.get("rmst"),
+        rmst_horizon=resp.get("rmst_horizon"),
         potential_outcomes=resp.get("potential_outcomes"),
     )
 

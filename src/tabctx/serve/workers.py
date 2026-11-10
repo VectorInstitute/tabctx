@@ -46,6 +46,7 @@ import pickle
 import threading
 import time
 import weakref
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -125,6 +126,7 @@ class _Ready:
     backend_names: list[str]
     default_backend: str
     backend_tasks: dict[str, frozenset[Task]]
+    backend_outputs: dict[str, list[str]]
     snapshot: Snapshot
 
 
@@ -284,6 +286,7 @@ def _worker_main(
             list(engine.backend_names),
             engine.default_backend,
             engine.backend_tasks,
+            engine.backend_outputs,
             snapshot(),
         )
     )
@@ -367,6 +370,7 @@ class ProcessShard:
         self._backend_names: list[str] = []
         self._default_backend = ""
         self._backend_tasks: dict[str, frozenset[Task]] = {}
+        self._backend_outputs: dict[str, list[str]] = {}
         self._reader: threading.Thread | None = None
         # The latest device report the worker sent, and when it arrived.
         self._report: tuple[dict, float] | None = None
@@ -395,6 +399,7 @@ class ProcessShard:
         self._ready_at = time.monotonic()
         self._default_backend = first.default_backend
         self._backend_tasks = first.backend_tasks
+        self._backend_outputs = first.backend_outputs
         self._snapshot = first.snapshot
         self._reader = threading.Thread(
             target=self._read_loop, name=f"tabctx-reader-{self.device}", daemon=True
@@ -624,6 +629,10 @@ class ProcessShard:
     def backend_tasks(self) -> dict[str, frozenset[Task]]:
         return dict(self._backend_tasks)
 
+    @property
+    def backend_outputs(self) -> dict[str, list[str]]:
+        return dict(self._backend_outputs)
+
     def resolve_backend_name(
         self, backend: str | None, task: Task | None = None
     ) -> str:
@@ -708,10 +717,11 @@ class ProcessShard:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
         **outputs: Any,
     ) -> PredictOutcome:
         # Plain values across the pipe (a caller's numpy levels included).
-        asked = PredictOutputs.of(**outputs).asked()
+        asked = PredictOutputs.of(quantiles=quantiles, **outputs).asked()
         return self._call(
             "predict", dataset_id, X_test, return_proba=return_proba, **asked
         )

@@ -14,7 +14,7 @@ import threading
 import time
 import uuid
 import weakref
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any
 
 from tabctx import timing
@@ -33,7 +33,7 @@ from tabctx.labels import resolve_task
 from tabctx.memory.estimator import MemoryEstimator
 from tabctx.memory.host import HostMemoryGuard
 from tabctx.outputs import NONE as NO_OUTPUTS
-from tabctx.outputs import PredictOutputs
+from tabctx.outputs import PredictOutputs, offered
 from tabctx.schema import TableSchema
 from tabctx.tasks import SECOND_COLUMN, choose_model, tasks_of
 from tabctx.types import ArrayLike, ContextInfo, EngineStats, PredictOutcome, Task
@@ -291,6 +291,12 @@ class TabctxEngine:
     def backend_tasks(self) -> dict[str, frozenset[Task]]:
         """The tasks each model serves (tabctx.tasks)."""
         return {name: tasks_of(b) for name, b in self._backends.items()}
+
+    @property
+    def backend_outputs(self) -> dict[str, list[str]]:
+        """The outputs each model can give besides its predictions
+        (tabctx.outputs)."""
+        return {name: offered(tasks_of(b), b) for name, b in self._backends.items()}
 
     def backend_for(self, backend: str | None = None) -> TabularICLBackend:
         """The backend instance serving a model (the default when None)."""
@@ -714,6 +720,7 @@ class TabctxEngine:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
         **outputs: Any,
     ) -> PredictOutcome:
         """Predict against a previously-fit context, reusing its cached
@@ -730,7 +737,7 @@ class TabctxEngine:
         rows) runs beside a fit on this device; larger ones wait for the
         device's fits, and a spilled context is restored first.
         """
-        asked = PredictOutputs.of(**outputs)
+        asked = PredictOutputs.of(quantiles=quantiles, **outputs)
         self._check_not_expired(dataset_id)
         exclusive = len(X_test) > LIGHT_PREDICT_ROWS
         with self._cache.pinned(dataset_id), timing.counting_compiles():

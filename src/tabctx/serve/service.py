@@ -73,6 +73,7 @@ from tabctx.batching import CoalescingPredictor
 from tabctx.events import RecentEvents
 from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
+from tabctx.outputs import OUTPUTS, PredictOutputs
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import EXPIRY_SWEEP_S, ServeSettings, build_engine
@@ -88,7 +89,13 @@ from tabctx.serve.tenancy import (
     visible_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
-from tabctx.tasks import SECOND_COLUMN, TASKS, infer_task_with_second, pack_targets
+from tabctx.tasks import (
+    SECOND_COLUMN,
+    TASKS,
+    infer_task_with_second,
+    pack_targets,
+    summarize,
+)
 from tabctx.types import Task
 from tabctx.uncertainty import MAX_QUANTILES, MAX_TIMES, check_quantiles, check_times
 
@@ -283,6 +290,12 @@ class FitResponse(BaseModel):
     )
     n_train: int
     n_features: int
+    summary: dict[str, float | int] | None = Field(
+        default=None,
+        description="Survival: max_time (the longest time in the training data; "
+        "survival outputs past it are null), events and censored. Causal: "
+        "treated and control. Null for classification and regression.",
+    )
     expires_at: float | None = Field(
         default=None,
         description="Unix time the context is deleted at (its retention "
@@ -317,8 +330,11 @@ class TabctxPredictRequest(BaseModel):
         default=None,
         description="Regression, survival and causal: also return each row's "
         "predicted distribution at these levels in (0, 1), e.g. [0.05, 0.5, "
-        "0.95] for the median and a 90% interval (survival: of the event time; "
-        "causal: of the treatment effect). Each level at most once.",
+        "0.95] for the median and a 90% interval. Survival: of the event time. "
+        "Causal: of an individual's effect, a treated outcome minus an untreated "
+        "one for the row, outcome noise included (calibrated to held-out "
+        "outcomes); not a confidence interval for `predictions`. Each level at "
+        "most once.",
     )
     times: (
         Annotated[
@@ -337,7 +353,8 @@ class TabctxPredictRequest(BaseModel):
         allow_inf_nan=False,
         description="Survival only: also return each row's restricted mean "
         "survival time up to this horizon (the expected event-free time within "
-        "it, in train_y's units). At most the longest time in the training data.",
+        "it, in train_y's units). Past the longest time in the training data "
+        "(the fit's summary.max_time), rmst is null.",
     )
     potential_outcomes: bool = Field(
         default=False,
@@ -375,7 +392,8 @@ class TabctxPredictResponse(BaseModel):
         description="With quantiles requested: one row per test row, the value "
         "at each requested level, in the order of quantile_levels. Survival: "
         "null where the event time's quantile would be past the longest time in "
-        "the training data.",
+        "the training data. Causal: of an individual's effect (outcome noise "
+        "included), not a confidence interval for `predictions`.",
     )
     quantile_levels: list[float] | None = Field(
         default=None, description="The levels the quantiles are at, as asked."
@@ -389,10 +407,11 @@ class TabctxPredictResponse(BaseModel):
     survival_times: list[float] | None = Field(
         default=None, description="The times the survival probabilities are at."
     )
-    rmst: list[float] | None = Field(
+    rmst: list[float | None] | None = Field(
         default=None,
         description="Survival, with rmst_horizon: each row's restricted mean "
-        "survival time up to rmst_horizon.",
+        "survival time up to rmst_horizon; null when the horizon is past the "
+        "longest time in the training data (the fit's summary.max_time).",
     )
     rmst_horizon: float | None = Field(
         default=None, description="The horizon rmst is up to, as asked."
@@ -449,6 +468,25 @@ class DatasetList(BaseModel):
         description="The replica that answered: with several, each lists only "
         "its own contexts.",
     )
+
+
+class ModelInfo(BaseModel):
+    id: str = Field(description="Pass as `model` in fit requests.")
+    object: Literal["model"] = "model"
+    default: bool = Field(description="The model a fit without `model` uses.")
+    tasks: list[Task] = Field(
+        description="What a fit with this model can learn. A fit that names no "
+        "model goes to the default if it serves the task, else the first listed "
+        "model that does."
+    )
+    outputs: list[str] = Field(
+        description="What its predicts can return besides predictions, by "
+        "request field: quantiles, times, rmst_horizon, potential_outcomes."
+    )
+
+
+class ModelList(BaseModel):
+    data: list[ModelInfo]
 
 
 class DeleteResponse(BaseModel):
@@ -536,6 +574,15 @@ def _form_lists(fields: dict[str, str], names: frozenset[str]) -> dict[str, obje
     return out
 
 
+# A list field's example as one form value.
+_FORM_EXAMPLES = {
+    "quantiles": "0.05,0.95",
+    "times": "30,90,365",
+    "train_event": "1,0,1",
+    "train_treatment": "1,0,1",
+}
+
+
 def _request_body(model: type[BaseModel]) -> dict:
     """OpenAPI for a body that is JSON, or multipart/form-data with the
     same fields as form fields plus the table as a `file` part. A list
@@ -546,7 +593,7 @@ def _request_body(model: type[BaseModel]) -> dict:
             "type": "string",
             "description": f"{schema['properties'][name].get('description', '')} "
             "As one form value: comma-separated, or a JSON array.".strip(),
-            "examples": ["0.05,0.95"],
+            "examples": [_FORM_EXAMPLES.get(name, "0.05,0.95")],
         }
         for name in _list_fields(schema)
     }
@@ -1028,6 +1075,7 @@ class TabctxService:
             task=task,
             n_train=n_train,
             n_features=n_features,
+            summary=summarize(task, y),
             expires_at=expires_at,
             served_by=_replica_tag(),
         )
@@ -1109,14 +1157,9 @@ class TabctxService:
             scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
             with timing.phase("read_table"):
                 X_test = self._resolve_test_table(req, file, tenant_id, scoped_id)
+            asked = PredictOutputs.of(**{name: getattr(req, name) for name in OUTPUTS})
             outcome = self._predictor.predict(
-                scoped_id,
-                X_test,
-                return_proba=req.return_proba,
-                quantiles=req.quantiles,
-                times=req.times,
-                rmst_horizon=req.rmst_horizon,
-                potential_outcomes=req.potential_outcomes,
+                scoped_id, X_test, return_proba=req.return_proba, **asked.asked()
             )
         except (
             *_AUTH_ERRORS,
@@ -1132,13 +1175,7 @@ class TabctxService:
             predictions=outcome.predictions,
             probabilities=outcome.probabilities,
             classes=outcome.classes,
-            quantiles=outcome.quantiles,
-            quantile_levels=req.quantiles if outcome.quantiles is not None else None,
-            survival=outcome.survival,
-            survival_times=req.times if outcome.survival is not None else None,
-            rmst=outcome.rmst,
-            rmst_horizon=req.rmst_horizon if outcome.rmst is not None else None,
-            potential_outcomes=outcome.potential_outcomes,
+            **asked.response(outcome),
             n_test=len(X_test),
             latency_ms=latency_ms,
             # The engine counts a restore from the disk tier; a worker's or
@@ -1257,7 +1294,10 @@ class TabctxService:
         return {"status": "alive"}
 
     @fastapi_app.get(
-        "/v1/models", summary="List the models served", tags=["deployment"]
+        "/v1/models",
+        response_model=ModelList,
+        summary="List the models served",
+        tags=["deployment"],
     )
     async def models(self):
         """Which models this deployment serves: pass one of these ids
@@ -1266,14 +1306,18 @@ class TabctxService:
         # async: answered on the event loop, not from the threadpool that
         # fits and predicts hold, so a readiness probe never waits on them.
         served = self._engine.backend_tasks
+        outputs = self._engine.backend_outputs
         return {
             "data": [
                 {
                     "id": name,
                     "object": "model",
                     "default": name == self._engine.default_backend,
-                    # What a fit with this model can learn (tabctx.tasks).
+                    # What a fit with this model can learn (tabctx.tasks),
+                    # and what its predicts can return besides predictions
+                    # (tabctx.outputs).
                     "tasks": [t for t in TASKS if t in served[name]],
+                    "outputs": outputs[name],
                 }
                 for name in self._engine.backend_names
             ]

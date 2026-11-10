@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
@@ -147,10 +147,13 @@ class CoalescingPredictor:
         dataset_id: str,
         X_test: ArrayLike,
         return_proba: bool = False,
+        quantiles: Sequence[float] | None = None,
         **outputs: Any,
     ) -> PredictOutcome:
         """outputs: as TabctxEngine.predict's."""
-        key = _Key(dataset_id, return_proba, PredictOutputs.of(**outputs))
+        key = _Key(
+            dataset_id, return_proba, PredictOutputs.of(quantiles=quantiles, **outputs)
+        )
         if self._window_s == 0:
             with self._lock:
                 self.engine_calls += 1
