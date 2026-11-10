@@ -421,3 +421,74 @@ class TestContexts:
 
     def test_lists_nothing_without_contexts(self):
         assert ContextCacheManager(1000).contexts() == []
+
+
+# A tenant-scoped id with a long caller-chosen name: its hex alone passes the
+# 255-byte file name limit (prod, 2026-11-10: every fit failed with ENAMETOOLONG).
+_LONG_ID = "t:34380c88-adc7-4ee3-a9d2-8c5719aee312:" + "coagulation-classifier-" * 6
+
+
+class TestLongDatasetIds:
+    def test_long_id_round_trips_under_the_file_name_limit(self, tmp_path):
+        store = DiskSpillStore(tmp_path)
+        assert store.spill(_ctx(_LONG_ID, payload={"k": 1}))
+        names = sorted(p.name for p in tmp_path.iterdir())
+        assert len(names) == 2 and all(len(n.encode()) <= 255 for n in names)
+        assert store.contains(_LONG_ID)
+        assert [c.dataset_id for c in store.contexts()] == [_LONG_ID]
+        restored = store.load(_LONG_ID)
+        assert restored is not None and restored.dataset_id == _LONG_ID
+        assert restored.payload == {"k": 1}
+        assert list(tmp_path.iterdir()) == []
+
+    def test_delete_of_a_long_id_never_raises(self, tmp_path):
+        store = DiskSpillStore(tmp_path)
+        assert store.delete(_LONG_ID) is False
+        store.spill(_ctx(_LONG_ID))
+        assert store.delete(_LONG_ID) is True
+        assert list(tmp_path.iterdir()) == []
+
+    def test_short_ids_keep_their_hex_file_names(self, tmp_path):
+        """Files spilled before this change stay readable after it."""
+        store = DiskSpillStore(tmp_path)
+        store.spill(_ctx("t:acme:ds"))
+        stem = b"t:acme:ds".hex()
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            f"{stem}.meta.json",
+            f"{stem}.payload",
+        ]
+
+    def test_warm_restart_indexes_long_ids(self, tmp_path):
+        DiskSpillStore(tmp_path).spill(_ctx(_LONG_ID))
+        restarted = DiskSpillStore(tmp_path)
+        assert restarted.contains(_LONG_ID)
+        assert restarted.load(_LONG_ID).dataset_id == _LONG_ID
+
+    def test_restart_ignores_hashed_files_that_do_not_match_their_id(self, tmp_path):
+        (tmp_path / ("sha256-" + "0" * 64 + ".meta.json")).write_text(
+            json.dumps({"dataset_id": "other"})
+        )
+        (tmp_path / ("sha256-" + "1" * 64 + ".meta.json")).write_text("not json")
+        assert DiskSpillStore(tmp_path).ids() == frozenset()
+
+    def test_engine_fits_and_refits_a_long_id_with_spill_attached(self, tmp_path):
+        """The failing path: a fit first drops any stale spilled copy."""
+        backend = FakeBackend(bytes_hint=100)
+        cache = ContextCacheManager(
+            capacity_bytes=250, spill_store=DiskSpillStore(tmp_path)
+        )
+        engine = TabctxEngine(
+            backend=backend,
+            cache=cache,
+            estimator=AdaptiveMemoryEstimator(
+                fallback=PowerLawMemoryEstimator(A100_40GB_TABICL_CALIBRATION)
+            ),
+        )
+        engine.fit([[1.0, 2.0]] * 3, ["hot"] * 3, dataset_id=_LONG_ID)
+        engine.fit([[1.0, 2.0]] * 3, ["cold"] * 3, dataset_id="ds-b")
+        engine.fit(
+            [[1.0, 2.0]] * 3, ["warm"] * 3, dataset_id="ds-c"
+        )  # spills the long id
+        assert engine.predict(_LONG_ID, [[9.0, 9.0]]).predictions == ["hot"]
+        engine.fit([[1.0, 2.0]] * 3, ["again"] * 3, dataset_id=_LONG_ID)  # refit
+        assert engine.predict(_LONG_ID, [[9.0, 9.0]]).predictions == ["again"]
