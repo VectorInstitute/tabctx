@@ -39,9 +39,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pickle
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -62,9 +64,10 @@ def _is_out_of_memory(error: BaseException) -> bool:
     )
 
 
-#: Longest hex stem used as is. File names are capped at 255 bytes, and
-#: ".meta.json" takes 10; the rest is margin.
-_MAX_HEX_STEM = 200
+#: Longest hex stem used as is: 255 bytes (the file name limit) less
+#: ".meta.json". Exactly the ids that worked before hashed names existed keep
+#: their hex names, so a store spilled by an older tabctx still loads.
+_MAX_HEX_STEM = 255 - len(".meta.json")
 _HASHED = "sha256-"
 
 
@@ -81,6 +84,19 @@ def _file_stem(dataset_id: str) -> str:
     return _HASHED + hashlib.sha256(dataset_id.encode()).hexdigest()
 
 
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Write a file whole or not at all: a crash mid-write leaves the old file
+    (or none), never a torn one. The temporary name is short, so it fits the
+    file name limit whatever the final name's length."""
+    tmp = path.with_name(f".tmp-{uuid.uuid4().hex}")
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _id_of(meta_path: Path) -> str | None:
     """The dataset_id a meta file belongs to, or None if it isn't one of
     ours. Hex stems decode to the id; hashed stems name it in the file."""
@@ -89,6 +105,11 @@ def _id_of(meta_path: Path) -> str | None:
         try:
             dataset_id = json.loads(meta_path.read_text())["dataset_id"]
         except (OSError, ValueError, KeyError, TypeError):
+            # Its id is unrecoverable, so nothing could ever load or evict it:
+            # drop the pair rather than leak its disk forever. (Writes are
+            # atomic, so this is a damaged file, never one being written.)
+            meta_path.unlink(missing_ok=True)
+            meta_path.with_name(stem + ".payload").unlink(missing_ok=True)
             return None
         if not isinstance(dataset_id, str) or _file_stem(dataset_id) != stem:
             return None
@@ -152,8 +173,9 @@ class DiskSpillStore:
             return False
         try:
             self._make_room(len(blob))
-            payload_path.write_bytes(blob)
-            meta_path.write_text(
+            _write_atomic(payload_path, blob)
+            _write_atomic(
+                meta_path,
                 json.dumps(
                     {
                         "dataset_id": context.dataset_id,
@@ -172,7 +194,7 @@ class DiskSpillStore:
                             else None
                         ),
                     }
-                )
+                ).encode(),
             )
         except OSError:
             payload_path.unlink(missing_ok=True)

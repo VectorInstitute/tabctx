@@ -492,3 +492,46 @@ class TestLongDatasetIds:
         assert engine.predict(_LONG_ID, [[9.0, 9.0]]).predictions == ["hot"]
         engine.fit([[1.0, 2.0]] * 3, ["again"] * 3, dataset_id=_LONG_ID)  # refit
         assert engine.predict(_LONG_ID, [[9.0, 9.0]]).predictions == ["again"]
+
+    def test_every_id_that_had_a_working_hex_name_keeps_it(self, tmp_path):
+        """Ids up to 122 bytes (hex 244, + .meta.json = 254) worked before
+        hashed names existed; a store spilled by an older tabctx must load."""
+        from tabctx.cache.spill import _file_stem
+
+        prefix = "t:34380c88-adc7-4ee3-a9d2-8c5719aee312:"
+        at_limit = prefix + "n" * (122 - len(prefix))
+        over = at_limit + "n"
+        assert _file_stem(at_limit) == at_limit.encode().hex()
+        assert _file_stem(over).startswith("sha256-")
+        # What 0.19 wrote for the id at the limit, read back after the upgrade.
+        stem = at_limit.encode().hex()
+        old = DiskSpillStore(tmp_path)
+        assert old.spill(_ctx(at_limit, payload={"k": 2}))
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            f"{stem}.meta.json",
+            f"{stem}.payload",
+        ]
+        restarted = DiskSpillStore(tmp_path)
+        assert restarted.load(at_limit).payload == {"k": 2}
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_torn_hashed_meta_is_dropped_at_restart_not_leaked(self, tmp_path):
+        store = DiskSpillStore(tmp_path, capacity_bytes=1500)
+        store.spill(_ctx(_LONG_ID, payload=b"x" * 1000))
+        meta = next(tmp_path.glob("sha256-*.meta.json"))
+        meta.write_text(meta.read_text()[:20])  # a write cut short
+        restarted = DiskSpillStore(tmp_path, capacity_bytes=1500)
+        assert list(tmp_path.iterdir()) == []
+        assert restarted.used_bytes == 0
+        assert restarted.spill(_ctx("next", payload=b"y" * 1000))
+        assert restarted.used_bytes <= 1500
+
+    def test_a_failed_write_leaves_no_files(self, tmp_path, monkeypatch):
+        import tabctx.cache.spill as spill_module
+
+        def fail(*_):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(spill_module.os, "replace", fail)
+        assert DiskSpillStore(tmp_path).spill(_ctx(_LONG_ID)) is False
+        assert list(tmp_path.iterdir()) == []
