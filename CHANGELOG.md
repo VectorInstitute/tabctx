@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.20.0] - 2026-11-10
 ### Added
 - **An insurance scenario for the agent demo.** A coding agent gets two messy raw exports from a made-up insurer's policy system (synthetic data: dates in four formats, a province spelled five ways, rows exported twice, test policies, a totals row), writes and runs a cleaning script, then finds which policyholders will cancel at renewal, why, and which retention offers move their risk, and writes a report for the head of retention. `DEMO_SCENARIO=insurance` picks it; readmission stays the default and the hosted demo. Scenarios are now folders in `examples/agent_demo/scenarios/` (task, prompt, data), found through `scenario.py`; a task with a "clean" step gives each agent its shell (Claude Code's only inside its sandbox, which keeps it out of the answers). A Claude Code run against TabICL on a laptop took about five minutes.
 ### Fixed
