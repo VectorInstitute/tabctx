@@ -1,8 +1,12 @@
 # Quickstart
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/VectorInstitute/tabctx/blob/main/examples/quickstart.ipynb)
+
 Run a tabctx server on your laptop, fit a real dataset and predict
 against it. A CPU is enough; the server uses a GPU if it finds one.
-tabctx needs Python 3.12 or newer.
+tabctx needs Python 3.12 or newer. Prefer a notebook? The
+[quickstart notebook](https://github.com/VectorInstitute/tabctx/blob/main/examples/quickstart.ipynb)
+runs this whole page end to end.
 
 ## 1. Install and start a server
 

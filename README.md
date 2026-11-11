@@ -72,7 +72,11 @@ own GPUs.
 
 ## Quickstart
 
-Run a server on your laptop (CPU works; it uses the GPU if there is one):
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/VectorInstitute/tabctx/blob/main/examples/quickstart.ipynb)
+
+Run the whole quickstart in your browser with the
+[notebook](examples/quickstart.ipynb), or on your laptop (CPU works; it
+uses the GPU if there is one):
 
 ```bash
 pip install "tabctx[standalone,tabicl,client]"
