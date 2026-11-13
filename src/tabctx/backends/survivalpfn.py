@@ -18,19 +18,38 @@ always kept in the context; FitResponse.summary reports it): the data
 says nothing beyond its follow-up, and the model puts next to no
 probability there, so a median or survival probability out there would
 read as an estimate when it isn't one (with heavy censoring, true
-survival of 0.74 came back as 0.001 past the follow-up).
+survival of 0.74 came back as 0.001 past the follow-up). The
+SurvivalPFN authors agree. To rank rows by risk, use rmst up to the
+longest time: it is always defined, while with heavy censoring most
+medians are past the follow-up. On the authors' own benchmark splits it
+scores their published C-index (tests/integration/
+test_survivalpfn_reference.py).
+
+Not calibrated: the authors found that the temperature calibration
+CausalPFN uses makes SurvivalPFN's predictions worse, and their
+benchmark runs without it.
 
 How it is served: SurvivalPFN keeps no encoding of the table. Its fit
 stores the table; every predict runs the transformer over the table and
 the test rows, which attend to the table only (never to each other), so
 test rows are batched freely without changing their answers. Its own
 estimator passes the whole table as context; here a table above
-`context_size` rows is subsampled at fit, keeping the share of events,
-seeded. The model was trained on contexts up to 2,048 rows (16,384 in
-an earlier phase); the default keeps 4,096 (on one simulated 10,500-row
-table, contexts of 1,024 to 10,000 rows scored the same C-index, while a
-predict took 20 times longer at 10,000). A table wider than the model's 99 features is reduced
-by truncated SVD, as SurvivalPFN does.
+`context_size` rows is subsampled at fit, seeded, keeping the share of
+events and, among events and among censored rows, the spread of times
+(_pfn_common.strata), as the SurvivalPFN authors suggested.
+
+The model takes any number of context rows (trained on up to 2,048; its
+authors ran it on tables up to 100,000). The limit here is cost, not
+the model: every predict reruns the context, so predict time grows with
+its square (on an A40, 1,000 test rows took 0.12 s against 4,096
+context rows and 50 s against 100,000; peak memory 0.2 and 2.6 GB).
+Accuracy does not grow with it: on the authors' benchmark splits of five
+public datasets of 3,289 to 36,695 training rows, a 4,096-row context
+scored within 0.01 of the whole table in C-index and 0.001 in
+integrated Brier score (hdfail, 36,695 rows: C-index 0.804 at 4,096 and
+0.802 with every row, at 1/37 of the predict time). So the default keeps
+4,096; TABCTX_SURVIVALPFN_CONTEXT_SIZE raises it. A table wider than the
+model's 99 features is reduced by truncated SVD, as SurvivalPFN does.
 
 Assumptions the model makes, which a caller should know: censoring
 independent of the event given the features, and right censoring only
@@ -58,6 +77,7 @@ from tabctx.backends._pfn_common import (
     float32_rows,
     load_checkpoint,
     loads_context,
+    strata,
     subsample,
 )
 from tabctx.errors import BackendComputeError, InvalidInputError
@@ -144,7 +164,8 @@ class SurvivalPFNBackend:
         # context, so it is the table's follow-up, not a subsample's.
         longest = float(exact_times.max())
         keep = np.union1d(
-            subsample(events, self._context_size, _SEED), [int(exact_times.argmax())]
+            subsample(strata(events, exact_times), self._context_size, _SEED),
+            [int(exact_times.argmax())],
         )
         X_arr = X_arr[keep]
         times = exact_times[keep].astype(np.float32)

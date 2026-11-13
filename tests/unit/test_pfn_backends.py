@@ -8,6 +8,7 @@ from tabctx.backends._pfn_common import (
     array_bytes,
     dumps_context,
     loads_context,
+    strata,
     subsample,
     tagged_dumps,
     tagged_loads,
@@ -49,6 +50,42 @@ class TestSubsample:
         groups = np.array([1] * 999 + [0])
         keep = subsample(groups, 10, seed=0)
         assert len(keep) == 10 and 999 in keep
+
+
+class TestStrata:
+    def test_equal_count_bands_of_values_within_each_flag(self):
+        flags = np.array([0, 1] * 50)
+        values = np.arange(100.0)[::-1]
+        groups = strata(flags, values, bands=5)
+        for flag, offset in ((0, 0), (1, 5)):
+            rows = flags == flag
+            assert sorted(set(groups[rows])) == list(range(offset, offset + 5))
+            assert np.bincount(groups[rows] - offset).tolist() == [10] * 5
+            # a band holds a contiguous range of values: higher band, larger values
+            order = np.argsort(values[rows])
+            assert (np.diff(groups[rows][order]) >= 0).all()
+
+    def test_ties_and_one_flag_are_deterministic(self):
+        groups = strata(np.ones(7), np.zeros(7), bands=3)
+        assert groups.tolist() == strata(np.ones(7), np.zeros(7), bands=3).tolist()
+        assert set(groups) == {0, 1, 2}
+
+    def test_a_sample_keeps_the_flags_share_and_the_spread_of_values(self):
+        rng = np.random.default_rng(0)
+        flags = (rng.random(20_000) < 0.3).astype(float)
+        values = rng.lognormal(sigma=2.0, size=20_000)  # long right tail
+        keep = subsample(strata(flags, values), 1_000, seed=0)
+        assert abs(flags[keep].mean() - flags.mean()) < 0.005
+        for flag in (0.0, 1.0):
+            full = values[flags == flag]
+            kept = values[keep][flags[keep] == flag]
+            levels = np.linspace(0.05, 0.95, 10)
+            # every decile of the kept values sits within the full table's
+            # neighbouring deciles
+            ranks = np.searchsorted(np.sort(full), np.quantile(kept, levels)) / len(
+                full
+            )
+            assert np.abs(ranks - levels).max() < 0.03
 
 
 def test_tagged_pickles():

@@ -102,9 +102,13 @@ sum(r.predictions) / len(r.predictions)   # the average effect over these rows
 ```
 
 Nothing is estimated past the longest time in the training data: a
-median, quantile or survival probability out there is `None`. Each model
+median, quantile or survival probability out there is `None`. To rank
+rows by risk, use `rmst` with `rmst_horizon` at that longest time
+(`rmst_horizon=days.max()`): it is always defined, while with heavy
+censoring most medians are `None`. Each model
 uses at most 4,096 training rows as its context (a larger table is
-subsampled, keeping the share of events or of each arm;
+subsampled, keeping the share of events or of each arm and the spread of
+times or outcomes;
 `TABCTX_SURVIVALPFN_CONTEXT_SIZE`, `TABCTX_CAUSALPFN_CONTEXT_SIZE`), and
 every test row is predicted against that same context, so a row's answer
 never depends on the other rows sent with it.

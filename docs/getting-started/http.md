@@ -53,7 +53,10 @@ A survival fit sends each row's time as `train_y` and its event flag as
 columns of a file (`target`, `event_column`); its predicts return each
 row's median event time and, with `times`, the probability of no event
 by each time (`survival`), and with `rmst_horizon` the expected
-event-free time up to it (`rmst`). A causal fit sends each row's outcome
+event-free time up to it (`rmst`). Past the longest training time (the
+fit response's `summary.max_time`) nothing is estimated, so to rank rows
+by risk ask for `rmst` with `rmst_horizon` at that time: it is always
+defined. A causal fit sends each row's outcome
 and its treatment flag (`train_treatment`, or `treatment_column`); its
 predicts return each row's treatment effect, and with
 `potential_outcomes: true` the expected outcome if not treated and if

@@ -8,15 +8,19 @@ way:
   torch.load(weights_only=False), which runs whatever the file's pickle
   says; tabctx loads them itself with weights_only=True (both published
   checkpoints are a state dict and a plain config). A checkpoint that
-  needs arbitrary unpickling fails to load.
+  needs arbitrary unpickling fails to load. Their authors say these
+  checkpoints are final for this architecture (later versions change
+  it), so there will be no safetensors release of them.
 - Revisions are pinned, so a served model id always means the same
   weights. hf_hub_download honours HF_HUB_CACHE and HF_HUB_OFFLINE, so
   weights staged on a node load without network access.
 - One network per device, shared by every context (the context is the
   table; the network is the same for every tenant).
 - The context is the training table, at most a fixed number of rows of
-  it: a larger table is subsampled at fit, keeping each group's share
-  (events and censored rows; treated and control rows), seeded. Test rows
+  it: a larger table is subsampled at fit, seeded, stratified on both
+  targets (strata()): each flag's share (events and censored rows;
+  treated and control rows) and, within each, the spread of times or
+  outcomes. Test rows
   attend only to the context, so a row's answer never depends on the
   other rows in its request (the server merges and splits requests).
 - A cached context lives on the host; the spill tier pickles it without
@@ -46,6 +50,28 @@ def load_checkpoint(repo_id: str, filename: str, revision: str) -> dict:
             "model_config checkpoint"
         )
     return ckpt
+
+
+BANDS = 10
+
+
+def strata(flags: np.ndarray, values: np.ndarray, bands: int = BANDS) -> np.ndarray:
+    """Group ids for subsample(): the rows of each flag (event or censored;
+    treated or control) split into `bands` equal-count bands of `values`
+    (time; outcome) ranked within that flag. A sample keeping every
+    group's share keeps the flag's share and, within it, the spread of
+    times or outcomes (stratified on both, as the SurvivalPFN authors
+    suggested). Ties are ranked in row order, so the bands are
+    deterministic."""
+    flags = np.asarray(flags)
+    values = np.asarray(values, dtype=np.float64)
+    groups = np.empty(len(flags), dtype=np.int64)
+    for i, flag in enumerate(np.unique(flags)):
+        rows = np.flatnonzero(flags == flag)
+        ranks = np.empty(len(rows), dtype=np.int64)
+        ranks[np.argsort(values[rows], kind="stable")] = np.arange(len(rows))
+        groups[rows] = i * bands + ranks * bands // len(rows)
+    return groups
 
 
 def subsample(groups: np.ndarray, size: int, seed: int) -> np.ndarray:

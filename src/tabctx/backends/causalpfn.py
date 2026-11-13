@@ -34,7 +34,8 @@ been treated or not (overlap).
 
 How it is served, and how that differs from CausalPFN's own estimator:
 the context is the training table, at most `context_size` rows of it (a
-larger table is subsampled at fit, keeping each arm's share, seeded), and
+larger table is subsampled at fit, seeded, keeping each arm's share and
+the spread of outcomes within it), and
 every test row is predicted against that same context. CausalPFN's
 estimator instead picks a context per group of test rows (the training
 rows nearest them by a gradient-boosting model's effect estimate), so a
@@ -42,7 +43,11 @@ row's answer depends on which other rows share its call, and a server
 merges concurrent requests and splits large ones. Test rows attend only
 to the context, never to each other, so here a row's answer depends on
 the row alone. The model was trained on contexts up to 2,048 rows;
-CausalPFN's default context is 4,096, the default here.
+CausalPFN's default context is 4,096, the default here. A larger context
+costs predict time (it grows with the context's square: 2,000 test rows
+took 0.26 s against 4,096 rows and 101 s against 100,000, on an A40) and
+bought no accuracy on simulated data (effect error 0.35 at 2,048 to
+100,000 rows alike); TABCTX_CAUSALPFN_CONTEXT_SIZE raises it.
 
 Missing feature values are filled with the training table's column
 medians. A table wider than the model's 99 features is reduced by
@@ -70,6 +75,7 @@ from tabctx.backends._outcome import regression_outcome
 from tabctx.backends._pfn_common import (
     float32_rows,
     load_checkpoint,
+    strata,
     subsample,
     tagged_dumps,
     tagged_loads,
@@ -173,7 +179,7 @@ class CausalPFNBackend:
             raise InvalidInputError(f"{self.name} fits causal, not {task}")
         X_arr = float32_rows(X)
         outcome, treated = (a.astype(np.float32) for a in split_targets(y))
-        keep = subsample(treated, self._context_size, _SEED)
+        keep = subsample(strata(treated, outcome), self._context_size, _SEED)
         X_arr, outcome, treated = X_arr[keep], outcome[keep], treated[keep]
         medians = _column_medians(X_arr)
         X_arr = _fill(X_arr, medians)

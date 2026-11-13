@@ -165,7 +165,7 @@ users and tables, on GPUs you control.
 | `tabpfn-3.5` | [TabPFN-3.5](https://github.com/PriorLabs/TabPFN) (Prior Labs) | Non-commercial; production use needs a [license from Prior Labs](https://priorlabs.ai/pricing) |
 | `tabdpt-1.3` | [TabDPT](https://github.com/layer6ai-labs/TabDPT-inference) (Layer 6) | Apache-2.0: commercial use OK |
 | `survivalpfn-v0.1` | [SurvivalPFN](https://github.com/rgklab/SurvivalPFN) (University of Toronto): time to an event, with censoring | Apache-2.0: commercial use OK |
-| `causalpfn-v0` | [CausalPFN](https://github.com/vdblm/CausalPFN) (University of Toronto, Layer 6): treatment effects from observational data | Apache-2.0 per its model card (the repository's LICENSE file is the Apache 2.0 text under its own name) |
+| `causalpfn-v0` | [CausalPFN](https://github.com/vdblm/CausalPFN) (University of Toronto, Layer 6): treatment effects from observational data | Apache-2.0: commercial use OK |
 
 `TABCTX_BACKEND=tabicl,tabdpt` serves both commercially usable models from
 one cache; add `survivalpfn,causalpfn` for the survival and causal tasks
