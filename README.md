@@ -54,10 +54,11 @@ own GPUs.
 - **Many tables, one GPU.** Contexts share a byte-budgeted cache. The
   coldest one is evicted (or spilled to disk and restored on next use),
   and a fit that would run the GPU out of memory is refused *before* it runs.
-- **Three models, one endpoint.** `tabicl-v2`, `tabpfn-3.5` and
-  `tabdpt-1.3` behind `GET /v1/models`; pick one per request. Two of them
-  are licensed for commercial use. Adding a model is one backend class
-  and a few lines of wiring.
+- **Five models, one endpoint.** `tabicl-v2`, `tabpfn-3.5` and
+  `tabdpt-1.3` for classification and regression, `survivalpfn-v0.1` for
+  time to an event and `causalpfn-v0` for treatment effects, behind
+  `GET /v1/models`; pick one per request. Adding a model is one backend
+  class and a few lines of wiring.
 - **Prediction intervals.** Regression predicts a distribution, so you can
   ask for its quantiles (say a 90% interval) at no extra cost:
   `reg.predict_quantiles(X, [0.05, 0.95])`.
@@ -95,7 +96,8 @@ clf.score(X_test, y_test)          # 0.77, no training loop, no tuning
 clf.predict_proba(X_test[:5])      # reuses the cached context: ~50 ms on a laptop
 ```
 
-On a GPU server, use the image (TabICL, TabPFN and TabDPT included,
+On a GPU server, use the image (TabICL, TabPFN, TabDPT, SurvivalPFN and
+CausalPFN included,
 weights downloaded when the server starts):
 
 ```bash
@@ -162,9 +164,12 @@ users and tables, on GPUs you control.
 | `tabicl-v2` | [TabICLv2](https://github.com/soda-inria/tabicl) (Inria) | BSD-3-Clause: commercial use OK |
 | `tabpfn-3.5` | [TabPFN-3.5](https://github.com/PriorLabs/TabPFN) (Prior Labs) | Non-commercial; production use needs a [license from Prior Labs](https://priorlabs.ai/pricing) |
 | `tabdpt-1.3` | [TabDPT](https://github.com/layer6ai-labs/TabDPT-inference) (Layer 6) | Apache-2.0: commercial use OK |
+| `survivalpfn-v0.1` | [SurvivalPFN](https://github.com/rgklab/SurvivalPFN) (University of Toronto): time to an event, with censoring | Apache-2.0: commercial use OK |
+| `causalpfn-v0` | [CausalPFN](https://github.com/vdblm/CausalPFN) (University of Toronto, Layer 6): treatment effects from observational data | Apache-2.0: commercial use OK |
 
 `TABCTX_BACKEND=tabicl,tabdpt` serves both commercially usable models from
-one cache. TabPFN weights download after you accept Prior Labs' terms (set
+one cache; add `survivalpfn,causalpfn` for the survival and causal tasks
+([Python guide](https://vectorinstitute.github.io/tabctx/getting-started/python/#survival-and-treatment-effects)). TabPFN weights download after you accept Prior Labs' terms (set
 `TABPFN_TOKEN`). tabctx itself is Apache 2.0; each model's weights keep
 their own license.
 

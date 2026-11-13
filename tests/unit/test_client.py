@@ -853,3 +853,117 @@ def test_predict_cache_outcome(monkeypatch, cache_outcome):
     )
     result = TabctxClient("http://localhost:8000").predict("ds-1", [[1.0]])
     assert result.cache_outcome == cache_outcome
+
+
+class TestSurvivalAndCausal:
+    def _capture(self, monkeypatch, response):
+        seen: list = []
+
+        def handler(req):
+            seen.append(req)
+            return _json_response(response)
+
+        _install(monkeypatch, handler)
+        return seen
+
+    def test_a_survival_fit_sends_its_event_column(self, monkeypatch):
+        seen = self._capture(monkeypatch, {"dataset_id": "s"})
+        TabctxClient("http://x").fit([[1.0], [2.0]], [3.0, 4.0], event=[1, 0])
+        body = json.loads(seen[0].data)
+        assert (body["train_y"], body["train_event"]) == ([3.0, 4.0], [1, 0])
+        assert "train_treatment" not in body
+        # Named, so a server that predates survival refuses the fit rather
+        # than ignoring train_event and fitting a regression.
+        assert body["task"] == "survival"
+
+    def test_a_causal_fit_from_a_file_names_its_treatment_column(self, monkeypatch):
+        seen = self._capture(monkeypatch, {"dataset_id": "c"})
+        TabctxClient("http://x").fit_file(
+            b"a,t,y\n1,0,2\n", target="y", treatment_column="t", dataset_id="c"
+        )
+        body = b"".join(seen[0].data)
+        assert b'name="treatment_column"\r\n\r\nt\r\n' in body
+        assert b'name="task"\r\n\r\ncausal\r\n' in body
+
+    def test_survival_times_and_result(self, monkeypatch):
+        response = {
+            "predictions": [2.0],
+            "survival": [[0.9, 0.4]],
+            "survival_times": [1.0, 5.0],
+            "latency_ms": 1.0,
+        }
+        seen = self._capture(monkeypatch, response)
+        result = TabctxClient("http://x").predict("s", [[1.0]], times=[1, 5])
+        assert json.loads(seen[0].data)["times"] == [1.0, 5.0]
+        assert (result.survival, result.survival_times) == ([[0.9, 0.4]], [1.0, 5.0])
+
+    def test_rmst_and_potential_outcomes(self, monkeypatch):
+        response = {
+            "predictions": [2.0],
+            "rmst": [1.5],
+            "potential_outcomes": [[1.0, 3.0]],
+            "latency_ms": 1.0,
+        }
+        seen = self._capture(monkeypatch, response)
+        client = TabctxClient("http://x")
+        result = client.predict("s", [[1.0]], rmst_horizon=30, potential_outcomes=True)
+        body = json.loads(seen[0].data)
+        assert (body["rmst_horizon"], body["potential_outcomes"]) == (30.0, True)
+        assert (result.rmst, result.potential_outcomes) == ([1.5], [[1.0, 3.0]])
+        client.predict_file("s", b"a\n1\n", rmst_horizon=30, potential_outcomes=True)
+        form = b"".join(seen[-1].data)
+        assert b'name="rmst_horizon"\r\n\r\n30.0\r\n' in form
+        assert b'name="potential_outcomes"\r\n\r\ntrue\r\n' in form
+
+    def test_a_server_without_rmst_is_an_error(self, monkeypatch):
+        self._capture(monkeypatch, {"predictions": [2.0], "latency_ms": 1.0})
+        with pytest.raises(
+            TabctxError, match=r"no restricted mean survival times \(rmst\)"
+        ):
+            TabctxClient("http://x").predict("s", [[1.0]], rmst_horizon=5)
+
+    def test_a_server_without_survival_is_an_error_not_silence(self, monkeypatch):
+        self._capture(monkeypatch, {"predictions": [2.0], "latency_ms": 1.0})
+        with pytest.raises(TabctxError, match="no survival probabilities"):
+            TabctxClient("http://x").predict("s", [[1.0]], times=[1])
+
+    def test_bad_times_fail_before_sending(self, monkeypatch):
+        seen = self._capture(monkeypatch, {})
+        with pytest.raises(InvalidInputError, match="non-negative"):
+            TabctxClient("http://x").predict("s", [[1.0]], times=[-1])
+        assert seen == []
+
+    LISTING = [
+        {"id": "tabicl-v2", "default": True, "tasks": ["classification", "regression"]},
+        {"id": "survivalpfn-v0.1", "default": False, "tasks": ["survival"]},
+    ]
+    GATEWAY = [
+        {"id": "gpt-5", "owned_by": "openai"},
+        {"id": "causalpfn-v0", "owned_by": "on_prem"},
+        {"id": "tabicl-v2", "owned_by": "on_prem"},
+    ]
+
+    @pytest.mark.parametrize(
+        "data, task, tabular, default",
+        [
+            (LISTING, None, ["tabicl-v2", "survivalpfn-v0.1"], "tabicl-v2"),
+            (LISTING, "regression", ["tabicl-v2"], "tabicl-v2"),
+            # The default doesn't fit survival: the model that does.
+            (LISTING, "survival", ["survivalpfn-v0.1"], "survivalpfn-v0.1"),
+            # A gateway lists no tasks: the client knows the models'.
+            (GATEWAY, "causal", ["causalpfn-v0"], "causalpfn-v0"),
+            (GATEWAY, "classification", ["tabicl-v2"], "tabicl-v2"),
+            # A tabctx older than `tasks`: its models are predictive.
+            ([{"id": "x", "default": True}], "regression", ["x"], "x"),
+        ],
+    )
+    def test_models_for_a_task(self, monkeypatch, data, task, tabular, default):
+        _install(monkeypatch, lambda req: _json_response({"data": data}))
+        client = TabctxClient("http://x")
+        assert client.tabular_models(task) == tabular
+        assert client.default_model(task) == default
+
+    def test_no_model_for_a_task(self, monkeypatch):
+        _install(monkeypatch, lambda req: _json_response({"data": self.LISTING}))
+        with pytest.raises(TabctxError, match="no tabular model for causal"):
+            TabctxClient("http://x").default_model("causal")

@@ -274,6 +274,15 @@ class TestDefaultModel:
         assert deployment.fits[-1]["model"] == "tabicl-v2"
         assert clf.predict([[1.0]]).tolist() == ["b"]
 
+    def test_a_model_of_another_task_is_never_the_default(self, tmp_path):
+        models = [
+            {"id": "survivalpfn-v0.1", "default": True, "tasks": ["survival"]},
+            {"id": "tabicl-v2", "default": False},  # no tasks: predictive
+        ]
+        deployment = FakeDeployment(tmp_path, models=models)
+        reg = TabctxRegressor(client=deployment).fit([[0.0], [1.0]], [0.5, 2.5])
+        assert reg.model_ == "tabicl-v2"
+
     def test_regressor_too(self, tmp_path):
         deployment = FakeDeployment(tmp_path, models=self.TABICL_ONLY)
         reg = TabctxRegressor(client=deployment).fit([[0.0], [1.0]], [0.5, 2.5])

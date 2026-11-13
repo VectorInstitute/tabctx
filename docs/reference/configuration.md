@@ -7,7 +7,7 @@ Flags take `1`/`true` or `0`/`false`.
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `tabdpt`, `fake` (no GPU or weights; for tests). The first is the default model. `tabicl,tabdpt` serves both from one cache. |
+| `TABCTX_BACKEND` | `tabicl` | Comma-separated models to serve: `tabicl`, `tabpfn`, `tabdpt`, `survivalpfn` (time to an event), `causalpfn` (treatment effects), `fake` (no GPU or weights; for tests). The first is the default model; a survival or causal fit that names no model goes to the first listed that fits its task. `tabicl,tabdpt` serves both from one cache. |
 | `TABCTX_DEVICES` | `auto` | `auto`: every visible GPU, else the CPU. Or a list such as `cuda:0,cuda:1`. Two or more devices place each table on one GPU. |
 | `TABCTX_WORKER_PROCESSES` | `1` | With several GPUs, one worker process per GPU (`0`: threads of one process). |
 | `TABCTX_GPU_MEMORY_FRACTION` | `1.0` | The share of each GPU this server may use, in (0, 1]. Lower it when replicas share a GPU. |
@@ -35,6 +35,13 @@ Flags take `1`/`true` or `0`/`false`.
 |---|---|---|
 | `TABCTX_TABDPT_CONTEXT_SIZE` | `2048` | Training rows sampled as each predict's context. TabDPT keeps no encoding of the table, so a predict's cost grows with this, not with the table. |
 | `TABCTX_TABDPT_ENSEMBLES` | `4` | Ensemble members per predict. |
+
+## SurvivalPFN and CausalPFN
+
+| Variable | Default | |
+|---|---|---|
+| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `4096` | The most training rows SurvivalPFN keeps as context; a larger table is subsampled at fit (seeded), keeping the share of events and the spread of times among events and among censored rows. The model takes any number; the cost is predict time, which grows roughly with the context's square (1,000 test rows on an A40: 0.12 s at 4,096, 5.4 s at 32,768, 50 s at 100,000). On four of SurvivalPFN's benchmark datasets larger than that (up to 36,695 rows), 4,096 rows scored within 0.01 C-index of the whole table. |
+| `TABCTX_CAUSALPFN_CONTEXT_SIZE` | `4096` | The same for CausalPFN, keeping each arm's share and the spread of outcomes within it. Every test row is predicted against this one context, so a row's answer never depends on the rest of its request. The model takes any number; 2,000 test rows on an A40 took 0.26 s against 4,096 and 101 s against 100,000, with the same effect error on simulated data. |
 
 The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
 

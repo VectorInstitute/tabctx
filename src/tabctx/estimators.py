@@ -113,7 +113,7 @@ class _TabctxEstimator(BaseEstimator):
                 f"can be at most {limit:,} (max_request_bytes). "
                 "Fit on fewer rows."
             )
-        self.model_ = self.model or self._client().default_model()
+        self.model_ = self.model or self._client().default_model(self._task)
         digest = hashlib.sha256(data)
         digest.update(f"\0{self.model_}\0{self._task}".encode())
         self.dataset_id_ = f"sklearn-{digest.hexdigest()[:32]}"

@@ -371,3 +371,81 @@ class TestPandasIndex:
             InvalidInputError, match=r"(repeats column name\(s\) \['i'\]|Name\(i\))"
         ):
             read_table(write(tmp_path, parquet(table)))
+
+
+class TestSecondColumn:
+    """A survival or causal fit's event or treatment column."""
+
+    CSV = "x,flag,time\n0.5,1,3.0\n0.1,0,5.5\n0.9,1,2.0\n"
+
+    def test_taken_out_of_the_features_and_packed_with_the_target(self, tmp_path):
+        features, y = read_training_table(
+            write(tmp_path, self.CSV), "time", "survival", "flag"
+        )
+        assert features.names == ["x"]
+        assert np.asarray(y).tolist() == [[3.0, 1.0], [5.5, 0.0], [2.0, 1.0]]
+
+    def test_a_causal_fit_the_same_way(self, tmp_path):
+        _, y = read_training_table(write(tmp_path, self.CSV), "time", "causal", "flag")
+        assert np.asarray(y)[:, 1].tolist() == [1.0, 0.0, 1.0]
+
+    def test_the_column_must_exist(self, tmp_path):
+        with pytest.raises(InvalidInputError, match="event column 'nope'"):
+            read_training_table(write(tmp_path, self.CSV), "time", "survival", "nope")
+
+    def test_a_survival_fit_needs_it(self, tmp_path):
+        with pytest.raises(InvalidInputError, match="needs its event column"):
+            read_training_table(write(tmp_path, self.CSV), "time", "survival")
+
+    def test_only_for_survival_and_causal(self, tmp_path):
+        with pytest.raises(InvalidInputError, match="not regression"):
+            read_training_table(write(tmp_path, self.CSV), "time", "regression", "flag")
+
+    def test_a_feature_besides_the_two(self, tmp_path):
+        with pytest.raises(InvalidInputError, match="at least one feature column"):
+            read_training_table(
+                write(tmp_path, "flag,time\n1,3.0\n0,2.0\n"), "time", "survival", "flag"
+            )
+
+    def test_survival_times_must_be_numbers(self, tmp_path):
+        with pytest.raises(InvalidInputError, match="survival needs numeric labels"):
+            read_training_table(
+                write(tmp_path, "x,flag,time\n1,1,soon\n2,0,later\n"),
+                "time",
+                "survival",
+                "flag",
+            )
+
+    @pytest.mark.parametrize(
+        "flags",
+        [("True", "False", "true"), ("yes", "no", "Y"), ("1.0", "0", "1")],
+    )
+    def test_flags_as_booleans_or_words(self, tmp_path, flags):
+        csv = "x,flag,time\n" + "".join(
+            f"{i},{f},{i + 1}\n" for i, f in enumerate(flags)
+        )
+        _, y = read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+        assert np.asarray(y)[:, 1].tolist() == [1.0, 0.0, 1.0]
+
+    def test_a_parquet_boolean_flag(self, tmp_path):
+        table = pa.table({"x": [1.0, 2.0], "treated": [True, False], "y": [3.0, 4.0]})
+        _, y = read_training_table(
+            write(tmp_path, parquet(table)), "y", "causal", "treated"
+        )
+        assert np.asarray(y)[:, 1].tolist() == [1.0, 0.0]
+
+    def test_a_bad_flag_names_its_column(self, tmp_path):
+        csv = "x,flag,time\n1,maybe,2\n2,0,3\n"
+        with pytest.raises(InvalidInputError, match="event column 'flag' must be 0/1"):
+            read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+        csv = "x,flag,time\n1,,2\n2,0,3\n"
+        with pytest.raises(InvalidInputError, match="'flag': row 1 has no value"):
+            read_training_table(write(tmp_path, csv), "time", "survival", "flag")
+
+    def test_the_default_target_skips_the_flag_column(self, tmp_path):
+        csv = "x,time,died\n0.5,3.0,1\n0.1,5.5,0\n"
+        features, y = read_training_table(
+            write(tmp_path, csv), None, "survival", "died"
+        )
+        assert features.names == ["x"]
+        assert np.asarray(y).tolist() == [[3.0, 1.0], [5.5, 0.0]]

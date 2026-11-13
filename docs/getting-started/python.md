@@ -72,6 +72,61 @@ client.models(), client.limits()
 `TABCTX_API_KEY`. The key is sent as a bearer token, never appears in
 the client's `repr`, and is left out when the client is pickled.
 
+## Survival and treatment effects
+
+Two more tasks, each served by its own model (`GET /v1/models` lists
+every model's `tasks`; a fit that names no model goes to one that fits
+its task).
+
+**Time to an event** (`survivalpfn-v0.1`): each training row has a time
+and an event flag, 1 if the event happened at that time and 0 if the row
+was censored then (still event-free when follow-up ended).
+
+```python
+client.fit(X_train, days, event=cancelled, dataset_id="retention")
+r = client.predict("retention", X_now, times=[90, 365], quantiles=[0.25, 0.75])
+r.predictions   # each row's median time to the event
+r.survival      # per row, the probability of no event by day 90 and day 365
+client.predict("retention", X_now, rmst_horizon=365).rmst  # expected event-free days in the year
+```
+
+**Treatment effects** (`causalpfn-v0`): each training row has an outcome
+and a treatment flag (1 treated, 0 control), from observational data.
+
+```python
+client.fit(X_train, spend, treatment=got_offer, dataset_id="offer")
+r = client.predict("offer", X_now, potential_outcomes=True, quantiles=[0.05, 0.95])
+r.predictions          # per row: the expected outcome if treated minus if not
+r.potential_outcomes   # per row: [expected outcome if not treated, if treated]
+sum(r.predictions) / len(r.predictions)   # the average effect over these rows
+```
+
+Nothing is estimated past the longest time in the training data: a
+median, quantile or survival probability out there is `None`. To rank
+rows by risk, ask for `rmst` with `rmst_horizon` at that longest time
+(`days.max()`, or the time column's max for `fit_file`): it is always
+defined, while with heavy censoring many medians are `None`. A higher
+`rmst` is a longer expected event-free time, so a lower risk. Each model
+uses at most 4,096 training rows as its context (a larger table is
+subsampled, keeping the share of events or of each arm and the spread of
+times or outcomes;
+`TABCTX_SURVIVALPFN_CONTEXT_SIZE`, `TABCTX_CAUSALPFN_CONTEXT_SIZE`), and
+every test row is predicted against that same context, so a row's answer
+never depends on the other rows sent with it.
+
+From a file, name the columns: `fit_file(path, target="days",
+event_column="cancelled")` or `treatment_column=`; a flag column may be
+0/1, true/false or yes/no. What the models
+assume: the survival model, that censoring is independent of the event
+given the features; the causal model, that every confounder of treatment
+and outcome is a feature, and that every kind of row could have been
+treated or not. No data can confirm the causal one. The causal model's
+`quantiles` are of a treated outcome minus an untreated one for the row,
+calibrated (on the first predict that asks for them) to cover held-out
+outcomes at their stated rates: the
+spread of an individual's effect, outcome noise included, not a
+confidence interval for the average effect.
+
 ## Errors
 
 Server errors come back as tabctx exceptions, importable from `tabctx`.
