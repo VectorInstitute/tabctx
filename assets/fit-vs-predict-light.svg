@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 380" width="760" height="380" role="img" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" aria-label="Fit time grows with the training table; predict time against the cached context stays flat">
+<rect width="760" height="380" rx="12" fill="#ffffff"/>
+<text x="64" y="30" font-size="17" font-weight="600" fill="#1f2328">Fit once, then predict in a fraction of a second</text>
+<text x="64" y="50" font-size="13" fill="#59636e">tabicl-v2, 100 features, 100-row predicts, one A40 GPU (log scales)</text>
+<line x1="64" x2="580" y1="328.0" y2="328.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="54" y="332.0" font-size="12" text-anchor="end" fill="#59636e">0.1 s</text>
+<line x1="64" x2="580" y1="248.0" y2="248.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="54" y="252.0" font-size="12" text-anchor="end" fill="#59636e">1 s</text>
+<line x1="64" x2="580" y1="168.0" y2="168.0" stroke="#d1d9e0" stroke-width="1"/>
+<text x="54" y="172.0" font-size="12" text-anchor="end" fill="#59636e">10 s</text>
+<line x1="64" x2="580" y1="88.1" y2="88.1" stroke="#d1d9e0" stroke-width="1"/>
+<text x="54" y="92.1" font-size="12" text-anchor="end" fill="#59636e">100 s</text>
+<text x="64.0" y="348" font-size="12" text-anchor="middle" fill="#59636e">100</text>
+<text x="236.0" y="348" font-size="12" text-anchor="middle" fill="#59636e">1k</text>
+<text x="408.0" y="348" font-size="12" text-anchor="middle" fill="#59636e">10k</text>
+<text x="580.0" y="348" font-size="12" text-anchor="middle" fill="#59636e">100k</text>
+<text x="322.0" y="368" font-size="12" text-anchor="middle" fill="#59636e">training rows</text>
+<polyline points="64.0,271.1 132.4,265.4 184.2,258.2 236.0,247.8 287.8,247.4 329.6,233.1 356.2,219.7 386.5,215.2 408.0,205.3 438.3,188.4 459.8,179.6 490.1,160.1 520.4,143.6 547.8,131.8 580.0,87.2" fill="none" stroke="#6366F1" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="64.0" cy="271.1" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="132.4" cy="265.4" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="184.2" cy="258.2" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="236.0" cy="247.8" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="287.8" cy="247.4" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="329.6" cy="233.1" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="356.2" cy="219.7" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="386.5" cy="215.2" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="408.0" cy="205.3" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="438.3" cy="188.4" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="459.8" cy="179.6" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="490.1" cy="160.1" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="520.4" cy="143.6" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="547.8" cy="131.8" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<circle cx="580.0" cy="87.2" r="4" fill="#6366F1" stroke="#ffffff" stroke-width="2"/>
+<text x="592.0" y="84.2" font-size="13" font-weight="600" fill="#1f2328">102.6 s</text>
+<text x="592.0" y="100.2" font-size="12" fill="#59636e">fit: encode the table</text>
+<polyline points="64.0,302.6 132.4,307.8 184.2,306.1 236.0,296.5 287.8,291.4 329.6,290.2 356.2,290.8 386.5,300.1 408.0,282.6 438.3,286.7 459.8,291.6 490.1,288.5 520.4,282.2 547.8,283.8 580.0,285.6" fill="none" stroke="#D97706" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="64.0" cy="302.6" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="132.4" cy="307.8" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="184.2" cy="306.1" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="236.0" cy="296.5" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="287.8" cy="291.4" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="329.6" cy="290.2" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="356.2" cy="290.8" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="386.5" cy="300.1" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="408.0" cy="282.6" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="438.3" cy="286.7" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="459.8" cy="291.6" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="490.1" cy="288.5" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="520.4" cy="282.2" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="547.8" cy="283.8" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<circle cx="580.0" cy="285.6" r="4" fill="#D97706" stroke="#ffffff" stroke-width="2"/>
+<text x="592.0" y="282.6" font-size="13" font-weight="600" fill="#1f2328">0.34 s</text>
+<text x="592.0" y="298.6" font-size="12" fill="#59636e">predict: cached context</text>
+<path d="M571.0,95.2 H566.0 V277.6 H571.0" fill="none" stroke="#59636e" stroke-width="1.5"/>
+<text x="558.0" y="237.4" font-size="15" font-weight="700" text-anchor="end" fill="#1f2328">303x faster</text>
+</svg>
