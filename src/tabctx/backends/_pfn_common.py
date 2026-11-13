@@ -55,37 +55,54 @@ def load_checkpoint(repo_id: str, filename: str, revision: str) -> dict:
 BANDS = 10
 
 
-def strata(flags: np.ndarray, values: np.ndarray, bands: int = BANDS) -> np.ndarray:
-    """Group ids for subsample(): the rows of each flag (event or censored;
-    treated or control) split into `bands` equal-count bands of `values`
-    (time; outcome) ranked within that flag. A sample keeping every
-    group's share keeps the flag's share and, within it, the spread of
-    times or outcomes (stratified on both, as the SurvivalPFN authors
-    suggested). Ties are ranked in row order, so the bands are
-    deterministic."""
+def strata(
+    flags: np.ndarray, values: np.ndarray, size: int, bands: int = BANDS
+) -> np.ndarray:
+    """Group ids for subsample(rows, size): the rows of each flag (event
+    or censored; treated or control) split into equal-count bands of
+    `values` (time; outcome) ranked within that flag. A sample keeping
+    every group's share keeps the flag's share and, within it, the spread
+    of times or outcomes (stratified on both, as the SurvivalPFN authors
+    suggested).
+
+    A flag gets as many bands as its share of a `size`-row sample holds
+    rows, at most `bands` and at least one: so there are never more groups
+    than `size` (for binary flags), every flag keeps at least one row, and
+    a rare flag is not inflated to one row per band. Ties are ranked in
+    row order, so the bands are deterministic."""
     flags = np.asarray(flags)
     values = np.asarray(values, dtype=np.float64)
     groups = np.empty(len(flags), dtype=np.int64)
     for i, flag in enumerate(np.unique(flags)):
         rows = np.flatnonzero(flags == flag)
+        k = int(min(bands, max(1, len(rows) * size // len(flags))))
         ranks = np.empty(len(rows), dtype=np.int64)
         ranks[np.argsort(values[rows], kind="stable")] = np.arange(len(rows))
-        groups[rows] = i * bands + ranks * bands // len(rows)
+        groups[rows] = i * bands + ranks * k // len(rows)
     return groups
 
 
 def subsample(groups: np.ndarray, size: int, seed: int) -> np.ndarray:
-    """Sorted indices of at most `size` rows, keeping each group's share
-    of the rows (rounded, at least one row of every group present). All
-    rows when there are no more than `size`."""
+    """Sorted indices of exactly `size` rows (all rows when there are no
+    more), keeping each group's share of the rows: its share of `size`
+    rounded by largest remainder, at least one row of every group (so
+    pass at most `size` groups; strata() makes no more)."""
     n = len(groups)
     if n <= size:
         return np.arange(n)
     rng = np.random.default_rng(seed)
     values, counts = np.unique(groups, return_counts=True)
-    quota = np.maximum(1, np.round(counts * size / n).astype(int))
-    while quota.sum() > size:  # rounding up the small groups overshot
+    share = counts * size / n
+    quota = np.maximum(1, np.floor(share).astype(int))
+    while quota.sum() > size:  # the one-row minimums overshot
         quota[np.argmax(quota)] -= 1
+    order = np.argsort(quota - share, kind="stable")  # largest remainder first
+    while quota.sum() < size:
+        for g in order:
+            if quota.sum() == size:
+                break
+            if quota[g] < counts[g]:
+                quota[g] += 1
     picked = [
         rng.choice(np.flatnonzero(groups == value), k, replace=False)
         for value, k in zip(values, quota, strict=True)

@@ -29,7 +29,7 @@ import numpy as np
 import pytest
 
 pytest.importorskip("survivalpfn")
-pytest.importorskip("torch")
+torch = pytest.importorskip("torch")
 pytest.importorskip("SurvSet")
 pytest.importorskip("h5py")
 lifelines_utils = pytest.importorskip("lifelines.utils")
@@ -58,14 +58,18 @@ SPLITS = 10
 # so it may differ a little (measured: at most 0.008).
 SAME = 0.002
 CLOSE = 0.015
+# Both sides run on the same device (and the same network), so their
+# medians agree to float32 rounding there.
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+RTOL = 1e-5 if DEVICE == "cpu" else 1e-4
 
 
 @pytest.fixture(scope="module")
 def backend():
-    b = SurvivalPFNBackend(device="cpu", context_size=1_000_000)
+    b = SurvivalPFNBackend(device=DEVICE, context_size=1_000_000)
     try:
         b.warmup()
-    except Exception as e:  # noqa: BLE001
+    except OSError as e:  # not downloaded, offline, or no network
         pytest.skip(f"SurvivalPFN weights unavailable: {e}")
     return b
 
@@ -73,7 +77,7 @@ def backend():
 def splits(name: str):
     try:
         data = SurvivalBenchmarkDataset(name, 0.7, 0.0, 0.3, preprocess=False, seed=0)
-    except Exception as e:  # noqa: BLE001
+    except OSError as e:  # its data file is missing
         pytest.skip(f"benchmark dataset {name} unavailable: {e}")
     return (data() for _ in range(SPLITS))  # each call: the next seed
 
@@ -84,7 +88,7 @@ def test_matches_the_published_benchmark(backend, name):
     theirs, ours = [], []
     for split in splits(name):
         upstream = SurvivalEstimator(
-            device="cpu", model_path=None, icl_model=backend._shared_network()
+            device=DEVICE, model_path=None, icl_model=backend._shared_network()
         )
         upstream.fit(X=split["X_train"], delta=split["delta_train"], T=split["T_train"])
         median = (
@@ -103,7 +107,7 @@ def test_matches_the_published_benchmark(backend, name):
         np.testing.assert_allclose(
             np.array([v for v in out.predictions if v is not None], dtype=float),
             median[given],
-            rtol=1e-5,
+            rtol=RTOL,
         )
         assert (median[~given] >= longest * (1 - 1e-6)).all()
         assert (median[given] <= longest * (1 + 1e-6)).all()
@@ -115,3 +119,29 @@ def test_matches_the_published_benchmark(backend, name):
 
     assert np.mean(theirs) == pytest.approx(PUBLISHED_CI[name], abs=SAME)
     assert np.mean(ours) == pytest.approx(PUBLISHED_CI[name], abs=CLOSE)
+
+
+def rmst_concordance(backend, split) -> float:
+    longest = float(split["T_train"].max())
+    context = backend.fit(
+        split["X_train"],
+        pack_targets("survival", split["T_train"], split["delta_train"]),
+        "survival",
+    )
+    out = backend.predict(context, split["X_test"], rmst_horizon=longest)
+    rmst = np.array(out.rmst, dtype=float)
+    return lifelines_utils.concordance_index(split["T_test"], rmst, split["delta_test"])
+
+
+@pytest.mark.parametrize("name", ["whas500", "zinc"])
+def test_a_subsampled_context_stays_close_to_the_whole_table(backend, name):
+    """A 128-row context of a ~300-row training table (sampled by event
+    and time band) ranks rows nearly as well as the whole table (measured:
+    at most 0.017 lower over the 10 splits)."""
+    small = SurvivalPFNBackend(device=DEVICE, context_size=128)
+    whole, sampled = [], []
+    for split in splits(name):
+        assert len(split["T_train"]) > 2 * 128
+        whole.append(rmst_concordance(backend, split))
+        sampled.append(rmst_concordance(small, split))
+    assert np.mean(sampled) == pytest.approx(np.mean(whole), abs=0.03)

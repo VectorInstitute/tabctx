@@ -104,9 +104,10 @@ dev = [
 # SurvivalPFN at a pinned commit (see the note by the extras): `uv sync
 # --group survivalpfn`. omegaconf: survivalpfn imports it without listing it.
 survivalpfn = ["survivalpfn", "omegaconf", "torch"]
-# The public datasets and split code behind SurvivalPFN's published
-# benchmark, for tests/integration/test_survivalpfn_reference.py
-# (`uv sync --group survivalpfn --group survivalpfn-reference`).
+# The public datasets (SurvSet) and scoring tools the SurvivalPFN
+# reference test needs alongside the survivalpfn group
+# (tests/integration/test_survivalpfn_reference.py;
+# `uv sync --group survivalpfn --group survivalpfn-reference`).
 survivalpfn-reference = ["SurvSet", "h5py", "pandas", "lifelines"]
 # The docs site (mkdocs.yml): `uv sync --group docs && uv run mkdocs serve`.
 # The service's deps too: the build writes the HTTP API's OpenAPI spec.

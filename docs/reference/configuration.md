@@ -40,8 +40,8 @@ Flags take `1`/`true` or `0`/`false`.
 
 | Variable | Default | |
 |---|---|---|
-| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `4096` | The most training rows SurvivalPFN keeps as context; a larger table is subsampled at fit (seeded), keeping the share of events and the spread of times among events and among censored rows. The model takes any number; the cost is predict time, which grows with the context's square (1,000 test rows on an A40: 0.12 s at 4,096, 5.4 s at 32,768, 50 s at 100,000). On SurvivalPFN's benchmark datasets, 4,096 rows scored within 0.01 C-index of the whole table (36,695 rows at most). |
-| `TABCTX_CAUSALPFN_CONTEXT_SIZE` | `4096` | The same for CausalPFN, keeping each arm's share and the spread of outcomes within it. Every test row is predicted against this one context, so a row's answer never depends on the rest of its request. |
+| `TABCTX_SURVIVALPFN_CONTEXT_SIZE` | `4096` | The most training rows SurvivalPFN keeps as context; a larger table is subsampled at fit (seeded), keeping the share of events and the spread of times among events and among censored rows. The model takes any number; the cost is predict time, which grows roughly with the context's square (1,000 test rows on an A40: 0.12 s at 4,096, 5.4 s at 32,768, 50 s at 100,000). On four of SurvivalPFN's benchmark datasets larger than that (up to 36,695 rows), 4,096 rows scored within 0.01 C-index of the whole table. |
+| `TABCTX_CAUSALPFN_CONTEXT_SIZE` | `4096` | The same for CausalPFN, keeping each arm's share and the spread of outcomes within it. Every test row is predicted against this one context, so a row's answer never depends on the rest of its request. The model takes any number; 2,000 test rows on an A40 took 0.26 s against 4,096 and 101 s against 100,000, with the same effect error on simulated data. |
 
 The `TABCTX_KV_*` and `TABCTX_COMPILE*` settings apply to TabICL only.
 

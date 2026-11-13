@@ -56,7 +56,7 @@ class TestStrata:
     def test_equal_count_bands_of_values_within_each_flag(self):
         flags = np.array([0, 1] * 50)
         values = np.arange(100.0)[::-1]
-        groups = strata(flags, values, bands=5)
+        groups = strata(flags, values, size=50, bands=5)
         for flag, offset in ((0, 0), (1, 5)):
             rows = flags == flag
             assert sorted(set(groups[rows])) == list(range(offset, offset + 5))
@@ -65,16 +65,38 @@ class TestStrata:
             order = np.argsort(values[rows])
             assert (np.diff(groups[rows][order]) >= 0).all()
 
-    def test_ties_and_one_flag_are_deterministic(self):
-        groups = strata(np.ones(7), np.zeros(7), bands=3)
-        assert groups.tolist() == strata(np.ones(7), np.zeros(7), bands=3).tolist()
-        assert set(groups) == {0, 1, 2}
+    def test_ties_are_banded_in_row_order(self):
+        groups = strata(np.ones(6), np.zeros(6), size=3, bands=3)
+        assert groups.tolist() == [0, 0, 1, 1, 2, 2]
+
+    def test_a_flag_with_fewer_rows_than_bands(self):
+        flags = np.array([1, 1, 1] + [0] * 997)
+        groups = strata(flags, np.arange(1000.0), size=1000)
+        assert len(set(groups[flags == 1])) == 3  # one band per row
+        assert len(set(groups[flags == 0])) == 10
+
+    @pytest.mark.parametrize("treated", [0.5, 0.25, 0.05, 0.002])
+    def test_every_size_keeps_both_flags_and_exactly_size_rows(self, treated):
+        rng = np.random.default_rng(0)
+        flags = (rng.random(1000) < treated).astype(float)
+        flags[:2] = [0.0, 1.0]  # both flags present
+        values = rng.normal(size=1000)
+        for size in range(2, 40):
+            keep = subsample(strata(flags, values, size), size, seed=0)
+            assert len(keep) == size
+            assert set(flags[keep]) == {0.0, 1.0}
+
+    def test_a_rare_flag_keeps_its_share(self):
+        flags = np.zeros(200_000)
+        flags[:110] = 1  # 0.055%
+        keep = subsample(strata(flags, np.arange(200_000.0), 4096), 4096, seed=0)
+        assert 1 <= flags[keep].sum() <= 3  # 0.055% of 4,096 is 2.3
 
     def test_a_sample_keeps_the_flags_share_and_the_spread_of_values(self):
         rng = np.random.default_rng(0)
         flags = (rng.random(20_000) < 0.3).astype(float)
         values = rng.lognormal(sigma=2.0, size=20_000)  # long right tail
-        keep = subsample(strata(flags, values), 1_000, seed=0)
+        keep = subsample(strata(flags, values, 1_000), 1_000, seed=0)
         assert abs(flags[keep].mean() - flags.mean()) < 0.005
         for flag in (0.0, 1.0):
             full = values[flags == flag]

@@ -20,10 +20,12 @@ probability there, so a median or survival probability out there would
 read as an estimate when it isn't one (with heavy censoring, true
 survival of 0.74 came back as 0.001 past the follow-up). The
 SurvivalPFN authors agree. To rank rows by risk, use rmst up to the
-longest time: it is always defined, while with heavy censoring most
-medians are past the follow-up. On the authors' own benchmark splits it
-scores their published C-index (tests/integration/
-test_survivalpfn_reference.py).
+longest time (a higher rmst is a lower risk): it is always defined,
+while with heavy censoring many medians are past the follow-up. On the
+authors' own splits of six small benchmark datasets, ranking by it
+scores within 0.01 of their published C-index (zinc, 81% censored:
+0.784 against 0.777; from the medians, 0.621, as most are None; tests/
+integration/test_survivalpfn_reference.py).
 
 Not calibrated: the authors found that the temperature calibration
 CausalPFN uses makes SurvivalPFN's predictions worse, and their
@@ -39,13 +41,14 @@ events and, among events and among censored rows, the spread of times
 (_pfn_common.strata), as the SurvivalPFN authors suggested.
 
 The model takes any number of context rows (trained on up to 2,048; its
-authors ran it on tables up to 100,000). The limit here is cost, not
-the model: every predict reruns the context, so predict time grows with
-its square (on an A40, 1,000 test rows took 0.12 s against 4,096
-context rows and 50 s against 100,000; peak memory 0.2 and 2.6 GB).
-Accuracy does not grow with it: on the authors' benchmark splits of five
-public datasets of 3,289 to 36,695 training rows, a 4,096-row context
-scored within 0.01 of the whole table in C-index and 0.001 in
+authors ran it on tables of under 100,000). The limit here is cost, not
+the model: every predict reruns the context, so predict time grows
+roughly with its square (on an A40, 1,000 test rows took 0.12 s against
+4,096 context rows and 50 s against 100,000; peak memory 0.2 and
+2.6 GB). Accuracy barely grows with it: on the authors' splits of four
+public datasets larger than the context (up to 36,695 training rows), a
+4,096-row context scored within 0.01 C-index of the whole table (largest
+gap: prostateSurvival, 0.727 against 0.735) and within 0.001 in
 integrated Brier score (hdfail, 36,695 rows: C-index 0.804 at 4,096 and
 0.802 with every row, at 1/37 of the predict time). So the default keeps
 4,096; TABCTX_SURVIVALPFN_CONTEXT_SIZE raises it. A table wider than the
@@ -164,7 +167,11 @@ class SurvivalPFNBackend:
         # context, so it is the table's follow-up, not a subsample's.
         longest = float(exact_times.max())
         keep = np.union1d(
-            subsample(strata(events, exact_times), self._context_size, _SEED),
+            subsample(
+                strata(events, exact_times, self._context_size),
+                self._context_size,
+                _SEED,
+            ),
             [int(exact_times.argmax())],
         )
         X_arr = X_arr[keep]

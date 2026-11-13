@@ -44,10 +44,11 @@ merges concurrent requests and splits large ones. Test rows attend only
 to the context, never to each other, so here a row's answer depends on
 the row alone. The model was trained on contexts up to 2,048 rows;
 CausalPFN's default context is 4,096, the default here. A larger context
-costs predict time (it grows with the context's square: 2,000 test rows
+costs predict time (roughly with the context's square: 2,000 test rows
 took 0.26 s against 4,096 rows and 101 s against 100,000, on an A40) and
-bought no accuracy on simulated data (effect error 0.35 at 2,048 to
-100,000 rows alike); TABCTX_CAUSALPFN_CONTEXT_SIZE raises it.
+bought no accuracy on one simulated dataset (PEHE, the root-mean-square
+error of each row's effect: 0.35 at 2,048 rows, 0.34 at 100,000);
+TABCTX_CAUSALPFN_CONTEXT_SIZE raises it.
 
 Missing feature values are filled with the training table's column
 medians. A table wider than the model's 99 features is reduced by
@@ -179,7 +180,9 @@ class CausalPFNBackend:
             raise InvalidInputError(f"{self.name} fits causal, not {task}")
         X_arr = float32_rows(X)
         outcome, treated = (a.astype(np.float32) for a in split_targets(y))
-        keep = subsample(strata(treated, outcome), self._context_size, _SEED)
+        keep = subsample(
+            strata(treated, outcome, self._context_size), self._context_size, _SEED
+        )
         X_arr, outcome, treated = X_arr[keep], outcome[keep], treated[keep]
         medians = _column_medians(X_arr)
         X_arr = _fill(X_arr, medians)

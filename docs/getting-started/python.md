@@ -103,9 +103,10 @@ sum(r.predictions) / len(r.predictions)   # the average effect over these rows
 
 Nothing is estimated past the longest time in the training data: a
 median, quantile or survival probability out there is `None`. To rank
-rows by risk, use `rmst` with `rmst_horizon` at that longest time
-(`rmst_horizon=days.max()`): it is always defined, while with heavy
-censoring most medians are `None`. Each model
+rows by risk, ask for `rmst` with `rmst_horizon` at that longest time
+(`days.max()`, or the time column's max for `fit_file`): it is always
+defined, while with heavy censoring many medians are `None`. A higher
+`rmst` is a longer expected event-free time, so a lower risk. Each model
 uses at most 4,096 training rows as its context (a larger table is
 subsampled, keeping the share of events or of each arm and the spread of
 times or outcomes;
