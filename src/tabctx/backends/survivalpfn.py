@@ -71,7 +71,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from scipy.sparse.linalg import ArpackError
 
 from tabctx.backends._cuda import device_scope, ensure_initialized
 from tabctx.backends._pfn_common import (
@@ -156,6 +155,7 @@ class SurvivalPFNBackend:
     # ---- protocol ------------------------------------------------------
 
     def fit(self, X: ArrayLike, y: ArrayLike, task: Task) -> SurvivalPFNContext:
+        from scipy.sparse.linalg import ArpackError
         from survivalpfn import SurvivalEstimator
 
         if task != "survival":

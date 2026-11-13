@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.21.0] - 2026-11-13
 ### Added
 - **Two new tasks, survival and causal, with SurvivalPFN and CausalPFN** (`TABCTX_BACKEND=...,survivalpfn,causalpfn`). Both models are about 20M parameters (75 MB of weights) and fit beside the others on one GPU.
   - **Survival** (`survivalpfn-v0.1`, [SurvivalPFN](https://github.com/rgklab/SurvivalPFN), Apache-2.0): time to an event with right censoring. A fit sends each row's time as `train_y` and its event flag as `train_event` (or a file's `event_column`); a predict returns each row's median event time, `quantiles` of the event time, with `times` the probability of no event by each (`survival`, `survival_times`), and with `rmst_horizon` the restricted mean survival time up to it (`rmst`). Nothing is estimated past the longest training time (the fit response's `summary.max_time`; that row is always kept in the context): those values, `rmst` included, are `null` (with heavy censoring the model put near-zero survival there, against a true 0.74).
@@ -11,7 +13,7 @@
   - A survival or causal fit's response has a `summary`: `max_time`, `events` and `censored`, or `treated` and `control`.
   - Each fit's task picks its model: a backend lists its `tasks`, `GET /v1/models` shows them with each model's `outputs` (now with a response schema), and a fit that names no model goes to the default if it fits the task, else the first that does. A model that doesn't fit the task is a 422 naming one that does. An event or treatment column implies its task.
   - Both networks load once per device, as tensors only (`torch.load(weights_only=True)`; the models' own loaders unpickle arbitrary objects), from pinned Hugging Face revisions; the spill tier stores a context without its network.
-  - On a CPU, on simulated data (1,500 training rows, 500 held out): SurvivalPFN's medians had a C-index of 0.922 against the observed times (0.942 for the true risk itself); CausalPFN's effects correlated 0.998 with the true ones. Not yet run on a GPU or on the papers' benchmarks.
+  - On a CPU, on simulated data (1,500 training rows, 500 held out): SurvivalPFN's medians had a C-index of 0.922 against the observed times (0.942 for the true risk itself); CausalPFN's effects correlated 0.998 with the true ones. On an A40, both served over HTTP with a peak of 1.1 GB, and 8 concurrent users got the same answers as sequential requests. Tables wider than 99 features are reduced to 99 by truncated SVD (as the models' packages do) and lose accuracy: on a 150-column simulation, C-index 0.67 against 0.72 at 99 columns.
   - `pip install "tabctx[causalpfn]"`. SurvivalPFN is not on PyPI, so it is a uv dependency group (`uv sync --group survivalpfn`), pinned to a commit; the image includes both.
   - Event and treatment columns in files may be 0/1, true/false or yes/no; with no target named, the target is the last column that isn't the flag.
   - The client: `fit(..., event=)` / `treatment=` (sending the task they imply, so a server without these tasks refuses the fit rather than fitting a regression), `fit_file` and `fit_uploaded` with `event_column` / `treatment_column`, `predict(..., times=, rmst_horizon=, potential_outcomes=)`, and `tabular_models(task)` / `default_model(task)`; the scikit-learn estimators and the MCP tools only pick models that fit their task.

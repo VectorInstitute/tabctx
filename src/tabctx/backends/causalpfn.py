@@ -69,7 +69,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from scipy.sparse.linalg import ArpackError
 
 from tabctx.backends._cuda import device_scope, ensure_initialized
 from tabctx.backends._outcome import regression_outcome
@@ -174,6 +173,7 @@ class CausalPFNBackend:
         """The whole fit, on the CPU: subsample, fill missing values, reduce
         a wide table. Its size travels with it: fits prepare concurrently,
         and fit_prepared reports it under the device's lock."""
+        from scipy.sparse.linalg import ArpackError
         from sklearn.decomposition import TruncatedSVD
 
         if task != "causal":
