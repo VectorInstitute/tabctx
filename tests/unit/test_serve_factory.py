@@ -52,6 +52,13 @@ class TestServeSettings:
         monkeypatch.setenv(BACKEND_ENV_VAR, "tabicl,tabdpt")
         assert ServeSettings.from_env().backends == ("tabicl", "tabdpt")
 
+    def test_survival_and_causal_backends(self, monkeypatch):
+        monkeypatch.setenv(BACKEND_ENV_VAR, "tabicl,survivalpfn,causalpfn")
+        monkeypatch.setenv("TABCTX_SURVIVALPFN_CONTEXT_SIZE", "4096")
+        settings = ServeSettings.from_env()
+        assert settings.backends == ("tabicl", "survivalpfn", "causalpfn")
+        assert settings.survivalpfn_context_size == 4096
+
     @pytest.mark.parametrize("bad", ["0", "-0.5", "1.5", "abc"])
     def test_bad_fraction_rejected(self, monkeypatch, bad):
         monkeypatch.setenv(GPU_MEMORY_FRACTION_ENV_VAR, bad)

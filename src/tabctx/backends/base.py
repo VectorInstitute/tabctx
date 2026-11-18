@@ -44,11 +44,13 @@ class TabularICLBackend(Protocol):
         over the cached context. A classification's labels are strings,
         whatever return_proba is (backends._outcome).
 
-        quantiles: for a regression context only (the engine checks), the
-        levels in (0, 1) at which to also return each row's predicted
-        distribution, as PredictOutcome.quantiles -- from the same pass as
-        the mean. A model that predicts only a point raises
-        InvalidInputError."""
+        quantiles, and any other output in tabctx.outputs (times,
+        rmst_horizon, potential_outcomes): a backend gives each output it
+        can by taking a keyword argument of that name and filling the
+        matching PredictOutcome field, from the same pass as the
+        predictions. It is passed only the outputs asked for, and only for
+        tasks they are for (the engine checks, and refuses an output whose
+        argument its predict doesn't take)."""
         ...
 
     def context_bytes_hint(self, n_train: int, n_features: int) -> int | None:

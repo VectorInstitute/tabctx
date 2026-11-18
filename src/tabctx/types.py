@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-Task = Literal["classification", "regression"]
+# What a fit learns (tabctx.tasks says what each needs and returns).
+Task = Literal["classification", "regression", "survival", "causal"]
 
 # Accept anything array-like (list-of-lists, numpy array, etc.) at the API
 # boundary; backends are responsible for coercing to whatever they need.
@@ -20,34 +22,51 @@ class PredictOutcome:
     predictions/probabilities/classes come from ONE inference pass -- a
     backend must never call predict() and predict_proba() separately for the
     same request (see backends/tabicl.py for why this matters).
+
+    Every field but classes has one entry per test row (tabctx.outputs
+    says which are returned when).
     """
 
     predictions: list
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
-    # Regression only, when asked for: one row per test row, the predicted
-    # distribution's value at each requested level (in the order asked).
-    quantiles: list[list[float]] | None = None
+    # The predicted distribution's value at each requested level (in the
+    # order asked); a survival quantile past the training follow-up is None.
+    quantiles: list[list[float | None]] | None = None
+    # Survival: the probability of no event by each requested time (in the
+    # order asked); None past the training follow-up.
+    survival: list[list[float | None]] | None = None
+    # Survival: the expected event-free time up to the requested horizon;
+    # None past the training follow-up.
+    rmst: list[float | None] | None = None
+    # Causal: [expected outcome if not treated, if treated].
+    potential_outcomes: list[list[float]] | None = None
 
     def rows(self, start: int, stop: int) -> PredictOutcome:
         """The outcome for test rows [start, stop)."""
         return PredictOutcome(
-            predictions=self.predictions[start:stop],
-            probabilities=_slice(self.probabilities, start, stop),
             classes=self.classes,
-            quantiles=_slice(self.quantiles, start, stop),
+            **{name: _slice(getattr(self, name), start, stop) for name in _PER_ROW},
         )
 
     @staticmethod
     def concat(outcomes: Sequence[PredictOutcome]) -> PredictOutcome:
         """Outcomes for consecutive row ranges, as one."""
         first = outcomes[0]
+        joined = {
+            name: _join([getattr(o, name) for o in outcomes]) for name in _PER_ROW
+        }
+        joined["predictions"] = joined["predictions"] or []
         return PredictOutcome(
-            predictions=[p for o in outcomes for p in o.predictions],
-            probabilities=_join([o.probabilities for o in outcomes]),
             classes=next((o.classes for o in outcomes if o.classes), first.classes),
-            quantiles=_join([o.quantiles for o in outcomes]),
+            **joined,
         )
+
+
+# PredictOutcome's per-row fields.
+_PER_ROW = tuple(
+    f.name for f in dataclasses.fields(PredictOutcome) if f.name != "classes"
+)
 
 
 def _slice(rows: list | None, start: int, stop: int) -> list | None:

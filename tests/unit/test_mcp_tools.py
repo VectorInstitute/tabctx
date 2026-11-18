@@ -588,3 +588,25 @@ class TestDeleteModel:
         capsys.readouterr()
         assert cli.main(["delete", "churn"], tools) == 0
         assert json.loads(capsys.readouterr().out)["deleted"] == "churn"
+
+
+def test_evaluate_leaves_out_models_of_other_tasks(tmp_path, history):
+    # A deployment that also serves the survival and causal models: a
+    # classification comparison only runs the models that fit it.
+    deployment = FakeDeployment(
+        tmp_path,
+        models=[
+            {"id": "survivalpfn-v0.1", "default": True, "tasks": ["survival"]},
+            {
+                "id": "tabicl-v2",
+                "default": False,
+                "tasks": ["classification", "regression"],
+            },
+            {"id": "causalpfn-v0", "default": False, "tasks": ["causal"]},
+        ],
+    )
+    tools = TabularTools(ModelStore(tmp_path / "store"), client=deployment)
+    out = tools.evaluate(history, "churn", drop=["customer_id"], baseline=False)
+    assert [r["model"] for r in out["results"]] == ["tabicl-v2"]
+    tools.fit_model(history, "churn", name="churn", drop=["customer_id"])
+    assert deployment.fits[-1]["model"] == "tabicl-v2"

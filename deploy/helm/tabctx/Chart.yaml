@@ -5,8 +5,8 @@ type: application
 # Released with tabctx, at the same version: a release bumps both with
 # pyproject.toml (tests/unit/test_helm_chart.py checks). appVersion is
 # the image the chart deploys.
-version: 0.20.0
-appVersion: "0.20.0"
+version: 0.21.0
+appVersion: "0.21.0"
 home: https://vectorinstitute.github.io/tabctx/
 sources:
   - https://github.com/VectorInstitute/tabctx

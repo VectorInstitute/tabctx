@@ -303,3 +303,28 @@ def _wait_until(predicate, timeout=5.0):
     while not predicate():
         assert time.monotonic() < deadline, "condition not reached"
         time.sleep(0.005)
+
+
+def test_requests_for_different_outputs_are_never_merged():
+    """The batch key includes the outputs asked for: requests for different
+    survival times get their own times' answers, never a merged grid."""
+    engine, backend = _make_engine()
+    engine.fit(
+        [[0.0], [1.0], [2.0], [3.0]],
+        [[1.0, 1], [2.0, 0], [3.0, 1], [4.0, 1]],
+        task="survival",
+        dataset_id="s",
+    )
+    predictor = CoalescingPredictor(engine, window_s=0.05)
+    asks = [[0.0], [2.5], [10.0], [2.5]]
+    barrier = threading.Barrier(len(asks))
+
+    def call(times):
+        barrier.wait()
+        return predictor.predict("s", [[0.0]], times=times).survival
+
+    with ThreadPoolExecutor(max_workers=len(asks)) as pool:
+        got = list(pool.map(call, asks))
+    assert got == [[[1.0]], [[0.5]], [[0.0]], [[0.5]]]
+    # The two identical asks may share a call; different ones never do.
+    assert backend.predict_calls >= 3

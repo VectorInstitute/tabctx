@@ -130,7 +130,7 @@ class TabularTools:
         deployment's default model."""
         frame = read_table(path)
         X, y, task = _features_and_labels(frame, target, drop, task)
-        model = model or self._client().default_model()
+        model = model or self._client().default_model(task)
         name = name or _default_name(path, target, model)
         check_name(name)
         estimator = _estimator(task, model, self.client)
@@ -287,7 +287,7 @@ class TabularTools:
         X, y, task = _features_and_labels(frame, target, drop, task)
         Xtr, Xte, ytr, yte = _split(X, y, task, test_size, seed)
         if models is None:
-            models = self._client().tabular_models()
+            models = self._client().tabular_models(task)
             if not models and not baseline:
                 raise ValueError("the deployment serves no tabular model")
         runs = [
@@ -365,7 +365,7 @@ class TabularTools:
         max_rows = max(1, min(max_rows, MAX_EXPLAIN_ROWS // copies))
         if len(Xte) > max_rows:
             Xte, yte = Xte.iloc[:max_rows], yte.iloc[:max_rows]
-        model = model or self._client().default_model()
+        model = model or self._client().default_model(task)
         estimator = _estimator(task, model, self.client).fit(Xtr, ytr)
         name, score = _importance_score(task, estimator, yte)
 

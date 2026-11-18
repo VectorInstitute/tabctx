@@ -73,6 +73,7 @@ from tabctx.batching import CoalescingPredictor
 from tabctx.events import RecentEvents
 from tabctx.labels import resolve_task
 from tabctx.multidevice import MultiDeviceEngine
+from tabctx.outputs import OUTPUTS, PredictOutputs
 from tabctx.schema import TableSchema
 from tabctx.serve.affinity import resolve_dataset_id, session_id_from_headers
 from tabctx.serve.factory import EXPIRY_SWEEP_S, ServeSettings, build_engine
@@ -88,7 +89,15 @@ from tabctx.serve.tenancy import (
     visible_dataset_id,
 )
 from tabctx.serve.uploads import UploadStore
-from tabctx.uncertainty import MAX_QUANTILES, check_quantiles
+from tabctx.tasks import (
+    SECOND_COLUMN,
+    TASKS,
+    infer_task_with_second,
+    pack_targets,
+    summarize,
+)
+from tabctx.types import Task
+from tabctx.uncertainty import MAX_QUANTILES, MAX_TIMES, check_quantiles, check_times
 
 logger = logging.getLogger("tabctx.serve")
 logging.basicConfig(level=logging.INFO)
@@ -166,6 +175,16 @@ _TASK_DOC = (
     "classification."
 )
 
+_FIT_TASK_DOC = (
+    "classification, regression, survival (time to an event: train_y is each "
+    "row's time, train_event / event_column its event flag) or causal (a "
+    "treatment's effect: train_y is each row's outcome, train_treatment / "
+    "treatment_column its treatment flag). Omit it to infer: an event column "
+    "means survival, a treatment column causal; otherwise from train_y "
+    "(non-integer numbers, or whole numbers with more distinct values than both "
+    "30 and 5% of the rows, mean regression; anything else classification)."
+)
+
 
 class LegacyPredictRequest(BaseModel):
     train_X: list[list[Cell]] = Field(description=_TABLE_DOC)
@@ -181,6 +200,14 @@ _PREDICTIONS_DOC = (
     "One per test row. Classification: the predicted class as a string, one of "
     "the training labels (the `classes` returned with return_proba), whatever "
     "return_proba is. Regression: numbers."
+)
+
+
+_FIT_PREDICTIONS_DOC = (
+    _PREDICTIONS_DOC
+    + " Survival: each row's median event time, in train_y's units (null when "
+    "it would be past the longest time in the training data). Causal: each "
+    "row's treatment effect (expected outcome if treated minus if not)."
 )
 
 
@@ -211,11 +238,29 @@ class FitRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("target_column", "target"),
         description="The table file's label column (also accepted as `target`); "
-        "default: its last column.",
+        "default: its last column. Survival: the time column; causal: the outcome.",
     )
-    task: Literal["classification", "regression"] | None = Field(
-        default=None, description=_TASK_DOC
+    # Survival: each row's event flag (1: the event happened at its time;
+    # 0: censored then). Causal: each row's treatment (1 treated, 0 control).
+    # Inline, or the table file's column of that name.
+    train_event: list[float] | None = Field(
+        default=None,
+        description="Survival, inline: per training row, 1 if the event happened "
+        "at its train_y time, 0 if the row was censored then.",
     )
+    event_column: str | None = Field(
+        default=None,
+        description="Survival, from a table file: the event flag's column.",
+    )
+    train_treatment: list[float] | None = Field(
+        default=None,
+        description="Causal, inline: per training row, 1 if treated, 0 if control.",
+    )
+    treatment_column: str | None = Field(
+        default=None,
+        description="Causal, from a table file: the treatment flag's column.",
+    )
+    task: Task | None = Field(default=None, description=_FIT_TASK_DOC)
     dataset_id: str | None = None
     # Which model serves this dataset: an exact
     # id from GET /v1/models (e.g. "tabicl-v2", "tabpfn-3.5"). Default:
@@ -240,11 +285,17 @@ class UploadResponse(BaseModel):
 class FitResponse(BaseModel):
     dataset_id: str
     model: str
-    task: Literal["classification", "regression"] = Field(
+    task: Task = Field(
         description="The task the context was fit for: the request's, or inferred."
     )
     n_train: int
     n_features: int
+    summary: dict[str, float | int] | None = Field(
+        default=None,
+        description="Survival: max_time (the longest time in the training data; "
+        "survival outputs past it are null), events and censored. Causal: "
+        "treated and control. Null for classification and regression.",
+    )
     expires_at: float | None = Field(
         default=None,
         description="Unix time the context is deleted at (its retention "
@@ -277,9 +328,39 @@ class TabctxPredictRequest(BaseModel):
         | None
     ) = Field(
         default=None,
-        description="Regression only: also return each row's predicted "
-        "distribution at these levels in (0, 1), e.g. [0.05, 0.5, 0.95] for "
-        "the median and a 90% interval. Each level at most once.",
+        description="Regression, survival and causal: also return each row's "
+        "predicted distribution at these levels in (0, 1), e.g. [0.05, 0.5, "
+        "0.95] for the median and a 90% interval. Survival: of the event time. "
+        "Causal: of an individual's effect, a treated outcome minus an untreated "
+        "one for the row, outcome noise included (calibrated to held-out "
+        "outcomes); not a confidence interval for `predictions`. Each level at "
+        "most once.",
+    )
+    times: (
+        Annotated[
+            list[Annotated[float, Field(ge=0, allow_inf_nan=False)]],
+            Field(min_length=1, max_length=MAX_TIMES),
+        ]
+        | None
+    ) = Field(
+        default=None,
+        description="Survival only: also return each row's probability of no "
+        "event by each of these times (in train_y's units), e.g. [30, 90, 365].",
+    )
+    rmst_horizon: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        description="Survival only: also return each row's restricted mean "
+        "survival time up to this horizon (the expected event-free time within "
+        "it, in train_y's units). Past the longest time in the training data "
+        "(the fit's summary.max_time), rmst is null.",
+    )
+    potential_outcomes: bool = Field(
+        default=False,
+        description="Causal only: also return each row's expected outcome if "
+        "not treated and if treated (the two the treatment effect is the "
+        "difference of).",
     )
 
     @field_validator("quantiles")
@@ -292,18 +373,53 @@ class TabctxPredictRequest(BaseModel):
             raise ValueError(str(e)) from e
         return value
 
+    @field_validator("times")
+    @classmethod
+    def _valid_times(cls, value: list[float] | None) -> list[float] | None:
+        try:
+            check_times(value)
+        except InvalidInputError as e:
+            raise ValueError(str(e)) from e
+        return value
+
 
 class TabctxPredictResponse(BaseModel):
-    predictions: list = Field(description=_PREDICTIONS_DOC)
+    predictions: list = Field(description=_FIT_PREDICTIONS_DOC)
     probabilities: list[list[float]] | None = None
     classes: list[str] | None = None
-    quantiles: list[list[float]] | None = Field(
+    quantiles: list[list[float | None]] | None = Field(
         default=None,
         description="With quantiles requested: one row per test row, the value "
-        "at each requested level, in the order of quantile_levels.",
+        "at each requested level, in the order of quantile_levels. Survival: "
+        "null where the event time's quantile would be past the longest time in "
+        "the training data. Causal: of an individual's effect (outcome noise "
+        "included), not a confidence interval for `predictions`.",
     )
     quantile_levels: list[float] | None = Field(
         default=None, description="The levels the quantiles are at, as asked."
+    )
+    survival: list[list[float | None]] | None = Field(
+        default=None,
+        description="Survival, with times requested: one row per test row, the "
+        "probability of no event by each time, in the order of survival_times; "
+        "null past the longest time in the training data.",
+    )
+    survival_times: list[float] | None = Field(
+        default=None, description="The times the survival probabilities are at."
+    )
+    rmst: list[float | None] | None = Field(
+        default=None,
+        description="Survival, with rmst_horizon: each row's restricted mean "
+        "survival time up to rmst_horizon; null when the horizon is past the "
+        "longest time in the training data (the fit's summary.max_time).",
+    )
+    rmst_horizon: float | None = Field(
+        default=None, description="The horizon rmst is up to, as asked."
+    )
+    potential_outcomes: list[list[float]] | None = Field(
+        default=None,
+        description="Causal, when asked for: per test row, [expected outcome if "
+        "not treated, if treated].",
     )
     n_test: int
     latency_ms: float
@@ -320,7 +436,7 @@ class TabctxPredictResponse(BaseModel):
 class DatasetInfo(BaseModel):
     dataset_id: str
     model: str
-    task: Literal["classification", "regression"]
+    task: Task
     n_train: int
     n_features: int
     bytes: int = Field(
@@ -354,6 +470,25 @@ class DatasetList(BaseModel):
     )
 
 
+class ModelInfo(BaseModel):
+    id: str = Field(description="Pass as `model` in fit requests.")
+    object: Literal["model"] = "model"
+    default: bool = Field(description="The model a fit without `model` uses.")
+    tasks: list[Task] = Field(
+        description="What a fit with this model can learn. A fit that names no "
+        "model goes to the default if it serves the task, else the first listed "
+        "model that does."
+    )
+    outputs: list[str] = Field(
+        description="What its predicts can return besides predictions, by "
+        "request field: quantiles, times, rmst_horizon, potential_outcomes."
+    )
+
+
+class ModelList(BaseModel):
+    data: list[ModelInfo]
+
+
 class DeleteResponse(BaseModel):
     dataset_id: str
     deleted: Literal[True] = True
@@ -365,6 +500,30 @@ _ADMISSION_ERRORS = (AdmissionRejected, CacheCapacityError, UploadTooLargeError)
 _NOT_FOUND_ERRORS = (DatasetNotFoundError, UploadNotFoundError)
 _COMPUTE_ERRORS = (BackendComputeError,)
 _UNAVAILABLE_ERRORS = (HostMemoryUnavailableError, CacheUnavailableError)
+
+
+def _requested_task(req: FitRequest) -> Task | None:
+    """The fit's task as the request gives it: named, or implied by an
+    event or treatment column (tasks.infer_task_with_second)."""
+    implied = infer_task_with_second(
+        req.train_event is not None or req.event_column is not None,
+        req.train_treatment is not None or req.treatment_column is not None,
+    )
+    if req.task is None:
+        return implied
+    if implied is not None and implied != req.task:
+        raise InvalidInputError(
+            f"{_ARTICLE[implied]} {SECOND_COLUMN[implied]} column is for "
+            f"{implied} fits, not {req.task}"
+        )
+    return req.task
+
+
+_ARTICLE = {"survival": "an", "causal": "a"}
+
+
+def _inline_second(req: FitRequest) -> list[float] | None:
+    return req.train_event if req.train_event is not None else req.train_treatment
 
 
 def _map_error(e: Exception) -> HTTPException:
@@ -415,6 +574,15 @@ def _form_lists(fields: dict[str, str], names: frozenset[str]) -> dict[str, obje
     return out
 
 
+# A list field's example as one form value.
+_FORM_EXAMPLES = {
+    "quantiles": "0.05,0.95",
+    "times": "30,90,365",
+    "train_event": "1,0,1",
+    "train_treatment": "1,0,1",
+}
+
+
 def _request_body(model: type[BaseModel]) -> dict:
     """OpenAPI for a body that is JSON, or multipart/form-data with the
     same fields as form fields plus the table as a `file` part. A list
@@ -425,7 +593,7 @@ def _request_body(model: type[BaseModel]) -> dict:
             "type": "string",
             "description": f"{schema['properties'][name].get('description', '')} "
             "As one form value: comma-separated, or a JSON array.".strip(),
-            "examples": ["0.05,0.95"],
+            "examples": [_FORM_EXAMPLES.get(name, "0.05,0.95")],
         }
         for name in _list_fields(schema)
     }
@@ -795,21 +963,44 @@ class TabctxService:
                 self._uploads.discard(file)
 
     def _resolve_train_table(
-        self, req: FitRequest, file: Path | None, tenant_id: str | None
+        self,
+        req: FitRequest,
+        file: Path | None,
+        tenant_id: str | None,
+        task: Task | None,
     ) -> tuple[object, object, TableSchema | None]:
         """Returns (X, y, schema) from whichever of inline rows or a table
-        file the request used -- exactly one."""
-        inline = req.train_X is not None or req.train_y is not None
+        file the request used -- exactly one. task: the request's
+        (_requested_task); a survival or causal fit's y is both its columns
+        (tasks.pack_targets)."""
+        inline_second = _inline_second(req)
+        inline = (
+            req.train_X is not None
+            or req.train_y is not None
+            or inline_second is not None
+        )
         file = self._table_file(
             file, req.train_upload_id, inline, tenant_id, "train_X and train_y"
         )
         if file is None:
             if req.train_X is None or req.train_y is None:
                 raise InvalidInputError("an inline fit needs both train_X and train_y")
+            if req.event_column or req.treatment_column:
+                raise InvalidInputError(
+                    "event_column and treatment_column name a table file's "
+                    "columns; an inline fit sends train_event or train_treatment"
+                )
             X, schema = learn_rows(req.train_X)
-            return X, req.train_y, schema
+            y = (
+                req.train_y
+                if task is None
+                else pack_targets(task, req.train_y, inline_second)
+            )
+            return X, y, schema
         try:
-            features, y = read_training_table(file, req.target_column, req.task)
+            features, y = read_training_table(
+                file, req.target_column, task, req.event_column or req.treatment_column
+            )
         finally:
             self._uploads.discard(file)
         schema, X = TableSchema.learn(features.columns, features.names)
@@ -836,9 +1027,12 @@ class TabctxService:
     ) -> FitResponse:
         try:
             tenant_id = resolve_tenant_id(headers)
+            requested = _requested_task(req)
             with timing.phase("read_table"):
-                X, y, schema = self._resolve_train_table(req, file, tenant_id)
-            task = resolve_task(y, req.task)
+                X, y, schema = self._resolve_train_table(
+                    req, file, tenant_id, requested
+                )
+            task = resolve_task(y, requested)
             n_train = len(X)
             n_features = len(X[0]) if n_train else 0
             # The caller-visible dataset_id: header/body reconciliation
@@ -849,7 +1043,7 @@ class TabctxService:
                 uuid.uuid4()
             )
             scoped_id = scope_dataset_id(tenant_id, dataset_id)
-            model_id = req.model or self._engine.default_backend
+            model_id = self._engine.resolve_backend_name(req.model, task)
             # The schema (column names, text categories) is recorded on
             # the cached context so test tables are encoded the same way;
             # it lives and dies with the context, spill included.
@@ -881,6 +1075,7 @@ class TabctxService:
             task=task,
             n_train=n_train,
             n_features=n_features,
+            summary=summarize(task, y),
             expires_at=expires_at,
             served_by=_replica_tag(),
         )
@@ -962,11 +1157,9 @@ class TabctxService:
             scoped_id = scope_dataset_id(tenant_id, req.dataset_id)
             with timing.phase("read_table"):
                 X_test = self._resolve_test_table(req, file, tenant_id, scoped_id)
+            asked = PredictOutputs.of(**{name: getattr(req, name) for name in OUTPUTS})
             outcome = self._predictor.predict(
-                scoped_id,
-                X_test,
-                return_proba=req.return_proba,
-                quantiles=req.quantiles,
+                scoped_id, X_test, return_proba=req.return_proba, **asked.asked()
             )
         except (
             *_AUTH_ERRORS,
@@ -982,8 +1175,7 @@ class TabctxService:
             predictions=outcome.predictions,
             probabilities=outcome.probabilities,
             classes=outcome.classes,
-            quantiles=outcome.quantiles,
-            quantile_levels=req.quantiles if outcome.quantiles is not None else None,
+            **asked.response(outcome),
             n_test=len(X_test),
             latency_ms=latency_ms,
             # The engine counts a restore from the disk tier; a worker's or
@@ -1102,7 +1294,10 @@ class TabctxService:
         return {"status": "alive"}
 
     @fastapi_app.get(
-        "/v1/models", summary="List the models served", tags=["deployment"]
+        "/v1/models",
+        response_model=ModelList,
+        summary="List the models served",
+        tags=["deployment"],
     )
     async def models(self):
         """Which models this deployment serves: pass one of these ids
@@ -1110,12 +1305,19 @@ class TabctxService:
         The first is the default."""
         # async: answered on the event loop, not from the threadpool that
         # fits and predicts hold, so a readiness probe never waits on them.
+        served = self._engine.backend_tasks
+        outputs = self._engine.backend_outputs
         return {
             "data": [
                 {
                     "id": name,
                     "object": "model",
                     "default": name == self._engine.default_backend,
+                    # What a fit with this model can learn (tabctx.tasks),
+                    # and what its predicts can return besides predictions
+                    # (tabctx.outputs).
+                    "tasks": [t for t in TASKS if t in served[name]],
+                    "outputs": outputs[name],
                 }
                 for name in self._engine.backend_names
             ]

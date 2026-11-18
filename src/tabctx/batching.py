@@ -64,7 +64,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -72,8 +72,8 @@ from tabctx import timing
 from tabctx.engine import TabctxEngine
 from tabctx.errors import InvalidInputError
 from tabctx.multidevice import MultiDeviceEngine
+from tabctx.outputs import PredictOutputs
 from tabctx.types import ArrayLike, PredictOutcome
-from tabctx.uncertainty import check_quantiles
 
 
 def _concat_rows(tables: list[ArrayLike]) -> ArrayLike:
@@ -96,7 +96,7 @@ class _Key(NamedTuple):
 
     dataset_id: str
     return_proba: bool
-    quantiles: tuple[float, ...] | None
+    outputs: PredictOutputs
 
 
 @dataclass
@@ -119,7 +119,7 @@ class _Batch:
 class CoalescingPredictor:
     """Wraps TabctxEngine.predict with same-context request coalescing.
 
-    Groups by (dataset_id, return_proba, quantiles): rows from concurrent requests
+    Groups by (dataset_id, return_proba, outputs asked for): rows from concurrent requests
     against one context are concatenated into a single engine.predict()
     call and the results split back per request. Correctness contract:
     every caller receives exactly the predictions (and probabilities,
@@ -148,9 +148,12 @@ class CoalescingPredictor:
         X_test: ArrayLike,
         return_proba: bool = False,
         quantiles: Sequence[float] | None = None,
+        **outputs: Any,
     ) -> PredictOutcome:
-        levels = check_quantiles(quantiles)
-        key = _Key(dataset_id, return_proba, levels)
+        """outputs: as TabctxEngine.predict's."""
+        key = _Key(
+            dataset_id, return_proba, PredictOutputs.of(quantiles=quantiles, **outputs)
+        )
         if self._window_s == 0:
             with self._lock:
                 self.engine_calls += 1
@@ -210,7 +213,7 @@ class CoalescingPredictor:
             key.dataset_id,
             X_test,
             return_proba=key.return_proba,
-            quantiles=key.quantiles,
+            **key.outputs.asked(),
         )
 
     def _execute(self, key: _Key, batch: _Batch) -> None:

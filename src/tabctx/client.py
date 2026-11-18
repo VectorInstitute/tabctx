@@ -60,10 +60,12 @@ from tabctx.errors import (
     TabctxError,
     UploadNotFoundError,
 )
+from tabctx.outputs import NONE as NO_OUTPUTS
+from tabctx.outputs import OUTPUTS, PredictOutputs
 from tabctx.serve.affinity import DEFAULT_SESSION_ID_HEADER
 from tabctx.serve.tenancy import TENANT_HEADER
+from tabctx.tasks import infer_task_with_second
 from tabctx.types import ArrayLike, Task
-from tabctx.uncertainty import check_quantiles
 
 BASE_URL_ENV = "TABCTX_BASE_URL"
 API_KEY_ENV = "TABCTX_API_KEY"
@@ -109,32 +111,62 @@ class PredictResult:
     # Regression with quantiles asked for: per row, the value at each
     # level, and the levels (as quantile_levels; like classes for
     # probabilities).
-    quantiles: list[list[float]] | None = None
+    quantiles: list[list[float | None]] | None = None
     quantile_levels: list[float] | None = None
     # None for older deployments and the stateless legacy endpoint.
     cache_outcome: Literal["hit", "restored"] | None = None
+    # Survival with times asked for: per row, the probability of no event
+    # by each time, and the times (as survival_times).
+    survival: list[list[float | None]] | None = None
+    survival_times: list[float] | None = None
+    # Survival with rmst_horizon: per row, the expected event-free time up
+    # to it. Causal with potential_outcomes: per row, [if not treated, if
+    # treated].
+    rmst: list[float | None] | None = None
+    rmst_horizon: float | None = None
+    potential_outcomes: list[list[float]] | None = None
 
 
-# The tabular models tabctx serves, preferred first. A gateway in front of
-# tabctx may list them among other models (Vector's lists LLMs too) and
-# without tabctx's `default` mark; this list picks them out there.
-KNOWN_MODELS = ("tabpfn-3.5", "tabicl-v2", "tabdpt-1.3")
+# The tabular models tabctx serves, preferred first, and the tasks each
+# fits. A gateway in front of tabctx may list them among other models
+# (Vector's lists LLMs too) and without tabctx's `default` and `tasks`
+# fields; this table picks them out there.
+_PREDICTIVE: tuple[Task, ...] = ("classification", "regression")
+KNOWN_MODELS: dict[str, tuple[Task, ...]] = {
+    "tabpfn-3.5": _PREDICTIVE,
+    "tabicl-v2": _PREDICTIVE,
+    "tabdpt-1.3": _PREDICTIVE,
+    "survivalpfn-v0.1": ("survival",),
+    "causalpfn-v0": ("causal",),
+}
 
 
-def tabular_models_in(models: list[dict]) -> tuple[list[str], str | None]:
-    """(the tabular model ids in a /v1/models listing, the default one).
+def tabular_models_in(
+    models: list[dict], task: Task | None = None
+) -> tuple[list[str], str | None]:
+    """(the tabular model ids in a /v1/models listing, the default one);
+    with a task, only the models that fit it, and the default among them.
 
     tabctx's own listing marks every entry with `default`, so its entries
     are exactly its models and one of them is the default. A listing
     without that mark (a gateway's whole catalog, or a tabctx older than
     the mark) is narrowed to KNOWN_MODELS, and the default is the first
-    of them that it lists."""
+    of them that it lists. A model's tasks are its entry's `tasks`, else
+    KNOWN_MODELS's, else classification and regression (a tabctx older
+    than both)."""
+
+    def fits(entry: dict) -> bool:
+        tasks = entry.get("tasks") or KNOWN_MODELS.get(entry["id"], _PREDICTIVE)
+        return task is None or task in tasks
+
     if any("default" in m for m in models):
-        ids = [m["id"] for m in models if "default" in m]
-        marked = [m["id"] for m in models if m.get("default") is True]
+        ids = [m["id"] for m in models if "default" in m and fits(m)]
+        marked = [
+            m["id"] for m in models if m.get("default") is True and m["id"] in ids
+        ]
         default = (marked or ids)[0] if ids else None
         return ids, default
-    listed = [m["id"] for m in models if m["id"] in KNOWN_MODELS]
+    listed = [m["id"] for m in models if m["id"] in KNOWN_MODELS and fits(m)]
     preferred = [i for i in KNOWN_MODELS if i in listed]
     return listed, preferred[0] if preferred else None
 
@@ -204,11 +236,16 @@ class TabctxClient:
         dataset_id: str | None = None,
         model: str | None = None,
         ttl_s: float | None = None,
+        event: ArrayLike | None = None,
+        treatment: ArrayLike | None = None,
     ) -> str:
         """Encode and cache a training context; returns its dataset_id.
 
         Omit task to let the server infer it from y (non-integer numbers
-        mean regression). Supply a stable dataset_id when deploying
+        mean regression). Survival: y is each row's time and event its
+        event flag (1 event, 0 censored). Causal: y is each row's outcome
+        and treatment its treatment flag (1 treated, 0 control); either
+        column implies its task. Supply a stable dataset_id when deploying
         multi-replica: a server-generated id can't be used to route the fit
         itself, so the context would land on an arbitrary replica. ttl_s:
         have the server delete it after this many seconds (capped by its
@@ -218,7 +255,11 @@ class TabctxClient:
             {
                 "train_X": _json_rows(X),
                 "train_y": _json_cells(y),
-                "task": task,
+                "train_event": None if event is None else _json_cells(event),
+                "train_treatment": None
+                if treatment is None
+                else _json_cells(treatment),
+                "task": _named_task(task, event, treatment),
                 "ttl_s": ttl_s,
                 "dataset_id": dataset_id,
                 "model": model,
@@ -256,17 +297,22 @@ class TabctxClient:
         target_column: str | None = None,
         model: str | None = None,
         ttl_s: float | None = None,
+        event_column: str | None = None,
+        treatment_column: str | None = None,
     ) -> str:
         """Fit-by-reference: consume a prior upload_csv() of a CSV whose
         columns are the features plus one target column (target_column,
-        default: the last column). ttl_s: as for fit()."""
+        default: the last column), and for survival or causal the event or
+        treatment column. ttl_s: as for fit()."""
         resp = self._post(
             "/v1/tabctx/fit",
             _without_none(
                 {
                     "train_upload_id": train_upload_id,
                     "target_column": target_column,
-                    "task": task,
+                    "event_column": event_column,
+                    "treatment_column": treatment_column,
+                    "task": _named_task(task, event_column, treatment_column),
                     "ttl_s": ttl_s,
                     "dataset_id": dataset_id,
                     "model": model,
@@ -284,16 +330,21 @@ class TabctxClient:
         model: str | None = None,
         task: Task | None = None,
         ttl_s: float | None = None,
+        event_column: str | None = None,
+        treatment_column: str | None = None,
     ) -> str:
         """fit() from a table file sent with the request: a path (streamed
         from disk) or the file's bytes. Columns are the features plus the
-        label column, `target` (default: the last). Returns the dataset_id.
+        label column, `target` (default: the last), and for survival or
+        causal the event or treatment column. Returns the dataset_id.
         ttl_s: as for fit()."""
         fields = {
             "target": target,
+            "event_column": event_column,
+            "treatment_column": treatment_column,
             "dataset_id": dataset_id,
             "model": model,
-            "task": task,
+            "task": _named_task(task, event_column, treatment_column),
             "ttl_s": None if ttl_s is None else repr(float(ttl_s)),
         }
         resp = self._post_file("/v1/tabctx/fit", fields, file, session_id=dataset_id)
@@ -307,11 +358,23 @@ class TabctxClient:
         test_upload_id: str | None = None,
         model: str | None = None,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
+        rmst_horizon: float | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictResult:
         """model: needed through a gateway, which routes predicts by it;
-        a deployment reached directly knows it from the fit. quantiles
-        (regression): also return each row's predicted distribution at
-        these levels in (0, 1), as PredictResult.quantiles."""
+        a deployment reached directly knows it from the fit. What to return
+        besides the predictions (tabctx.outputs; checked before sending):
+
+        - quantiles (regression, survival, causal): each row's predicted
+          distribution at these levels in (0, 1), as PredictResult.quantiles;
+        - times (survival): each row's probability of no event by each
+          time, as PredictResult.survival;
+        - rmst_horizon (survival): each row's expected event-free time up
+          to the horizon, as PredictResult.rmst;
+        - potential_outcomes (causal): each row's expected outcome if not
+          treated and if treated, as PredictResult.potential_outcomes."""
+        asked = PredictOutputs.of(quantiles, times, rmst_horizon, potential_outcomes)
         body: dict = _without_none(
             {
                 "dataset_id": dataset_id,
@@ -319,11 +382,14 @@ class TabctxClient:
                 "test_X": None if X_test is None else _json_rows(X_test),
                 "test_upload_id": test_upload_id,
                 "model": model,
-                "quantiles": _levels(quantiles),
+                **{
+                    k: list(v) if isinstance(v, tuple) else v
+                    for k, v in asked.asked().items()
+                },
             }
         )
         resp = self._post("/v1/tabctx/predict", body, session_id=dataset_id)
-        return _predict_result(resp, quantiles is not None)
+        return _predict_result(resp, asked)
 
     def predict_file(
         self,
@@ -332,21 +398,23 @@ class TabctxClient:
         return_proba: bool = False,
         model: str | None = None,
         quantiles: Sequence[float] | None = None,
+        times: Sequence[float] | None = None,
+        rmst_horizon: float | None = None,
+        potential_outcomes: bool = False,
     ) -> PredictResult:
         """predict() on a table file sent with the request (path or bytes).
         When the training table was a file, columns are matched by name."""
+        asked = PredictOutputs.of(quantiles, times, rmst_horizon, potential_outcomes)
         fields = {
             "dataset_id": dataset_id,
             "return_proba": "true" if return_proba else "false",
             "model": model,
-            "quantiles": None
-            if quantiles is None
-            else ",".join(repr(q) for q in _levels(quantiles)),
+            **{k: _form_value(v) for k, v in asked.asked().items()},
         }
         resp = self._post_file(
             "/v1/tabctx/predict", fields, file, session_id=dataset_id
         )
-        return _predict_result(resp, quantiles is not None)
+        return _predict_result(resp, asked)
 
     def fit_predict(
         self,
@@ -387,20 +455,23 @@ class TabctxClient:
         """The models this deployment serves; pass an id as fit(model=...)."""
         return self._get("/v1/models")["data"]
 
-    def tabular_models(self) -> list[str]:
-        """The ids of the tabular models behind this URL, in the order
-        GET /v1/models lists them (see tabular_models_in)."""
-        return tabular_models_in(self.models())[0]
+    def tabular_models(self, task: Task | None = None) -> list[str]:
+        """The ids of the tabular models behind this URL (with a task: that
+        fit it), in the order GET /v1/models lists them (see
+        tabular_models_in)."""
+        return tabular_models_in(self.models(), task)[0]
 
-    def default_model(self) -> str:
+    def default_model(self, task: Task | None = None) -> str:
         """The model to use when none is named: the one tabctx's
         /v1/models marks as default; through a gateway that marks none,
-        the first of KNOWN_MODELS it lists."""
-        default = tabular_models_in(self.models())[1]
+        the first of KNOWN_MODELS it lists. With a task, the default
+        among the models that fit it."""
+        default = tabular_models_in(self.models(), task)[1]
         if default is None:
+            which = "" if task is None else f" for {task}"
             raise TabctxError(
-                "GET /v1/models lists no tabular model this client knows "
-                f"({', '.join(KNOWN_MODELS)}); pass a model id"
+                f"GET /v1/models lists no tabular model{which} this client "
+                f"knows ({', '.join(KNOWN_MODELS)}); pass a model id"
             )
         return default
 
@@ -587,18 +658,34 @@ def _json_cell(value: object) -> object:
     return value
 
 
-def _levels(quantiles: Sequence[float] | None) -> list[float] | None:
-    """Levels as plain floats (numpy ones too), checked before sending."""
-    levels = check_quantiles(quantiles)
-    return None if levels is None else list(levels)
+def _form_value(value: object) -> str:
+    """An output's value as one form field: a list comma-separated."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, tuple):
+        return ",".join(repr(v) for v in value)
+    return repr(value)
 
 
-def _predict_result(resp: dict, asked_quantiles: bool = False) -> PredictResult:
-    if asked_quantiles and resp.get("quantiles") is None:
-        raise TabctxError(
-            "the deployment returned no quantiles: it predates them (tabctx "
-            "0.19), or a gateway in front of it drops the field; upgrade it"
-        )
+def _named_task(task: Task | None, event: object, treatment: object) -> Task | None:
+    """The task a fit sends: as given, or the one its event or treatment
+    column implies. Sent rather than left to the server, so a server that
+    predates these tasks rejects the fit instead of ignoring the column
+    and fitting a regression."""
+    if task is not None:
+        return task
+    return infer_task_with_second(event is not None, treatment is not None)
+
+
+def _predict_result(resp: dict, asked: PredictOutputs = NO_OUTPUTS) -> PredictResult:
+    for name in asked.asked():
+        output = OUTPUTS[name]
+        if resp.get(output.field) is None:
+            raise TabctxError(
+                f"the deployment returned no {output.label}: it predates them "
+                f"(tabctx {output.since}), or a gateway in front of it drops the "
+                "field; upgrade it"
+            )
     return PredictResult(
         predictions=resp["predictions"],
         probabilities=resp.get("probabilities"),
@@ -608,6 +695,11 @@ def _predict_result(resp: dict, asked_quantiles: bool = False) -> PredictResult:
         quantiles=resp.get("quantiles"),
         quantile_levels=resp.get("quantile_levels"),
         cache_outcome=resp.get("cache_outcome"),
+        survival=resp.get("survival"),
+        survival_times=resp.get("survival_times"),
+        rmst=resp.get("rmst"),
+        rmst_horizon=resp.get("rmst_horizon"),
+        potential_outcomes=resp.get("potential_outcomes"),
     )
 
 
