@@ -14,6 +14,7 @@ on:
       - .pre-commit-config.yaml
       - .github/workflows/code_checks.yml
       - '**.py'
+      - '**.ipynb'
       - uv.lock
       - pyproject.toml
       - 'deploy/**'
@@ -23,6 +24,7 @@ on:
       - .pre-commit-config.yaml
       - .github/workflows/code_checks.yml
       - '**.py'
+      - '**.ipynb'
       - uv.lock
       - pyproject.toml
       - 'deploy/**'
