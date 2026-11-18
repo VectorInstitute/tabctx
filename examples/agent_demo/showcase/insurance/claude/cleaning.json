@@ -292,5 +292,33 @@
     ]
    ]
   ]
+ },
+ "examples": {
+  "rows": 6000,
+  "features": 16,
+  "outcome": {
+   "raw": "Status at Renewal",
+   "clean": "cancelled",
+   "classes": [
+    {
+     "value": "No",
+     "n": 5006,
+     "spellings": [
+      "Active",
+      "RENEWED",
+      "Renewed"
+     ]
+    },
+    {
+     "value": "Yes",
+     "n": 994,
+     "spellings": [
+      "Cancelled",
+      "LAPSED",
+      "cxl"
+     ]
+    }
+   ]
+  }
  }
 }

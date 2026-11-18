@@ -182,6 +182,22 @@ body.show-work .work { display: block; position: sticky; top: 72px; align-self: 
 .tally b { font: 400 26px/1 var(--serif); }
 .tally.base b { color: var(--text-3); }
 
+/* 02 · the examples: who counts, what counts as the outcome, what a row says */
+.ex { display: grid; grid-template-columns: 0.9fr 1.4fr 0.8fr; gap: 28px; margin-top: 6px; }
+.ex-tile { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; border-top: 1px solid var(--border); }
+.ex-k { font-size: 12.5px; color: var(--text-3); }
+.ex-big { font: 500 44px/1 var(--serif); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.ex-big s { font-size: 0.5em; color: var(--text-3); margin-right: 10px; text-decoration-thickness: 1.5px; }
+.ex-sub { font-size: 13px; color: var(--text-2); }
+.ex-chips, .ex-from { display: flex; flex-wrap: wrap; gap: 5px; }
+.ex-map { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px 10px; align-items: center; }
+.ex-map .arrow { color: var(--text-3); }
+.ex-to { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.ex-to.pos { color: var(--s2); }
+.ex-bar { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+.ex-bar i { display: block; height: 100%; background: var(--s2); }
+.ex-legend { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
 @media (max-width: 1240px) {
   body.show-work .layout { grid-template-columns: minmax(0, 820px); }
   body.show-work .work { position: static; max-height: none; margin-top: 0; padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--border); }
@@ -197,6 +213,7 @@ body.show-work .work { display: block; position: sticky; top: 72px; align-self: 
   .sec { grid-template-columns: 1fr; }
   .sec-num { padding: 0 0 6px; }
   .acc, .drv, .try, .merge, .tally { grid-template-columns: 1fr; gap: 6px; }
+  .ex { grid-template-columns: 1fr; gap: 20px; }
   .acc-axis { margin: 4px 0 0; }
   .ranked .why { display: none; }
   .popover { left: 16px; right: 16px; width: auto; }

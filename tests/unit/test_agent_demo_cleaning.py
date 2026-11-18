@@ -75,6 +75,27 @@ def test_categories_report_spellings_and_the_most_spelled_value(run):
     assert (status["before"], status["after"]) == (4, 2)
 
 
+def test_examples_count_the_rows_and_read_the_outcome_spellings(run):
+    e = cleaning.summarize(
+        run / "raw.csv",
+        run / "clean.csv",
+        "Policy ID",
+        "policy_id",
+        COLUMNS,
+        "cancelled",
+    )["examples"]
+    assert (e["rows"], e["features"]) == (5, 3)  # province, premium, age
+    assert e["outcome"]["raw"] == "Status"
+    by = {c["value"]: c for c in e["outcome"]["classes"]}
+    assert by["Yes"] == {"value": "Yes", "n": 2, "spellings": ["Cancelled", "cxl"]}
+    assert by["No"] == {"value": "No", "n": 3, "spellings": ["RENEWED", "Renewed"]}
+
+
+def test_examples_without_a_target_give_only_the_rows(run):
+    e = view(run)["examples"]
+    assert e == {"rows": 5, "features": 4}  # every column but the id
+
+
 def test_numbers_report_text_converted_and_impossible_values_emptied(run):
     by = {c["clean"]: c for c in view(run)["columns"]}
     assert by["premium"] == {
