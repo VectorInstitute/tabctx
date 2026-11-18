@@ -43,7 +43,10 @@ COPY examples/agent_demo ./examples/agent_demo
 # in the per-run user below (CLAUDE_SANDBOX=off).
 ARG DEMO_SCENARIO=insurance
 ENV DEMO_SCENARIO=$DEMO_SCENARIO
-RUN python examples/agent_demo/prepare_data.py \
+# The synthetic data's generator is public, so its seed is drawn here and
+# kept nowhere (not in the image, its layers or its history): with a known
+# seed an agent with a shell could rebuild the outcomes.
+RUN DEMO_SEED=$(od -An -N8 -tu8 /dev/urandom | tr -d ' ') python examples/agent_demo/prepare_data.py \
  && rm -rf examples/agent_demo/runs \
  && chmod -R go-rwx examples/agent_demo/answers
 

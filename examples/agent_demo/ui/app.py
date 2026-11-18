@@ -342,7 +342,9 @@ async def events(
 @app.get("/api/runs/{agent}/cleaning")
 def cleaning(agent: str, request: Request, source: str = "auto") -> dict:
     """The run's raw export beside the clean table its agent wrote."""
-    view = cleaning_of(_run_for(agent, request, source).dir, SCENARIO)
+    run = _run_for(agent, request, source)
+    showcase = HOSTED and run.dir.resolve().is_relative_to(SHOWCASE.resolve())
+    view = cleaning_of(run.dir, SCENARIO, saved=showcase)
     if view is None:
         raise HTTPException(404, "no cleaned table in this run")
     return view

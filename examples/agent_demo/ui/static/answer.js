@@ -37,10 +37,11 @@ const Answer = (() => {
     if (v === "" || v == null || Number.isNaN(n)) return String(v ?? "");
     return Math.abs(n) >= 100 ? fmt(n) : fmt(n, Number.isInteger(n) ? 0 : 1);
   };
-  const value = (c, v) => (v === "" || v == null ? "unknown" : (cols()[c]?.[1] || "{}").replace("{}", num(v)));
+  const value = (c, v) => (v === "" || v == null ? "unknown" : (cols()[c]?.[1] || "{}").replace("{}", () => num(v)));
   const said = (c, v) => `${label(c)} ${value(c, v)}`;
   const changed = (c, v) => `${label(c)} → ${value(c, v)}`;
   const list = (xs) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+  const LOWER_IS_BETTER = new Set(["rmse", "mae", "log_loss"]);
   const words = (n) => ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"][n] ?? fmt(n);
 
   // ---- the run ----------------------------------------------------------------
@@ -76,14 +77,17 @@ const Answer = (() => {
       lede.classList.add("doing");
     }
   }
-  function write(key, sentence, viz) {
+  // A step's answer: its sentence, and its visual (replaced, or with
+  // append: added below what is there, which keeps its animations still).
+  function write(key, sentence, viz, append = false) {
     const step = S.steps.get(key);
     if (!step) return;
     const lede = step.el.querySelector(".lede");
     lede.innerHTML = sentence;
     lede.dataset.final = "1";
     lede.classList.remove("doing");
-    if (viz != null) step.el.querySelector(".viz").innerHTML = viz;
+    const box = step.el.querySelector(".viz");
+    if (viz != null) append ? box.insertAdjacentHTML("beforeend", viz) : (box.innerHTML = viz);
     setStep(key, "done");
   }
   const has = (key) => S.steps.has(key);
@@ -130,6 +134,7 @@ const Answer = (() => {
 
   // ---- 01 · is the data usable? -------------------------------------------------
   async function loadCleaning() {
+    const run = S;
     S.cleaned = true;
     setStep("clean", "working", "Setting the raw rows beside the clean ones");
     let v = null;
@@ -137,16 +142,17 @@ const Answer = (() => {
       const res = await fetch(`/api/runs/${S.agent}/cleaning`);
       if (res.ok) v = await res.json();
     } catch {}
+    if (S !== run) return; // another run started meanwhile
     if (!v) return write("clean", "The agent cleaned both exports with a script of its own.", "");
-    const removed = v.removed.map((x) => `${fmt(x.n)} ${x.what.replace(/ \(.*\)$/, "")}`);
-    const top = v.columns.filter((c) => c.kind === "category" && c.before > c.after).sort((a, b) => b.before - a.before)[0];
+    const removed = (v.removed || []).map((x) => `${fmt(x.n)} ${x.what.replace(/ \(.*\)$/, "")}`);
+    const top = (v.columns || []).filter((c) => c.kind === "category" && c.before > c.after).sort((a, b) => b.before - a.before)[0];
     const sentence =
       `Not as exported. The file had ${fmt(v.rows_before)} rows; <b>${fmt(v.rows_after)}</b> are distinct ${esc(S.d.entity || "records")}. ` +
       `The agent wrote a script that removed ${esc(list(removed))}` +
       (top ? `, and merged ${fmt(top.before)} spellings of ${esc(lower(label(top.clean)))} into ${fmt(top.after)}.` : ".");
     write("clean", sentence, cleanViz(v));
     const table = S.steps.get("clean").el.querySelector(".tidy-table");
-    setTimeout(() => flip(table, true), 2200); // the mess first, then the fix
+    setTimeout(() => S === run && flip(table, true), 2200); // the mess first, then the fix
   }
 
   function flip(table, tidy) {
@@ -173,7 +179,7 @@ const Answer = (() => {
           <span class="arrow">→</span><span class="merged">${esc(c.example.value)}</span></div>`,
       )
       .join("");
-    return `<div class="tidy"><table class="tidy-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+    return `<div class="tidy-scroll"><table class="tidy-table"><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
       <div class="viz-foot"><span>Five of the messiest rows</span><button class="link-btn flip" type="button">Show cleaned</button></div>
       <div class="merges">${merges}</div>`;
   }
@@ -181,9 +187,10 @@ const Answer = (() => {
   // ---- 02 · can it be predicted? -------------------------------------------------
   function evaluate(r) {
     const m = r.best_by;
-    const ok = r.results.filter((x) => !x.error && x.metrics[m] != null);
+    const ok = (r.results || []).filter((x) => !x.error && x.metrics?.[m] != null);
     const gbm = ok.find((x) => x.model === "gradient-boosting");
-    const tfm = ok.filter((x) => x.model !== "gradient-boosting").sort((a, b) => b.metrics[m] - a.metrics[m])[0];
+    const better = LOWER_IS_BETTER.has(m) ? (a, b) => a.metrics[m] - b.metrics[m] : (a, b) => b.metrics[m] - a.metrics[m];
+    const tfm = ok.filter((x) => x.model !== "gradient-boosting").sort(better)[0];
     if (!tfm) return write("evaluate", "The models couldn't be compared on this table.", "");
     if (m !== "roc_auc") {
       return write("evaluate", `On last year's rows it hadn't seen, the tabular model scores ${fmt(tfm.metrics[m], 3)} (${esc(metricName(m))})${gbm ? `, against ${fmt(gbm.metrics[m], 3)} for the standard approach` : ""}.`, "");
@@ -207,34 +214,38 @@ const Answer = (() => {
   function predict(r, args = {}) {
     S.predicted = true;
     const key = r.ranked_by || "";
+    const proba = key.startsWith("p_"); // a chance; else a predicted value
     const pos = S.d.positive || "Yes";
     const mean = r.summary?.mean_probability?.[pos];
-    const id = Object.keys(r.top_rows[0] || {})[0]; // the id comes first
+    const top = r.top_rows || [];
+    const id = Object.keys(top[0] || {})[0]; // the id comes first
     const show = (args.show || []).filter((c) => c !== id).slice(0, 2);
     S.show = show;
-    const k = r.top_rows.length;
     const sentence =
-      (mean != null ? `About <b>${fmt(Math.round(mean * r.rows))}</b> of the ${fmt(r.rows)} ${esc(S.d.current)} are likely ${esc(S.d.outcome)}. ` : "") +
-      `These ${words(k)} are the most likely.`;
-    const rows = r.top_rows
+      (mean != null ? `About <b>${fmt(Math.round(mean * r.rows))}</b> of the ${fmt(r.rows)} ${esc(S.d.current)} are likely ${esc(S.d.outcome)}. ` : `The agent scored all ${fmt(r.rows)} ${esc(S.d.current)}. `) +
+      (top.length ? `These ${words(top.length)} are ${proba ? "the most likely" : "at the top"}.` : "");
+    const rows = top
       .map((row, i) => {
         const p = Number(row[key]);
         S.top.set(String(row[id]), row);
+        const score = proba && Number.isFinite(p)
+          ? `<span class="risk-track"><span class="risk-fill" style="width:${Math.max(0, Math.min(1, p)) * 100}%"></span></span><b>${pct(p)}</b>`
+          : `<b>${esc(num(row[key]))}</b>`;
         return `<tr style="--i:${i}"><td class="rank">${i + 1}</td><td class="id">${esc(row[id])}</td>
-          <td class="risk"><span class="risk-track"><span class="risk-fill" style="width:${p * 100}%"></span></span><b>${pct(p)}</b></td>
+          <td class="risk">${score}</td>
           <td class="why">${esc(show.filter((c) => c in row).map((c) => said(c, row[c])).join(" · "))}</td></tr>`;
       })
       .join("");
-    write("predict", sentence, `<table class="ranked"><tbody>${rows}</tbody></table>`);
+    write("predict", sentence, rows ? `<table class="ranked"><tbody>${rows}</tbody></table>` : "");
   }
 
   // ---- 04 · what drives it? -------------------------------------------------------
   function explain(r) {
-    const top = r.importance.filter((i) => i.score_drop > 0).slice(0, 6);
+    const top = (r.importance || []).filter((i) => i.score_drop > 0).slice(0, 6);
     if (!top.length) return write("explain", "No single column stands out.", "");
     const max = top[0].score_drop;
     const names = top.map((i) => lower(label(i.column)));
-    const sentence = `Mostly <b>${esc(names[0])}</b>${names.length > 2 ? `, then ${esc(list(names.slice(1, 3)))}` : ""}. That is what the predictions lean on, not proof of what causes it.`;
+    const sentence = `Mostly <b>${esc(names[0])}</b>${names.length > 1 ? `, then ${esc(list(names.slice(1, 3)))}` : ""}. That is what the predictions lean on, not proof of what causes it.`;
     const viz = top
       .map(
         (i, k) => `<div class="drv ${k < 3 ? "main" : ""}"><span>${esc(label(i.column))}</span>
@@ -248,7 +259,8 @@ const Answer = (() => {
   function whatIf(r, args = {}) {
     const pos = S.d.positive || "Yes";
     const res = r.results || [];
-    if (!res.length || !res[0].probabilities) return;
+    // The first row is the case as it is; a regression what-if has no chance to move.
+    if (!has("what_if") || res.length < 2 || res[0].probabilities?.[pos] == null) return;
     S.people++;
     const today = res[0].probabilities[pos];
     const id = args.base_where ? Object.values(args.base_where).join(", ") : "";
@@ -256,10 +268,14 @@ const Answer = (() => {
     const facts = known ? (S.show || []).filter((c) => c in known).map((c) => said(c, known[c])).join(" · ") : "";
     const at = (p) => `${Math.max(0, Math.min(1, p)) * 100}%`;
     const tries = res
+      .map((x, i) => [x, i])
       .slice(1)
-      .map((x, i) => {
+      .filter(([x]) => x.probabilities?.[pos] != null)
+      .map(([x, i]) => {
         const p = x.probabilities[pos];
-        const what = Object.entries(x.changes ?? args.rows?.[i + 1] ?? {}).map(([c, v]) => changed(c, v)).join(" + ") || "As it is";
+        // The change itself; args.rows are whole rows unless based on one.
+        const change = x.changes ?? (args.base_where ? args.rows?.[i] : null) ?? {};
+        const what = Object.entries(change).map(([c, v]) => changed(c, v)).join(" + ") || "As it is";
         const dir = p < today ? "down" : "up";
         const lo = Math.min(p, today), hi = Math.max(p, today);
         return `<div class="try"><span class="try-what">${esc(what)}</span>
@@ -268,20 +284,40 @@ const Answer = (() => {
       })
       .join("");
     const person = `<div class="person"><div class="person-head"><span class="id">${esc(id)}</span><span class="facts">${esc(facts)}</span><span class="today">today <b>${pct(today)}</b></span></div>${tries}</div>`;
-    const viz = S.steps.get("what_if").el.querySelector(".viz").innerHTML + person;
-    write("what_if", `For the ${words(S.people)} most at risk, the agent changed one thing at a time and asked the model again. These are patterns the model learned, worth a pilot, not proven effects.`, viz);
+    const who = S.people === 1 ? `one of the ${esc(S.d.entity || "rows")}` : `${words(S.people)} ${esc(S.d.entity || "rows")}`;
+    write("what_if", `For ${who} most at risk, the agent changed one thing at a time and asked the model again. These are patterns the model learned, worth a pilot, not proven effects.`, person, true);
   }
 
   // ---- the memo and the check -------------------------------------------------------
+  // Steps the agent started but never answered say so, rather than look done.
+  function unanswered(note) {
+    for (const [k, s] of S.steps) {
+      const lede = s.el.querySelector(".lede");
+      if (s.state === "idle" || (lede && lede.dataset.final)) continue;
+      if (k === "report" && !lede) continue;
+      if (lede) {
+        lede.textContent = note;
+        lede.classList.remove("doing");
+      }
+      setStep(k, "missing");
+    }
+  }
+
+  function fail(text) {
+    if (!S) return;
+    unanswered("The agent didn't get to an answer here.");
+    $("#agent-status").textContent = text;
+  }
+
   function outcome(o, stats) {
     if (!S) return;
-    for (const [k, s] of S.steps) if (s.state === "working") setStep(k, "done");
     if (o.report && has("report")) {
       const step = S.steps.get("report");
       step.el.querySelector(".lede")?.remove();
       step.el.querySelector(".viz").innerHTML = memo(o.report);
       setStep("report", "done");
     }
+    unanswered("The agent didn't get to an answer here.");
     const secs = stats?.seconds;
     $("#agent-status").innerHTML = o.report
       ? `Answered${secs ? ` in ${Math.floor(secs / 60)} min ${Math.round(secs % 60)} s` : ""}, from one question and two raw files.`
@@ -321,5 +357,5 @@ const Answer = (() => {
     flip(t, !t.classList.contains("tidy"));
   });
 
-  return { reset, event, outcome };
+  return { reset, event, outcome, fail };
 })();

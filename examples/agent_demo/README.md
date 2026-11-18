@@ -77,6 +77,11 @@ steps gives each agent its shell: Claude Code's Bash runs in its
 sandbox, Codex in its own, and Gemini CLI and pi without one (see the
 tools by agent, below).
 
+The data comes from a fixed seed, so runs are repeatable. The generator
+is public, so with that seed an agent with a shell could rebuild the
+withheld outcomes: the hosted image draws a seed at build time
+(`DEMO_SEED`) and keeps it nowhere.
+
 ```bash
 export DEMO_SCENARIO=insurance
 uv run --extra mcp python examples/agent_demo/prepare_data.py

@@ -28,6 +28,7 @@ test policies and a totals row. Writes, under examples/agent_demo/:
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -317,8 +318,13 @@ def build(
 
 
 def main(scenario: Scenario, **sizes: int) -> None:
-    """Write the scenario's data; sizes are build()'s row counts."""
-    history, current, answers = build(**sizes)
+    """Write the scenario's data; sizes are build()'s row counts.
+
+    DEMO_SEED replaces the fixed seed. The hosted image draws one at build
+    time and keeps it nowhere: this generator is public, so with the fixed
+    seed an agent with a shell could rebuild the withheld outcomes."""
+    seed = int(os.environ.get("DEMO_SEED") or SEED)
+    history, current, answers = build(seed, **sizes)
     scenario.workspace.mkdir(parents=True, exist_ok=True)
     scenario.answers.mkdir(parents=True, exist_ok=True)
     history.to_csv(scenario.workspace / task.HISTORY, index=False)

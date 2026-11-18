@@ -123,9 +123,13 @@ async function init() {
   state.agent = setup.running || setup.runs.at(-1)?.agent || setup.agents.find((a) => a.available)?.id;
   renderAgents();
   $("#reset-prompt").onclick = () => ($("#prompt").value = setup.prompt);
-  $("#run").onclick = () => (state.setup.hosted && !state.setup.signed_in ? openSettings(true) : start());
+  $("#run").onclick = (e) => {
+    if (!state.setup.hosted || state.setup.signed_in) return start();
+    e.stopPropagation(); // or the click, bubbling on, would close it again
+    openSettings(true);
+  };
   $("#replay").onclick = () => watch(state.agent, true);
-  $("#again-replay").onclick = () => watch(state.agent, true);
+  $("#again-replay").onclick = () => watch(state.shown, true);
   $("#again-new").onclick = newQuestion;
   $("#login").onsubmit = signIn;
   $("#logout").onclick = signOut;
@@ -211,10 +215,16 @@ function initPanels() {
     e.stopPropagation();
     openSettings($("#settings").hidden);
   };
+  // A click inside (even on a control it has since re-rendered) keeps it open.
   document.addEventListener("click", (e) => {
-    if (!$("#settings").hidden && !e.target.closest("#settings")) openSettings(false);
+    if (!$("#settings").hidden && e.target.isConnected && !$("#settings").contains(e.target)) openSettings(false);
   });
-  document.addEventListener("keydown", (e) => e.key === "Escape" && openSettings(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("#settings").hidden) {
+      openSettings(false);
+      $("#settings-btn").focus();
+    }
+  });
   let work = false;
   try {
     work = localStorage.getItem("work") === "1";
@@ -232,6 +242,7 @@ function initPanels() {
 function openSettings(open) {
   $("#settings").hidden = !open;
   $("#settings-btn").setAttribute("aria-expanded", String(open));
+  if (open) $("#settings").querySelector("input:not([hidden]), button:not(:disabled)")?.focus();
 }
 function newQuestion() {
   state.source?.close();
@@ -306,7 +317,7 @@ function notice(text) {
 function watch(agent, replay) {
   state.source?.close();
   clearInterval(state.timer);
-  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null });
+  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent });
   const info = state.setup.agents.find((a) => a.id === agent);
   $("#empty").hidden = true;
   $("#thread").hidden = false;
@@ -335,7 +346,13 @@ function watch(agent, replay) {
   });
   source.onerror = () => {
     source.close();
-    if ($("#outcome").hidden && !state.queue.length) setStatus("failed", "Connection lost");
+    if (!$("#outcome").hidden) return;
+    // A replay still draining its queue ends when the queue does.
+    enqueue(() => {
+      setStatus("failed", "Connection lost");
+      Answer.fail("The connection to the agent was lost before it finished.");
+      $("#again").hidden = false;
+    });
   };
   $("#run").disabled = true;
   $("#replay").disabled = true;
@@ -350,11 +367,16 @@ function enqueue(fn) {
 function drain() {
   const fn = state.queue[0];
   if (!fn) return;
-  const delay = fn() === "slow" ? 420 : 60;
-  setTimeout(() => {
-    state.queue.shift();
-    drain();
-  }, delay);
+  let delay = 60;
+  try {
+    if (fn() === "slow") delay = 420;
+  } finally {
+    // One event that fails to draw must not stop the rest of the replay.
+    setTimeout(() => {
+      state.queue.shift();
+      drain();
+    }, delay);
+  }
 }
 
 // An agent's progress note: bold and `code` as the agent wrote them,
@@ -364,7 +386,11 @@ function inlineMd(text) {
 }
 
 function handle(ev, info) {
-  Answer.event(ev);
+  try {
+    Answer.event(ev);
+  } catch (err) {
+    console.error("the brief could not draw an event", ev, err); // the work panel still does
+  }
   const tl = $("#timeline");
   if (ev.type === "message") {
     const el = document.createElement("div");
@@ -629,14 +655,13 @@ function whatIfCard(r, args) {
   const results = r.results;
   if (!results.length) return "";
   const probs = results[0].probabilities;
-  const who = ""; // the card's header names the row
   if (!probs) {
-    return `${who}<div class="bars">${results.map((x, i) => `<div class="bar-row"><div class="label">${caseLabel(x, args, i)}</div><div></div><div class="val">${fmt(x.prediction, 2)}</div></div>`).join("")}</div>`;
+    return `<div class="bars">${results.map((x, i) => `<div class="bar-row"><div class="label">${caseLabel(x, args, i)}</div><div></div><div class="val">${fmt(x.prediction, 2)}</div></div>`).join("")}</div>`;
   }
   const classes = Object.keys(probs);
   const cls = positiveOf(classes);
   const first = probs[cls];
-  return `${who}<div class="split-label">P(${esc(cls)})</div><div class="bars">${results
+  return `<div class="split-label">P(${esc(cls)})</div><div class="bars">${results
     .map((x, i) => {
       const p = x.probabilities[cls];
       const d = p - first;
