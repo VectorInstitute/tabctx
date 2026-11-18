@@ -63,7 +63,7 @@ serve = [
     "uvicorn[standard]",
     "jinja2",
     "pyarrow>=14",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.13",
     # the agent demo's web app (examples/agent_demo/ui), in the unit tests
     "fastapi",
 ]
@@ -74,7 +74,7 @@ standalone = [
     "fastapi",
     "uvicorn[standard]",
     "pyarrow>=14",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.13",
 ]
 # The scikit-learn-style estimators (tabctx.estimators); pyarrow sends
 # tables as Parquet (without it, gzip CSV). pandas: the estimators take
@@ -96,7 +96,7 @@ dev = [
     "pre-commit",
     "ruff",
     "pyarrow>=14",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.13",
     # The standalone host's unit tests exercise the full HTTP service
     # in-process (no server, no ray) via httpx's ASGI transport.
     "fastapi",
@@ -116,7 +116,7 @@ docs = [
     "mkdocstrings[python]>=0.29",
     "fastapi",
     "uvicorn",
-    "python-multipart>=0.0.9",
+    "python-multipart>=0.0.13",
     "pyarrow>=14",
 ]
 

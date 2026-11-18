@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **A quickstart notebook you can run in Colab** (`examples/quickstart.ipynb`, #113): install, start a server, classify, regress with prediction quantiles checked on held-out rows, and list and delete contexts. Colab badges in the README and the docs quickstart. (From @tylrcc in #134.)
+### Fixed
+- The `python-multipart` floor is now 0.0.13: the server imports `python_multipart`, which older releases don't have, so an environment that already had one failed at startup.
 
 ## [0.21.0] - 2026-11-13
 ### Added

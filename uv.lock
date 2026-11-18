@@ -3995,8 +3995,8 @@ requires-dist = [
     { name = "pyarrow", marker = "extra == 'standalone'", specifier = ">=14" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
-    { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.9" },
-    { name = "python-multipart", marker = "extra == 'standalone'", specifier = ">=0.0.9" },
+    { name = "python-multipart", marker = "extra == 'serve'", specifier = ">=0.0.13" },
+    { name = "python-multipart", marker = "extra == 'standalone'", specifier = ">=0.0.13" },
     { name = "ray", extras = ["serve"], marker = "extra == 'serve'", specifier = ">=2.58.0" },
     { name = "scikit-learn", marker = "extra == 'client'", specifier = ">=1.6" },
     { name = "tabctx", extras = ["client"], marker = "extra == 'mcp'" },
@@ -4021,7 +4021,7 @@ dev = [
     { name = "pytest", specifier = ">=7.0" },
     { name = "pytest-cov" },
     { name = "pytest-xdist" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "python-multipart", specifier = ">=0.0.13" },
     { name = "ruff" },
 ]
 docs = [
@@ -4029,7 +4029,7 @@ docs = [
     { name = "mkdocs-material", specifier = ">=9.6" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.29" },
     { name = "pyarrow", specifier = ">=14" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "python-multipart", specifier = ">=0.0.13" },
     { name = "uvicorn" },
 ]
 survivalpfn = [
