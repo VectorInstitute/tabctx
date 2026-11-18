@@ -1,7 +1,8 @@
 """Copy finished runs into showcase/, the runs anyone can replay in the
 hosted demo: the transcript (without the session details an agent CLI
 logs at start, with local paths made relative and the login name masked), the report, and the
-score against the real outcomes (so the predictions file isn't needed).
+score against the real outcomes (so the predictions file isn't needed),
+and, for a task with a cleaning step, the page's view of what it cleaned.
 
     uv run --extra mcp python examples/agent_demo/make_showcase.py claude codex pi
 
@@ -19,6 +20,9 @@ from pathlib import Path
 
 import scenario as scenarios
 from score import score
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "ui"))
+from cleaning import SAVED, for_run  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 # Events that record the machine, not the run (the session's tools, cwd,
@@ -67,6 +71,9 @@ def main(agents: list[str]) -> None:
         (out / "score.json").write_text(
             json.dumps(score(run_dir, scenario), indent=2) + "\n"
         )
+        view = for_run(run_dir, scenario)
+        if view:  # the page's messy -> tidy view, without the raw files
+            (out / SAVED).write_text(json.dumps(view, indent=1) + "\n")
         print(agent, len(kept), "events ->", out)
 
 

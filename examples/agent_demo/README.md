@@ -2,9 +2,9 @@
 
 Two scenarios, each a question about a table, in [`scenarios/`](scenarios/):
 
-- **readmission** (the default, and the hosted demo): which hospital
+- **readmission** (the default): which hospital
   patients will be back within 30 days? Public data, below.
-- **insurance**: which policyholders will cancel at renewal, and what
+- **insurance** (the hosted demo): which policyholders will cancel at renewal, and what
   might keep them? The agent first cleans two messy raw exports with a
   script it writes, then does the same steps. Synthetic data, see
   [Insurance scenario](#insurance-scenario).
@@ -77,6 +77,11 @@ steps gives each agent its shell: Claude Code's Bash runs in its
 sandbox, Codex in its own, and Gemini CLI and pi without one (see the
 tools by agent, below).
 
+The data comes from a fixed seed, so runs are repeatable. The generator
+is public, so with that seed an agent with a shell could rebuild the
+withheld outcomes: the hosted image draws a seed at build time
+(`DEMO_SEED`) and keeps it nowhere.
+
 ```bash
 export DEMO_SCENARIO=insurance
 uv run --extra mcp python examples/agent_demo/prepare_data.py
@@ -97,20 +102,33 @@ uv run --extra mcp --with fastapi --with uvicorn python examples/agent_demo/ui/a
 # open http://127.0.0.1:8765
 ```
 
-Pick an agent, edit the task if you like, and click **Run agent**. Each
-tabctx call appears as a card as soon as the agent makes it:
+The page is built for whoever asked the question, not for whoever runs
+the agent. It shows the question in plain English with its two files
+(`LABELS["question"]` in the scenario's `task.py`). **Ask** starts the
+agent; **watch a recorded run** plays a finished one back without
+running anything. The answer comes back as a short brief: one section
+per step of the task, each a plain question, a one-sentence answer
+written from the run's own numbers, and one visual, in the scenario's
+own column names (`LABELS["column_names"]`):
 
-- **Inspect:** a map of the table's columns.
-- **Evaluate:** both models against gradient boosting on held-out rows.
-- **Predict:** the predicted split, and a risk table.
-- **Explain:** which columns matter.
-- **What-if:** the probability with and without a change, for one patient.
+- **Is the data usable?** (a task with a "clean" step): five of the
+  messiest raw rows, underlined like misspellings, then shown as the
+  agent cleaned them, and the spellings merged into one value. The page
+  sets the raw file beside the clean one (`ui/cleaning.py`, using the
+  task's `RAW_COLUMNS` and `CLEAN_HISTORY`).
+- **Can it be predicted?** The tabular model against gradient boosting,
+  as "N times in 100".
+- **Who is most at risk?** The expected count, and the top ten.
+- **What drives it?** What the predictions lean on.
+- **What could change it?** Each what-if as a move from today's risk.
+- **The memo,** its summary up front, and **was it right?**: its top ten
+  against the real outcomes.
 
-When the agent finishes, the page shows its score against the real
-outcomes and its report. **Replay last run** plays a finished run back
-without running anything. Hover over any mark for its numbers. The page
-has light and dark themes, and listens on 127.0.0.1 only, since it
-starts agents on this machine.
+**Show the work** (top right) opens every command and tabctx call beside
+the answer, with the agent's full instructions (editable locally). The
+agent and, when hosted, the gateway key are under the agent button.
+Hover over any mark for its numbers. The page has light and dark themes,
+and listens on 127.0.0.1 only, since it starts agents on this machine.
 
 The UI reads the same `runs/<scenario>/<agent>/transcript.jsonl` files that
 `run.sh` writes. `ui/transcripts.py` turns each agent's format into one
@@ -124,8 +142,11 @@ The image holds the page, Claude Code, Codex and pi, and `tabctx-mcp`, and
 nothing secret.
 
 - **Anyone with the link** can replay the showcase runs in
-  [`showcase/readmission/`](showcase/readmission/). These are three real runs, copied by
-  `make_showcase.py` with session details and local paths removed.
+  [`showcase/insurance/`](showcase/insurance/) (Claude Code's run). Showcase runs are
+  real runs, copied by
+  `make_showcase.py` with session details and local paths removed. For a
+  task with a cleaning step it also saves the page's view of what was
+  cleaned (`cleaning.json`), since the raw and clean files aren't copied.
 - **To run an agent**, a visitor signs in with their own gateway key. The
   app checks the key's project models (`/admin/me/models`) and gives each
   agent the best model that project can use. Agents the project can't run
@@ -164,7 +185,10 @@ When the task has a "clean" step, the agent must run code:
 
 - **Claude Code** also gets Bash, only inside its sandbox
   (`allowUnsandboxedCommands: false`). It can't write outside its run
-  folder or read `answers/`.
+  folder or read `answers/`. The hosted demo can't run that sandbox
+  (bubblewrap needs privileges a container lacks), so there
+  `CLAUDE_SANDBOX=off` gives it Bash as the run's own Unix user, which
+  can't read `answers/` or other runs, as Codex does.
 - **Gemini CLI** and **pi** get their shells with no sandbox, as you, so
   they could read `answers/`. Treat their scores on such a task as
   unchecked, or run them as another user.

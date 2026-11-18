@@ -144,7 +144,7 @@ def fake_agents(tmp_path):
     return bin_dir, server
 
 
-def _run(name, agent, tmp_path, fake_agents):
+def _run(name, agent, tmp_path, fake_agents, **extra):
     bin_dir, server = fake_agents
     task = scenarios.load(name).task
     workspace = tmp_path / "workspace"
@@ -159,6 +159,7 @@ def _run(name, agent, tmp_path, fake_agents):
         RUN_DIR=str(run_dir),
         TABCTX_MCP_BIN=str(server),
         TABCTX_API_KEY="vp_test",
+        **extra,
     )
     subprocess.run(
         [str(DEMO / "run.sh"), agent], env=env, check=True, capture_output=True
@@ -190,6 +191,29 @@ def test_claude_gets_bash_only_inside_its_sandbox(tmp_path, fake_agents):
     run_dir = _run("readmission", "claude", tmp_path, fake_agents)
     args = (run_dir / "args.txt").read_text().splitlines()
     assert "Bash" not in _arg(args, "--tools") and "--settings" not in args
+
+
+def test_hosted_claude_runs_bash_as_its_run_user_without_the_sandbox(
+    tmp_path, fake_agents
+):
+    run_dir = _run("insurance", "claude", tmp_path, fake_agents, CLAUDE_SANDBOX="off")
+    args = (run_dir / "args.txt").read_text().splitlines()
+    allowed = args[args.index("--allowedTools") + 1 : args.index("--output-format")]
+    assert "Bash" in allowed
+    settings = json.loads(_arg(args, "--settings"))
+    assert "sandbox" not in settings
+    assert settings["permissions"]["deny"] == [f"Read(/{INSURANCE.answers}/**)"]
+
+
+def test_the_page_says_when_a_hosted_agent_has_no_sandbox(
+    monkeypatch, tmp_path, fresh_app
+):
+    monkeypatch.setenv("DEMO_SCENARIO", "insurance")
+    monkeypatch.setenv("DEMO_RUNS", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_SANDBOX", "off")
+    monkeypatch.setenv("CODEX_SANDBOX", "danger-full-access")
+    agents = fresh_app().AGENTS
+    assert agents["claude"]["tools"] == agents["codex"]["tools"] == "MCP · shell"
 
 
 def test_gemini_keeps_its_shell_only_when_the_task_runs_code(tmp_path, fake_agents):
@@ -285,6 +309,7 @@ def test_the_page_reads_a_raw_export_through_the_scenario(
     monkeypatch.setenv("DEMO_WORKSPACE", str(tmp_path))
     monkeypatch.setenv("DEMO_RUNS", str(tmp_path / "runs"))
     monkeypatch.delenv("DEMO_HOSTED", raising=False)
+    monkeypatch.delenv("CLAUDE_SANDBOX", raising=False)
     app = fresh_app()
     data = app.dataset()
     assert data["history_rows"] == len(history)
@@ -416,3 +441,22 @@ def test_main_writes_the_workspace_and_keeps_the_answers_apart(tmp_path, monkeyp
     assert len(answers) == 80
     history = pd.read_csv(scenario.workspace / insurance.HISTORY)
     assert 0.05 < scenario.positive_rate(history) < 0.3
+
+
+def test_a_build_seed_changes_the_withheld_outcomes(tmp_path, monkeypatch):
+    """The hosted image draws DEMO_SEED and keeps it nowhere: the generator
+    is public, so the fixed seed would let an agent rebuild the answers."""
+    monkeypatch.delenv("DEMO_WORKSPACE", raising=False)
+
+    def answers(seed: str | None) -> pd.DataFrame:
+        if seed is None:
+            monkeypatch.delenv("DEMO_SEED", raising=False)
+        else:
+            monkeypatch.setenv("DEMO_SEED", seed)
+        scenario = replace(INSURANCE, root=tmp_path / (seed or "fixed"))
+        insurance_data.main(scenario, history_rows=200, current_rows=50)
+        return pd.read_csv(scenario.answers / insurance.ANSWERS)
+
+    fixed = answers(None)
+    assert fixed.equals(answers(str(insurance_data.SEED)))
+    assert not fixed[insurance.ID].equals(answers("18446744073709551557")[insurance.ID])

@@ -32,19 +32,30 @@ SHOWCASE = SCENARIO.showcase
 # What run.sh gives an agent besides the tabctx tools: a shell only when
 # the scenario's task has it run code.
 _SHELL = SCENARIO.needs_shell
+# The hosted demo runs Claude Code's shell as the run's own user, without
+# its sandbox (run.sh, CLAUDE_SANDBOX=off).
+_CLAUDE_SHELL = (
+    "MCP · shell"
+    if os.environ.get("CLAUDE_SANDBOX") == "off"
+    else "MCP · sandboxed shell"
+)
 
 AGENTS = {
     "claude": {
         "label": "Claude Code",
         "binary": "claude",
         "llm": "Claude (your login)",
-        "tools": "MCP · sandboxed shell" if _SHELL else "MCP · no shell",
+        "tools": _CLAUDE_SHELL if _SHELL else "MCP · no shell",
     },
     "codex": {
         "label": "Codex",
         "binary": "codex",
         "llm": "gpt-5 via Vector gateway",
-        "tools": "MCP · sandboxed shell",
+        "tools": (
+            "MCP · shell"
+            if os.environ.get("CODEX_SANDBOX") == "danger-full-access"
+            else "MCP · sandboxed shell"
+        ),
     },
     "gemini": {
         "label": "Gemini CLI",
@@ -205,6 +216,10 @@ class Runner:
             del run.log[:-50]
         run.process.wait()
         timer.cancel()
+        if run.uid is not None:
+            # Back to root: the next run given this uid (another visitor's)
+            # can't read this one's folder.
+            _own(run.dir.parent, 0)
 
     def _stop(self, run: Run, reason: str) -> None:
         if run.running and run.process:
@@ -218,7 +233,7 @@ class Runner:
 
 def _own(folder: Path, uid: int) -> None:
     """Give folder and everything in it to uid, readable by it alone (the
-    server, as root, still reads it)."""
+    server, as root, still reads it). uid 0 takes it back once a run ends."""
     for root, dirs, files in os.walk(folder):
         for name in (*dirs, *files):
             os.lchown(os.path.join(root, name), uid, uid)

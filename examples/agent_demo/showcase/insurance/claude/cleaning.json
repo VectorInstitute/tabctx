@@ -1,0 +1,296 @@
+{
+ "file": "renewals_2025_export.csv",
+ "rows_before": 6127,
+ "rows_after": 6000,
+ "removed": [
+  {
+   "n": 120,
+   "what": "duplicate rows"
+  },
+  {
+   "n": 7,
+   "what": "rows that aren't records (tests, totals)"
+  }
+ ],
+ "columns": [
+  {
+   "raw": "Prov",
+   "clean": "province",
+   "kind": "category",
+   "before": 33,
+   "after": 9,
+   "example": {
+    "value": "ON",
+    "spellings": [
+     "Ontario",
+     "ON",
+     " on",
+     "ont",
+     "ONT."
+    ]
+   }
+  },
+  {
+   "raw": "Product Type",
+   "clean": "product_type",
+   "kind": "category",
+   "before": 14,
+   "after": 4,
+   "example": {
+    "value": "Health & Dental",
+    "spellings": [
+     "H&D",
+     "Health & Dental",
+     "Health and dental",
+     "HEALTH/DENTAL"
+    ]
+   }
+  },
+  {
+   "raw": "Annual Premium",
+   "clean": "annual_premium",
+   "kind": "numeric",
+   "before": 3899,
+   "after": 0
+  },
+  {
+   "raw": "Pay Method",
+   "clean": "pay_method",
+   "kind": "category",
+   "before": 12,
+   "after": 3,
+   "example": {
+    "value": "Cheque/invoice",
+    "spellings": [
+     "cheque/invoice",
+     "Cheque",
+     "Check",
+     "INVOICE"
+    ]
+   }
+  },
+  {
+   "raw": "Advisor?",
+   "clean": "has_advisor",
+   "kind": "category",
+   "before": 10,
+   "after": 2,
+   "example": {
+    "value": "No",
+    "spellings": [
+     "No",
+     "FALSE",
+     "N",
+     "no",
+     "0"
+    ]
+   }
+  },
+  {
+   "raw": "Age",
+   "clean": "age",
+   "kind": "numeric",
+   "before": 0,
+   "after": 36
+  },
+  {
+   "raw": "Status at Renewal",
+   "clean": "cancelled",
+   "kind": "category",
+   "before": 6,
+   "after": 2,
+   "example": {
+    "value": "No",
+    "spellings": [
+     "Renewed",
+     "RENEWED",
+     "Active"
+    ]
+   }
+  }
+ ],
+ "sample": {
+  "columns": [
+   [
+    "Prov",
+    "province"
+   ],
+   [
+    "Product Type",
+    "product_type"
+   ],
+   [
+    "Annual Premium",
+    "annual_premium"
+   ],
+   [
+    "Pay Method",
+    "pay_method"
+   ],
+   [
+    "Advisor?",
+    "has_advisor"
+   ],
+   [
+    "Age",
+    "age"
+   ],
+   [
+    "Status at Renewal",
+    "cancelled"
+   ]
+  ],
+  "rows": [
+   [
+    [
+     "ab",
+     "AB"
+    ],
+    [
+     "Term-Life",
+     "Term Life"
+    ],
+    [
+     "CAD 710",
+     "710"
+    ],
+    [
+     "PAD",
+     "Pre-authorized debit"
+    ],
+    [
+     "Y",
+     "Yes"
+    ],
+    [
+     "N/A",
+     ""
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "Ontario",
+     "ON"
+    ],
+    [
+     "term life 20",
+     "Term Life"
+    ],
+    [
+     "$549.82",
+     "549.82"
+    ],
+    [
+     "PAD",
+     "Pre-authorized debit"
+    ],
+    [
+     "N",
+     "No"
+    ],
+    [
+     "-1",
+     ""
+    ],
+    [
+     "RENEWED",
+     "No"
+    ]
+   ],
+   [
+    [
+     "ont",
+     "ON"
+    ],
+    [
+     "HEALTH/DENTAL",
+     "Health & Dental"
+    ],
+    [
+     "$2,798.18",
+     "2798.18"
+    ],
+    [
+     "PAD",
+     "Pre-authorized debit"
+    ],
+    [
+     "FALSE",
+     "No"
+    ],
+    [
+     "n/a",
+     ""
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "Saskatchewan",
+     "SK"
+    ],
+    [
+     "crit. illness",
+     "Critical Illness"
+    ],
+    [
+     "$1,354.18",
+     "1354.18"
+    ],
+    [
+     "credit",
+     "Credit card"
+    ],
+    [
+     "TRUE",
+     "Yes"
+    ],
+    [
+     "0",
+     ""
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "ont",
+     "ON"
+    ],
+    [
+     "H&D",
+     "Health & Dental"
+    ],
+    [
+     "$2,107.27",
+     "2107.27"
+    ],
+    [
+     "Auto debit",
+     "Pre-authorized debit"
+    ],
+    [
+     "N",
+     "No"
+    ],
+    [
+     "n/a",
+     ""
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ]
+  ]
+ }
+}
