@@ -17,6 +17,13 @@ PROBA = f"p_{TARGET}={POSITIVE}"  # the column predict writes
 # For the page: what a row is, what the positive outcome is called, and
 # PROMPT.md's steps as icons (a tool's icon, or "report").
 LABELS = {
+    "org": "Hospital readmissions",
+    "question": (
+        "Which of the patients we're discharging now are most likely to be "
+        "back within 30 days, why, and what could lower that? Write it up for "
+        "the care team."
+    ),
+    "audience": "the care team",
     "entity": "patients",
     "outcome": "readmitted",
     "window": "within 30 days",
@@ -29,4 +36,26 @@ LABELS = {
         ["what_if", "What-if", "Test care changes on the highest-risk patients"],
         ["report", "Report", "Write report.md"],
     ],
+    # Column names as a care team says them.
+    "column_names": {
+        "patient_id": ["Patient"],
+        "time_in_hospital": ["Days in hospital"],
+        "num_lab_procedures": ["Lab tests"],
+        "num_procedures": ["Procedures"],
+        "num_medications": ["Medications"],
+        "number_outpatient": ["Outpatient visits (past year)"],
+        "number_emergency": ["Emergency visits (past year)"],
+        "number_inpatient": ["Hospital stays (past year)"],
+        "number_diagnoses": ["Diagnoses"],
+        "discharge_disposition": ["Discharged to"],
+        "admission_type": ["Admission type"],
+        "admission_source": ["Admitted from"],
+        "medical_specialty": ["Specialty"],
+        "diag_1": ["Main diagnosis"],
+        "A1Cresult": ["A1C result"],
+        "max_glu_serum": ["Glucose test"],
+        "diabetesMed": ["On diabetes medication"],
+        "change": ["Medication changed"],
+        "readmitted_30d": ["Back within 30 days?"],
+    },
 }

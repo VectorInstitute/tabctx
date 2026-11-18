@@ -38,6 +38,7 @@ sys.path[:0] = [
     str(Path(__file__).resolve().parent),
     str(Path(__file__).resolve().parents[1]),
 ]
+from cleaning import for_run as cleaning_of  # noqa: E402
 from gateway import (  # noqa: E402
     TABULAR,
     RefusedKey,
@@ -207,6 +208,7 @@ def dataset() -> dict | None:
     return {
         **task.LABELS,
         "history_file": task.HISTORY,
+        "current_file": task.CURRENT,
         "history_rows": len(history),
         "current_rows": len(current),
         "features": len(current.columns) - 1,  # without the id
@@ -315,12 +317,9 @@ def start(body: StartRun, request: Request) -> dict:
     return {"agent": run.agent, "started": run.started}
 
 
-@app.get("/api/runs/{agent}/events")
-async def events(
-    agent: str, request: Request, source: str = "auto"
-) -> StreamingResponse:
-    """A run's events: the viewer's own run of agent, or (source=showcase,
-    or when they have none) the showcase run."""
+def _run_for(agent: str, request: Request, source: str) -> Run:
+    """The viewer's own run of agent, or (source=showcase, or when they
+    have none) the showcase run."""
     if agent not in AGENTS:
         raise HTTPException(404, f"unknown agent {agent!r}")
     mine = my_runs(viewer(request))
@@ -329,7 +328,24 @@ async def events(
         run = Run(agent, SHOWCASE / agent) if HOSTED else None
     if not run or not run.exists:
         raise HTTPException(404, f"no run of {agent} yet")
+    return run
+
+
+@app.get("/api/runs/{agent}/events")
+async def events(
+    agent: str, request: Request, source: str = "auto"
+) -> StreamingResponse:
+    run = _run_for(agent, request, source)
     return StreamingResponse(_stream(run), media_type="text/event-stream")
+
+
+@app.get("/api/runs/{agent}/cleaning")
+def cleaning(agent: str, request: Request, source: str = "auto") -> dict:
+    """The run's raw export beside the clean table its agent wrote."""
+    view = cleaning_of(_run_for(agent, request, source).dir, SCENARIO)
+    if view is None:
+        raise HTTPException(404, "no cleaned table in this run")
+    return view
 
 
 async def _stream(run: Run):

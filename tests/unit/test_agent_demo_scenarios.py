@@ -144,7 +144,7 @@ def fake_agents(tmp_path):
     return bin_dir, server
 
 
-def _run(name, agent, tmp_path, fake_agents):
+def _run(name, agent, tmp_path, fake_agents, **extra):
     bin_dir, server = fake_agents
     task = scenarios.load(name).task
     workspace = tmp_path / "workspace"
@@ -159,6 +159,7 @@ def _run(name, agent, tmp_path, fake_agents):
         RUN_DIR=str(run_dir),
         TABCTX_MCP_BIN=str(server),
         TABCTX_API_KEY="vp_test",
+        **extra,
     )
     subprocess.run(
         [str(DEMO / "run.sh"), agent], env=env, check=True, capture_output=True
@@ -190,6 +191,18 @@ def test_claude_gets_bash_only_inside_its_sandbox(tmp_path, fake_agents):
     run_dir = _run("readmission", "claude", tmp_path, fake_agents)
     args = (run_dir / "args.txt").read_text().splitlines()
     assert "Bash" not in _arg(args, "--tools") and "--settings" not in args
+
+
+def test_hosted_claude_runs_bash_as_its_run_user_without_the_sandbox(
+    tmp_path, fake_agents
+):
+    run_dir = _run("insurance", "claude", tmp_path, fake_agents, CLAUDE_SANDBOX="off")
+    args = (run_dir / "args.txt").read_text().splitlines()
+    allowed = args[args.index("--allowedTools") + 1 : args.index("--output-format")]
+    assert "Bash" in allowed
+    settings = json.loads(_arg(args, "--settings"))
+    assert "sandbox" not in settings
+    assert settings["permissions"]["deny"] == [f"Read(/{INSURANCE.answers}/**)"]
 
 
 def test_gemini_keeps_its_shell_only_when_the_task_runs_code(tmp_path, fake_agents):

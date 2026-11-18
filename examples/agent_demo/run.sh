@@ -27,7 +27,7 @@
 # The hosted demo (ui/, Dockerfile) sets: TABCTX_MCP_BIN (the tabctx-mcp
 # command), RUN_DIR (this run's folder),
 # ISOLATE_HOME=1 (the agent gets HOME inside RUN_DIR, so no state is shared
-# between visitors) and CODEX_SANDBOX.
+# between visitors), CODEX_SANDBOX and CLAUDE_SANDBOX=off.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -86,6 +86,13 @@ claude)
     # (which would also allow an unsandboxed retry).
     tools+=,Bash
     settings=(--settings "$(printf '{"sandbox": {"enabled": true, "autoAllowBashIfSandboxed": true, "allowUnsandboxedCommands": false}, "permissions": {"deny": ["Read(/%s/**)"]}}' "$SCENARIO_ANSWERS")")
+    if [[ ${CLAUDE_SANDBOX:-on} == off ]]; then
+      # The hosted demo: its sandbox (bubblewrap) can't run in a container,
+      # so Bash runs as this run's own Unix user instead, which can't read
+      # the answers or other runs (as Codex does there).
+      allowed+=,Bash
+      settings=(--settings "$(printf '{"permissions": {"deny": ["Read(/%s/**)"]}}' "$SCENARIO_ANSWERS")")
+    fi
   fi
   # ${a[@]+...}: an empty array is "unbound" to macOS's bash 3.2 under set -u.
   claude -p "$PROMPT" ${model[@]+"${model[@]}"} ${settings[@]+"${settings[@]}"} --mcp-config "$config" --strict-mcp-config \

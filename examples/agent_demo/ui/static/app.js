@@ -1,6 +1,7 @@
 // tabctx agent demo: one page, no framework. The server streams each
-// agent's transcript as normalized events (../transcripts.py); each tabctx
-// tool gets a card built around one visual, with details on hover.
+// agent's transcript as normalized events (../transcripts.py). Two views of
+// the same events: the answer a business reader follows (answer.js), and,
+// with "Show the work", every command and tabctx call as a card here.
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (v) =>
@@ -113,17 +114,19 @@ function initTooltips() {
 async function init() {
   initTheme();
   initTooltips();
+  initPanels();
   const setup = await loadSetup();
-  renderDataset(setup.dataset);
-  renderTask(setup.dataset);
+  renderComposer(setup.dataset);
   $("#prompt").value = setup.prompt;
   $("#prompt").readOnly = !setup.prompt_editable;
   $("#reset-prompt").hidden = !setup.prompt_editable;
   state.agent = setup.running || setup.runs.at(-1)?.agent || setup.agents.find((a) => a.available)?.id;
   renderAgents();
   $("#reset-prompt").onclick = () => ($("#prompt").value = setup.prompt);
-  $("#run").onclick = start;
+  $("#run").onclick = () => (state.setup.hosted && !state.setup.signed_in ? openSettings(true) : start());
   $("#replay").onclick = () => watch(state.agent, true);
+  $("#again-replay").onclick = () => watch(state.agent, true);
+  $("#again-new").onclick = newQuestion;
   $("#login").onsubmit = signIn;
   $("#logout").onclick = signOut;
   if (setup.running) watch(setup.running, false);
@@ -186,37 +189,54 @@ function renderGateway(setup) {
       : "No TABCTX_API_KEY: runs will fail";
 }
 
-function renderDataset(d) {
+// The question as it would be asked, with the two files it is about.
+function renderComposer(d) {
   if (!d) {
-    $("#dataset").innerHTML = `<p class="muted">Run <code>prepare_data.py</code> first.</p>`;
+    $("#question").innerHTML = `<span class="muted">Run <code>prepare_data.py</code> first.</span>`;
     return;
   }
-  const yes = d.positive_rate;
-  const classes = [d.negative, d.positive];
-  $("#dataset").innerHTML = `
-    <div class="ds">
-      <div class="v">${fmt(d.history_rows)}</div><div class="k">${esc(d.history)}</div>
-      <div class="split">${segBar([[d.negative, 1 - yes], [d.positive, yes]], classes, 8)}</div>
-      <div class="f" ${tipAttr(`${esc(d.history_file)}: ${pct(yes, 1)} ${esc(d.outcome)} ${esc(d.window)}`)}>${pct(yes, 1)} ${esc(d.outcome)}</div>
-    </div>
-    <div class="ds">
-      <div class="v">${fmt(d.current_rows)}</div><div class="k">${esc(d.current)}</div>
-      <div class="locked" data-tip="Kept from the agent; used only for scoring">${svg('<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', 12)} outcome hidden</div>
-      <div class="f" ${tipAttr(esc(d.columns.join(", ")))}>${d.features} columns</div>
-    </div>`;
+  $("#org").textContent = d.org || "";
+  const file = (name, rows, what, note) =>
+    `<div class="file" ${tipAttr(esc(name))}><span class="glyph" aria-hidden="true"></span><span class="file-name">${esc(what)}</span><span class="file-meta">${fmt(rows)} rows${note ? ` · ${note}` : ""}</span></div>`;
+  $("#attachments").innerHTML = file(d.history_file, d.history_rows, cap(d.history)) + file(d.current_file, d.current_rows, cap(d.current), "outcome hidden");
+  $("#you-files").textContent = `From ${d.history} (${fmt(d.history_rows)} rows) and ${d.current} (${fmt(d.current_rows)} rows, outcome hidden)`;
+  $("#question").textContent = d.question || "";
+  $("#you-text").textContent = d.question || "";
 }
+const cap = (t) => String(t || "").replace(/^\w/, (c) => c.toUpperCase());
 
-// The task (PROMPT.md's steps, from task.py) as icons; the prompt is folded away.
-const REPORT_ICON = '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>';
-function renderTask(d) {
-  const steps = d?.steps || [];
-  $("#task-flow").innerHTML = steps
-    .map(
-      ([tool, label, tip]) =>
-        `<div class="task-step" ${tipAttr(esc(tip))}><span class="tool-icon">${svg(ICONS[tool] || REPORT_ICON)}</span>${esc(label)}</div>`,
-    )
-    .join("");
-  $("#prompt-box").open = Boolean(state.setup.prompt_editable);
+// The settings popover and the "Show the work" switch.
+function initPanels() {
+  $("#settings-btn").onclick = (e) => {
+    e.stopPropagation();
+    openSettings($("#settings").hidden);
+  };
+  document.addEventListener("click", (e) => {
+    if (!$("#settings").hidden && !e.target.closest("#settings")) openSettings(false);
+  });
+  document.addEventListener("keydown", (e) => e.key === "Escape" && openSettings(false));
+  let work = false;
+  try {
+    work = localStorage.getItem("work") === "1";
+  } catch {}
+  const toggle = $("#work-toggle");
+  toggle.checked = work;
+  document.body.classList.toggle("show-work", work);
+  toggle.onchange = () => {
+    document.body.classList.toggle("show-work", toggle.checked);
+    try {
+      localStorage.setItem("work", toggle.checked ? "1" : "0");
+    } catch {}
+  };
+}
+function openSettings(open) {
+  $("#settings").hidden = !open;
+  $("#settings-btn").setAttribute("aria-expanded", String(open));
+}
+function newQuestion() {
+  state.source?.close();
+  $("#thread").hidden = true;
+  $("#empty").hidden = false;
 }
 
 function renderAgents() {
@@ -248,8 +268,9 @@ function renderAgents() {
   $("#replay").disabled = !(state.agent in scores) || isBusy();
   const agent = state.setup.agents.find((a) => a.id === state.agent);
   const signedOut = hosted && !state.setup.signed_in;
-  $("#run").disabled = isBusy() || signedOut || !agent?.allowed;
-  $("#run-label").textContent = signedOut ? "Sign in to run" : "Run agent";
+  $("#run").disabled = isBusy() || (!signedOut && !agent?.allowed);
+  $("#run-label").textContent = signedOut ? "Sign in to ask" : "Ask";
+  $("#agent-name").textContent = agent ? agent.label : "Agent";
 }
 
 function selectAgent(id) {
@@ -288,7 +309,10 @@ function watch(agent, replay) {
   Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null });
   const info = state.setup.agents.find((a) => a.id === agent);
   $("#empty").hidden = true;
-  $("#run-view").hidden = false;
+  $("#thread").hidden = false;
+  $("#again").hidden = true;
+  openSettings(false);
+  Answer.reset(state.setup, agent, replay);
   $("#timeline").innerHTML = "";
   $("#outcome").hidden = true;
   $("#report-card").open = false;
@@ -340,6 +364,7 @@ function inlineMd(text) {
 }
 
 function handle(ev, info) {
+  Answer.event(ev);
   const tl = $("#timeline");
   if (ev.type === "message") {
     const el = document.createElement("div");
@@ -406,6 +431,8 @@ function finish(outcome, info) {
     );
   }
   renderOutcome(outcome);
+  Answer.outcome(outcome, state.stats);
+  $("#again").hidden = false;
   refreshRuns(); // re-enables Run as the viewer's access allows
 }
 

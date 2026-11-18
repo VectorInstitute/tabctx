@@ -32,13 +32,20 @@ SHOWCASE = SCENARIO.showcase
 # What run.sh gives an agent besides the tabctx tools: a shell only when
 # the scenario's task has it run code.
 _SHELL = SCENARIO.needs_shell
+# The hosted demo runs Claude Code's shell as the run's own user, without
+# its sandbox (run.sh, CLAUDE_SANDBOX=off).
+_CLAUDE_SHELL = (
+    "MCP · shell"
+    if os.environ.get("CLAUDE_SANDBOX") == "off"
+    else "MCP · sandboxed shell"
+)
 
 AGENTS = {
     "claude": {
         "label": "Claude Code",
         "binary": "claude",
         "llm": "Claude (your login)",
-        "tools": "MCP · sandboxed shell" if _SHELL else "MCP · no shell",
+        "tools": _CLAUDE_SHELL if _SHELL else "MCP · no shell",
     },
     "codex": {
         "label": "Codex",

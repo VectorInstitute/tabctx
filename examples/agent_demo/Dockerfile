@@ -37,10 +37,11 @@ RUN pip install --no-cache-dir ".[mcp]" "fastapi>=0.115" "uvicorn>=0.30"
 COPY examples/agent_demo ./examples/agent_demo
 # The scenario the image serves (scenarios/<name>/), and its data,
 # prepared at build time. The answers stay in the image for scoring; agents
-# only ever get the workspace copy. A scenario with a "clean" step gives
-# Claude Code a sandboxed shell, which on Linux needs bubblewrap and socat
-# (not installed here): the hosted demo serves readmission.
-ARG DEMO_SCENARIO=readmission
+# only ever get the workspace copy. The insurance scenario has the agent
+# clean raw exports with a script, so each agent gets a shell; Claude Code's
+# sandbox (bubblewrap) can't run in a container, so, like Codex, it runs
+# in the per-run user below (CLAUDE_SANDBOX=off).
+ARG DEMO_SCENARIO=insurance
 ENV DEMO_SCENARIO=$DEMO_SCENARIO
 RUN python examples/agent_demo/prepare_data.py \
  && rm -rf examples/agent_demo/runs \
@@ -57,6 +58,7 @@ ENV DEMO_HOSTED=1 \
     DEMO_RUNS=/tmp/runs \
     DEMO_RUN_UIDS=20000-20063 \
     CODEX_SANDBOX=danger-full-access \
+    CLAUDE_SANDBOX=off \
     TABCTX_BASE_URL=https://proxy.vectorinstitute.ai \
     TABCTX_MCP_BIN=/usr/local/bin/tabctx-mcp \
     DISABLE_AUTOUPDATER=1 \
