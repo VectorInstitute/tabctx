@@ -324,6 +324,7 @@ function watch(agent, replay) {
   $("#again").hidden = true;
   openSettings(false);
   Answer.reset(state.setup, agent, replay);
+  Actions.reset(state.setup);
   $("#timeline").innerHTML = "";
   $("#outcome").hidden = true;
   $("#report-card").open = false;
@@ -409,12 +410,16 @@ function handle(ev, info) {
       el.className = "card pending";
       el.innerHTML = cardHead(ev.tool, describeCall(ev.tool, ev.args), '<span class="spinner"></span>');
     } else {
-      el.className = "minor";
-      el.innerHTML = minorCall(ev.tool, ev.args);
+      // The agent's own commands, as pictures of what they do (actions.js).
+      const action = Actions.add(tl, ev.tool, ev.args);
       if (hasClean() && CLEANING.test(JSON.stringify(ev.args || {}))) {
         state.used.add(CLEAN[0]);
         renderSteps();
       }
+      state.calls.set(ev.id, { action, tool: ev.tool, args: ev.args, t0: performance.now() });
+      updateMeta(info);
+      scrollDown();
+      return "slow";
     }
     tl.appendChild(el);
     state.calls.set(ev.id, { el, tool: ev.tool, args: ev.args, t0: performance.now() });
@@ -426,8 +431,8 @@ function handle(ev, info) {
     const call = state.calls.get(ev.id);
     if (!call) return;
     if (!ev.tabctx) {
-      if (ev.error) call.el.classList.add("err");
-      return;
+      Actions.result(call.action, call.tool, call.args, ev.text, ev.error);
+      return "slow";
     }
     const secs = state.replaying ? null : (performance.now() - call.t0) / 1000;
     const right = secs == null ? "" : `<span class="card-time">${fmt(secs, 1)} s</span>`;
@@ -523,16 +528,6 @@ function describeCall(tool, a = {}) {
     default:
       return "";
   }
-}
-
-function minorCall(tool, a = {}) {
-  const path = a.file_path || a.path || "";
-  const what = a.command
-    ? `<code>${esc(String(a.command).replace(/^\/bin\/\w+ -lc /, "").slice(0, 80))}</code>`
-    : path
-      ? `<code>${esc(base(path))}</code>`
-      : "";
-  return `${svg('<path d="M9 6l6 6-6 6"/>', 12)}<span>${esc(tool)}</span>${what}`;
 }
 
 // A horizontal bar on a lane with a baseline. value in [0, 1].
