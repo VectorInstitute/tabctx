@@ -169,7 +169,9 @@ def _examples(clean, joined, columns, clean_id, target) -> dict:
                 {
                     "value": value,
                     "n": int(n),
-                    "spellings": sorted(said[(read == value).fillna(False)].unique().tolist()),
+                    "spellings": sorted(
+                        said[(read == value).fillna(False)].unique().tolist()
+                    ),
                 }
                 for value, n in counts.items()
             ],
