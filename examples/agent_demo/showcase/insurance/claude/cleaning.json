@@ -22,80 +22,77 @@
    "example": {
     "value": "ON",
     "spellings": [
-     "Ontario",
-     "ON",
-     " on",
      "ont",
-     "ONT."
+     " on",
+     "ONT.",
+     "ON",
+     "Ontario"
     ]
    }
   },
   {
-   "raw": "Product Type",
-   "clean": "product_type",
+   "raw": "Industry",
+   "clean": "industry",
    "kind": "category",
-   "before": 14,
-   "after": 4,
+   "before": 21,
+   "after": 7,
    "example": {
-    "value": "Health & Dental",
+    "value": "Construction",
     "spellings": [
-     "H&D",
-     "Health & Dental",
-     "Health and dental",
-     "HEALTH/DENTAL"
+     "Construction",
+     "CONSTR",
+     "construction"
     ]
    }
+  },
+  {
+   "raw": "Plan Type",
+   "clean": "plan_type",
+   "kind": "category",
+   "before": 11,
+   "after": 3,
+   "example": {
+    "value": "Full Package",
+    "spellings": [
+     "H/D/L/LTD",
+     "Full benefits (incl. LTD)",
+     "Full Package",
+     "FULL"
+    ]
+   }
+  },
+  {
+   "raw": "Lives Covered",
+   "clean": "lives_covered",
+   "kind": "numeric",
+   "before": 0,
+   "after": 43
   },
   {
    "raw": "Annual Premium",
    "clean": "annual_premium",
    "kind": "numeric",
-   "before": 3899,
+   "before": 3916,
    "after": 0
   },
   {
-   "raw": "Pay Method",
-   "clean": "pay_method",
+   "raw": "Channel",
+   "clean": "channel",
    "kind": "category",
-   "before": 12,
+   "before": 9,
    "after": 3,
    "example": {
-    "value": "Cheque/invoice",
+    "value": "Broker",
     "spellings": [
-     "cheque/invoice",
-     "Cheque",
-     "Check",
-     "INVOICE"
+     "Broker",
+     "BRKR",
+     "broker"
     ]
    }
   },
   {
-   "raw": "Advisor?",
-   "clean": "has_advisor",
-   "kind": "category",
-   "before": 10,
-   "after": 2,
-   "example": {
-    "value": "No",
-    "spellings": [
-     "No",
-     "FALSE",
-     "N",
-     "no",
-     "0"
-    ]
-   }
-  },
-  {
-   "raw": "Age",
-   "clean": "age",
-   "kind": "numeric",
-   "before": 0,
-   "after": 36
-  },
-  {
-   "raw": "Status at Renewal",
-   "clean": "cancelled",
+   "raw": "Renewal Status",
+   "clean": "terminated",
    "kind": "category",
    "before": 6,
    "after": 2,
@@ -103,8 +100,8 @@
     "value": "No",
     "spellings": [
      "Renewed",
-     "RENEWED",
-     "Active"
+     "In force",
+     "RENEWED"
     ]
    }
   }
@@ -116,55 +113,55 @@
     "province"
    ],
    [
-    "Product Type",
-    "product_type"
+    "Industry",
+    "industry"
+   ],
+   [
+    "Plan Type",
+    "plan_type"
+   ],
+   [
+    "Lives Covered",
+    "lives_covered"
    ],
    [
     "Annual Premium",
     "annual_premium"
    ],
    [
-    "Pay Method",
-    "pay_method"
+    "Channel",
+    "channel"
    ],
    [
-    "Advisor?",
-    "has_advisor"
-   ],
-   [
-    "Age",
-    "age"
-   ],
-   [
-    "Status at Renewal",
-    "cancelled"
+    "Renewal Status",
+    "terminated"
    ]
   ],
   "rows": [
    [
     [
-     "ab",
-     "AB"
+     "bc",
+     "BC"
     ],
     [
-     "Term-Life",
-     "Term Life"
+     "PROFESSIONAL SVCS",
+     "Professional Services"
     ],
     [
-     "CAD 710",
-     "710"
+     "HDL",
+     "Health, Dental & Life"
     ],
     [
-     "PAD",
-     "Pre-authorized debit"
+     "128",
+     "128"
     ],
     [
-     "Y",
-     "Yes"
+     "$406,596.15",
+     "406596.15"
     ],
     [
-     "N/A",
-     ""
+     "DIRECT",
+     "Direct"
     ],
     [
      "Renewed",
@@ -173,58 +170,28 @@
    ],
    [
     [
-     "Ontario",
-     "ON"
+     "Alta",
+     "AB"
     ],
     [
-     "term life 20",
-     "Term Life"
+     "Prof. Services",
+     "Professional Services"
     ],
     [
-     "$549.82",
-     "549.82"
-    ],
-    [
-     "PAD",
-     "Pre-authorized debit"
-    ],
-    [
-     "N",
-     "No"
+     "Full Package",
+     "Full Package"
     ],
     [
      "-1",
      ""
     ],
     [
-     "RENEWED",
-     "No"
-    ]
-   ],
-   [
-    [
-     "ont",
-     "ON"
+     "$610,342.60",
+     "610342.6"
     ],
     [
-     "HEALTH/DENTAL",
-     "Health & Dental"
-    ],
-    [
-     "$2,798.18",
-     "2798.18"
-    ],
-    [
-     "PAD",
-     "Pre-authorized debit"
-    ],
-    [
-     "FALSE",
-     "No"
-    ],
-    [
-     "n/a",
-     ""
+     "BRKR",
+     "Broker"
     ],
     [
      "Renewed",
@@ -233,58 +200,88 @@
    ],
    [
     [
-     "Saskatchewan",
-     "SK"
+     "Qu\u00e9bec",
+     "QC"
     ],
     [
-     "crit. illness",
-     "Critical Illness"
-    ],
-    [
-     "$1,354.18",
-     "1354.18"
-    ],
-    [
-     "credit",
-     "Credit card"
-    ],
-    [
-     "TRUE",
-     "Yes"
-    ],
-    [
-     "0",
-     ""
-    ],
-    [
-     "Renewed",
-     "No"
-    ]
-   ],
-   [
-    [
-     "ont",
-     "ON"
+     "Public Sector/NFP",
+     "Non-Profit"
     ],
     [
      "H&D",
      "Health & Dental"
     ],
     [
-     "$2,107.27",
-     "2107.27"
+     "142",
+     "142"
     ],
     [
-     "Auto debit",
-     "Pre-authorized debit"
+     "$353,753.94",
+     "353753.94"
     ],
     [
-     "N",
+     "In-house",
+     "Direct"
+    ],
+    [
+     "Renewed",
      "No"
+    ]
+   ],
+   [
+    [
+     "Nfld",
+     "NL"
     ],
     [
-     "n/a",
-     ""
+     "Tech",
+     "Technology"
+    ],
+    [
+     "FULL",
+     "Full Package"
+    ],
+    [
+     "30",
+     "30"
+    ],
+    [
+     "$127,408.61",
+     "127408.61"
+    ],
+    [
+     "broker",
+     "Broker"
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "Quebec",
+     "QC"
+    ],
+    [
+     "Public Sector/NFP",
+     "Non-Profit"
+    ],
+    [
+     "Full benefits (incl. LTD)",
+     "Full Package"
+    ],
+    [
+     "11",
+     "11"
+    ],
+    [
+     "$50,594.57",
+     "50594.57"
+    ],
+    [
+     "broker",
+     "Broker"
     ],
     [
      "Renewed",
@@ -295,27 +292,27 @@
  },
  "examples": {
   "rows": 6000,
-  "features": 16,
+  "features": 17,
   "outcome": {
-   "raw": "Status at Renewal",
-   "clean": "cancelled",
+   "raw": "Renewal Status",
+   "clean": "terminated",
    "classes": [
     {
      "value": "No",
-     "n": 5006,
+     "n": 5236,
      "spellings": [
-      "Active",
+      "In force",
       "RENEWED",
       "Renewed"
      ]
     },
     {
      "value": "Yes",
-     "n": 994,
+     "n": 764,
      "spellings": [
-      "Cancelled",
-      "LAPSED",
-      "cxl"
+      "TERM",
+      "Terminated",
+      "moved carrier"
      ]
     }
    ]

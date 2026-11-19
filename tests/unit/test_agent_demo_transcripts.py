@@ -37,6 +37,25 @@ def test_tool_names(raw, expected):
     assert tool_name(raw) == expected
 
 
+def test_claude_skips_a_system_notice_whose_message_is_text():
+    events = parse_lines(
+        "claude",
+        lines(
+            {
+                "type": "system",
+                "subtype": "permission_denied",
+                "tool_name": "Bash",
+                "message": "Heredoc with unquoted delimiter undergoes shell expansion",
+            },
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "Ok."}]},
+            },
+        ),
+    )
+    assert [e["type"] for e in events] == ["message"]
+
+
 def test_claude():
     events = parse_lines(
         "claude",

@@ -1,29 +1,34 @@
-"""Build the insurance scenario's data: a synthetic book of policies at
-Maple Mutual, a fictional Canadian insurer, and whether each policyholder
-cancelled at renewal.
+"""Build the insurance scenario's data: a synthetic book of group benefits
+plans at Maple Mutual Group Benefits, a fictional Canadian insurer, and
+whether each employer left at its annual renewal.
 
     uv run --extra mcp python examples/agent_demo/prepare_data.py insurance
 
-The data is made up (no real customers) but follows patterns insurers
-report: a premium increase at renewal, missed payments and paying by
-cheque raise the chance of cancelling; years as a customer, more products
-and contact with an advisor lower it. An advisor's check-in also halves
-the effect of a premium increase, so the what-if step has a real lever to
-find. About one policyholder in six cancels.
+The data is made up (no real employers) but follows patterns group
+benefits carriers describe: a big renewal increase (which follows a bad
+claims year, a high loss ratio), service problems, late payments and
+small plans raise the chance an employer leaves; plans sold through a
+broker get shopped around more. Years with us, broader coverage, ASO
+funding, online plan administration, a wellness program and members who
+use the app lower it. An account review meeting also halves the effect
+of a renewal increase, so the what-if step has a real lever to find.
+About one plan in eight leaves.
 
-The agent gets the tables as a policy system exports them, with the mess
-real exports have: header names with spaces, dates and amounts in several
-formats, one province or product spelled five ways, yes/no as Y/1/TRUE,
-blanks written as N/A or "-", impossible ages, duplicated rows, internal
-test policies and a totals row. Writes, under examples/agent_demo/:
+The agent gets the tables as a plan administration system exports them,
+with the mess real exports have: header names with spaces, dates and
+amounts in several formats, one province or industry spelled five ways,
+yes/no as Y/1/TRUE, a loss ratio sometimes a percent and sometimes a
+fraction, blanks written as N/A or "-", impossible plan sizes,
+duplicated rows, internal test plans and a totals row. Writes, under
+examples/agent_demo/:
 
 - workspace/insurance/renewals_2025_export.csv  last year's renewals, with
-                                                "Status at Renewal"
+                                                "Renewal Status"
 - workspace/insurance/renewals_due_export.csv   renewals due now; the
                                                 outcome withheld
-- answers/insurance/current_outcomes.csv        who cancelled (for
-                                                score.py; outside the
-                                                agent's workspace)
+- answers/insurance/current_outcomes.csv        who left (for score.py;
+                                                outside the agent's
+                                                workspace)
 """
 
 from __future__ import annotations
@@ -56,25 +61,52 @@ PROVINCES = {  # code: (share, spellings in the export)
     "NB": (0.02, ["NB", "New Brunswick", "N.B."]),
     "NL": (0.01, ["NL", "Newfoundland", "Nfld"]),
 }
-PRODUCTS = {  # name: (share, export spellings, base premium, effect on cancelling)
-    "Term life": (0.38, ["Term Life", "TERM", "term life 20", "Term-Life"], 420, 0.30),
-    "Whole life": (0.20, ["Whole Life", "WHOLE", "whole life"], 2600, -0.70),
-    "Health and dental": (
-        0.27,
-        ["Health & Dental", "Health and dental", "H&D", "HEALTH/DENTAL"],
-        1900,
-        0.10,
-    ),
-    "Critical illness": (0.15, ["Critical Illness", "CI", "crit. illness"], 980, 0.0),
-}
-PAYMENT = {  # name: (share, export spellings, effect on cancelling)
-    "Pre-authorized debit": (
-        0.62,
-        ["PAD", "Pre-authorized debit", "pre-auth debit", "Auto debit"],
+INDUSTRIES = {  # name: (share, export spellings, effect on leaving)
+    "Professional services": (
+        0.22,
+        ["Professional Services", "Prof. Services", "PROFESSIONAL SVCS"],
         0.0,
     ),
-    "Credit card": (0.25, ["Credit Card", "CC", "credit", "VISA/MC"], 0.30),
-    "Cheque": (0.13, ["Cheque", "Check", "cheque/invoice", "INVOICE"], 0.75),
+    "Manufacturing": (0.16, ["Manufacturing", "MFG", "Mfg."], 0.0),
+    "Retail": (0.14, ["Retail", "RETAIL", "Retail Trade"], 0.25),
+    "Construction": (0.12, ["Construction", "CONSTR", "construction"], 0.20),
+    "Technology": (0.12, ["Technology", "Tech", "IT/Software"], 0.15),
+    "Health care": (0.10, ["Health Care", "Healthcare", "HEALTHCARE"], -0.10),
+    "Non-profit and public": (0.14, ["Non-Profit", "Public Sector/NFP", "NFP"], -0.35),
+}
+PLAN_TYPES = {  # name: (share, export spellings, premium per covered employee, effect)
+    "Health and dental": (
+        0.40,
+        ["Health & Dental", "H&D", "HEALTH/DENTAL", "Health and dental"],
+        2600,
+        0.25,
+    ),
+    "Health, dental and life": (
+        0.30,
+        ["Health, Dental & Life", "HDL", "H/D/Life"],
+        3100,
+        0.0,
+    ),
+    "Full package with disability": (
+        0.30,
+        ["Full Package", "FULL", "Full benefits (incl. LTD)", "H/D/L/LTD"],
+        4200,
+        -0.40,
+    ),
+}
+FUNDING = {  # name: (export spellings, effect)
+    "Fully insured": (["Fully Insured", "INSURED", "Pooled"], 0.0),
+    "ASO": (["ASO", "A.S.O.", "Admin Services Only"], -0.45),
+}
+CHANNELS = {  # name: (share, export spellings, effect: a broker shops the plan around)
+    "Broker": (0.55, ["Broker", "BRKR", "broker"], 0.25),
+    "Benefits consultant": (0.25, ["Consultant", "Benefits Consultant", "CONS."], 0.10),
+    "Direct": (0.20, ["Direct", "DIRECT", "In-house"], 0.0),
+}
+BILLING = {  # name: (share, export spellings, effect)
+    "Pre-authorized debit": (0.60, ["PAD", "Pre-authorized debit", "Auto debit"], 0.0),
+    "EFT": (0.25, ["EFT", "Wire/EFT", "eft"], 0.10),
+    "Cheque": (0.15, ["Cheque", "Check", "cheque/invoice", "INVOICE"], 0.45),
 }
 YES = ["Y", "Yes", "1", "TRUE", "yes"]
 NO = ["N", "No", "0", "FALSE", "no"]
@@ -97,69 +129,85 @@ def _pick(rng: np.random.Generator, table: dict, n: int) -> np.ndarray:
 
 
 def book(n: int, renewals: tuple[str, str], rng: np.random.Generator) -> pd.DataFrame:
-    """n policies up for renewal between the two dates, clean, with whether
-    each cancelled (cancelled = Yes/No)."""
+    """n plans up for renewal between the two dates, clean, with whether
+    each employer left (terminated = Yes/No)."""
     start, end = (pd.Timestamp(d) for d in renewals)
     renewal = start + pd.to_timedelta(rng.integers(0, (end - start).days + 1, n), "D")
-    age = _within(lambda: rng.normal(46, 13, n), 21, 84).round().astype(int)
-    product = _pick(rng, PRODUCTS, n)
-    years = _within(lambda: rng.gamma(1.6, 4.2, n), 0.6, 32)
+    industry = _pick(rng, INDUSTRIES, n)
+    lives = (
+        _within(lambda: rng.lognormal(np.log(38), 1.05, n), 3, 2500).round().astype(int)
+    )
+    plan = _pick(rng, PLAN_TYPES, n)
+    aso = rng.random(n) < np.clip(
+        (np.log(lives) - 3.2) / 4, 0.02, 0.85
+    )  # big plans self-fund
+    years = _within(lambda: rng.gamma(1.7, 4.0, n), 0.6, 35)
     since = renewal - pd.to_timedelta((years * 365.25).round(), "D")
-    payment = _pick(rng, PAYMENT, n)
-    annual = rng.random(n) < 0.3
-    advisor = rng.random(n) < 0.55
-    contacts = np.where(advisor, rng.poisson(1.2, n), 0)
-    other = np.minimum(rng.poisson(0.55, n), 4)
-    claims = rng.poisson(np.where(product == "Health and dental", 1.4, 0.15))
-    online = rng.random(n) < np.clip(1.15 - age / 70, 0.15, 0.9)
-    smoker = rng.random(n) < 0.13
-    dependents = np.minimum(rng.poisson(np.where(age < 60, 1.2, 0.3)), 5)
-    late = rng.poisson(np.where(payment == "Cheque", 0.9, 0.25))
-    hike = np.where(
-        rng.random(n) < 0.22,
-        rng.uniform(9, 24, n),  # a repricing year for this policy
-        rng.uniform(0, 6, n),
+    channel = _pick(rng, CHANNELS, n)
+    billing = _pick(rng, BILLING, n)
+    # A plan's claims year: most run 60-85% of premium, some much worse.
+    loss = np.where(
+        rng.random(n) < 0.2,
+        rng.uniform(88, 125, n),
+        rng.uniform(55, 86, n),
     ).round(1)
-    base = np.array([PRODUCTS[p][2] for p in product])
-    premium = (base * (0.6 + age / 55) * np.where(smoker, 1.6, 1.0)).round(2)
+    increase = np.clip(
+        np.where(loss > 86, (loss - 80) * 0.45, rng.uniform(0, 6, n))
+        + rng.normal(0, 1.2, n),
+        0,
+        28,
+    ).round(1)
+    reviews = rng.poisson(np.where(lives >= 50, 1.4, 0.6), n)
+    issues = rng.poisson(0.35, n)
+    late = rng.poisson(np.where(billing == "Cheque", 0.9, 0.2))
+    online = rng.random(n) < 0.6
+    wellness = rng.random(n) < np.clip(0.15 + np.log(lives) / 12, 0.1, 0.7)
+    app = _within(lambda: rng.normal(42, 20, n), 0, 95).round()
+    per_life = np.array([PLAN_TYPES[p][2] for p in plan])
+    premium = (lives * per_life * rng.uniform(0.85, 1.15, n)).round(2)
 
-    contacted = contacts >= 1
+    reviewed = reviews >= 1
     logit = (
-        -1.9
-        + 0.11 * hike * np.where(contacted, 0.5, 1.0)  # a check-in softens a hike
-        + 0.55 * late
-        + np.array([PAYMENT[p][2] for p in payment])
-        + 0.35 * annual  # one big bill is a moment to reconsider
-        - 0.075 * np.minimum(years, 15)
-        - 0.45 * other
-        - 0.55 * contacted
+        -2.05
+        + 0.13 * increase * np.where(reviewed, 0.5, 1.0)  # a review softens an increase
+        + 0.55 * np.minimum(issues, 3)
+        + 0.45 * late
+        + np.array([BILLING[b][2] for b in billing])
+        + np.array([CHANNELS[c][2] for c in channel])
+        + np.array([INDUSTRIES[i][2] for i in industry])
+        + np.array([PLAN_TYPES[p][3] for p in plan])
+        + np.where(aso, FUNDING["ASO"][1], 0.0)
+        + 0.55 * (lives < 20)
+        - 0.35 * (lives >= 200)
+        - 0.06 * np.minimum(years, 15)
+        - 0.55 * reviewed
         - 0.30 * online
-        + 0.35 * (age < 35)
-        + np.array([PRODUCTS[p][3] for p in product])
-        - 0.20 * np.minimum(claims, 3)
+        - 0.25 * wellness
+        - 0.008 * app
         + rng.normal(0, 0.35, n)
     )
-    cancelled = rng.random(n) < 1 / (1 + np.exp(-logit))
+    left = rng.random(n) < 1 / (1 + np.exp(-logit))
     return pd.DataFrame(
         {
             "renewal_date": renewal,
-            "policy_start": since,
-            "age": age,
+            "plan_start": since,
             "province": _pick(rng, PROVINCES, n),
-            "product": product,
+            "industry": industry,
+            "lives_covered": lives,
+            "plan_type": plan,
+            "funding": np.where(aso, "ASO", "Fully insured"),
             "annual_premium": premium,
-            "premium_change_pct": hike,
-            "payment_method": payment,
-            "payment_frequency": np.where(annual, "Annual", "Monthly"),
-            "missed_payments_12m": late,
-            "has_advisor": np.where(advisor, "Yes", "No"),
-            "advisor_contacts_12m": contacts,
-            "other_products": other,
-            "claims_12m": claims,
-            "online_account": np.where(online, "Yes", "No"),
-            "smoker": np.where(smoker, "Yes", "No"),
-            "dependents": dependents,
-            task.TARGET: np.where(cancelled, task.POSITIVE, task.NEGATIVE),
+            "rate_increase_pct": increase,
+            "loss_ratio_pct": loss,
+            "channel": channel,
+            "billing": billing,
+            "late_payments_12m": late,
+            "account_reviews_12m": reviews,
+            "service_issues_12m": issues,
+            "online_admin": np.where(online, "Yes", "No"),
+            "wellness_program": np.where(wellness, "Yes", "No"),
+            "member_app_pct": app,
+            task.TARGET: np.where(left, task.POSITIVE, task.NEGATIVE),
         }
     )
 
@@ -168,22 +216,23 @@ def book(n: int, renewals: tuple[str, str], rng: np.random.Generator) -> pd.Data
 HEADERS = {
     task.ID: task.RAW_ID,
     "renewal_date": "Renewal Date",
-    "policy_start": "Policy Start",
-    "age": "Age",
+    "plan_start": "Plan Effective Date",
     "province": "Prov",
-    "product": "Product Type",
+    "industry": "Industry",
+    "lives_covered": "Lives Covered",
+    "plan_type": "Plan Type",
+    "funding": "Funding",
     "annual_premium": "Annual Premium",
-    "premium_change_pct": "Premium Change",
-    "payment_method": "Pay Method",
-    "payment_frequency": "Pay Freq",
-    "missed_payments_12m": "Missed Pmts (12m)",
-    "has_advisor": "Advisor?",
-    "advisor_contacts_12m": "Advisor Contacts (12m)",
-    "other_products": "Other Products",
-    "claims_12m": "Claims (12m)",
-    "online_account": "Online Account",
-    "smoker": "Smoker",
-    "dependents": "Dependents",
+    "rate_increase_pct": "Renewal Increase",
+    "loss_ratio_pct": "Loss Ratio (12m)",
+    "channel": "Channel",
+    "billing": "Billing",
+    "late_payments_12m": "Late Pmts (12m)",
+    "account_reviews_12m": "Account Reviews (12m)",
+    "service_issues_12m": "Service Issues (12m)",
+    "online_admin": "Online Admin?",
+    "wellness_program": "Wellness Program?",
+    "member_app_pct": "Member App Use %",
     task.TARGET: task.RAW_TARGET,
 }
 
@@ -216,21 +265,27 @@ def _blank_some(rng: np.random.Generator, values: pd.Series, share: float) -> pd
 
 
 def export(clean: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
-    """The table as the policy system exports it: same rows, messy cells,
-    the export's headers (no duplicates or extra rows yet)."""
+    """The table as the plan administration system exports it: same rows,
+    messy cells, the export's headers (no duplicates or extra rows yet)."""
     raw = pd.DataFrame(index=clean.index)
     raw[task.ID] = clean[task.ID]
     raw["renewal_date"] = _dates(rng, clean["renewal_date"])
-    raw["policy_start"] = _dates(rng, clean["policy_start"])
-    age = clean["age"].astype(object)
-    odd = rng.random(len(age)) < 0.006
-    age[odd] = rng.choice(["999", "-1", "0", "199"], size=int(odd.sum()))
-    raw["age"] = _blank_some(rng, age, 0.01)
+    raw["plan_start"] = _dates(rng, clean["plan_start"])
     raw["province"] = _spell(
         rng, clean["province"], {k: v[1] for k, v in PROVINCES.items()}
     )
-    raw["product"] = _spell(
-        rng, clean["product"], {k: v[1] for k, v in PRODUCTS.items()}
+    raw["industry"] = _spell(
+        rng, clean["industry"], {k: v[1] for k, v in INDUSTRIES.items()}
+    )
+    lives = clean["lives_covered"].astype(object)
+    odd = rng.random(len(lives)) < 0.006
+    lives[odd] = rng.choice(["0", "-1", "99999", "999999"], size=int(odd.sum()))
+    raw["lives_covered"] = _blank_some(rng, lives, 0.01)
+    raw["plan_type"] = _spell(
+        rng, clean["plan_type"], {k: v[1] for k, v in PLAN_TYPES.items()}
+    )
+    raw["funding"] = _spell(
+        rng, clean["funding"], {k: v[0] for k, v in FUNDING.items()}
     )
     money = rng.choice(3, size=len(clean), p=[0.5, 0.35, 0.15])
     raw["annual_premium"] = [
@@ -238,29 +293,29 @@ def export(clean: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
         for p, k in zip(clean["annual_premium"], money, strict=True)
     ]
     percent = rng.random(len(clean)) < 0.6
-    raw["premium_change_pct"] = [
+    raw["rate_increase_pct"] = [
         f"{v:.1f}%" if pc else f"{v:.1f}"
-        for v, pc in zip(clean["premium_change_pct"], percent, strict=True)
+        for v, pc in zip(clean["rate_increase_pct"], percent, strict=True)
     ]
-    raw["payment_method"] = _spell(
-        rng, clean["payment_method"], {k: v[1] for k, v in PAYMENT.items()}
+    # One system writes the loss ratio as a percent, another as a fraction.
+    fraction = rng.random(len(clean)) < 0.35
+    raw["loss_ratio_pct"] = [
+        f"{v / 100:.3f}" if fr else f"{v:.1f}%"
+        for v, fr in zip(clean["loss_ratio_pct"], fraction, strict=True)
+    ]
+    raw["channel"] = _spell(
+        rng, clean["channel"], {k: v[1] for k, v in CHANNELS.items()}
     )
-    raw["payment_frequency"] = _spell(
-        rng,
-        clean["payment_frequency"],
-        {
-            "Monthly": ["Monthly", "M", "monthly", "MTHLY"],
-            "Annual": ["Annual", "A", "yearly", "ANNUAL"],
-        },
+    raw["billing"] = _spell(
+        rng, clean["billing"], {k: v[1] for k, v in BILLING.items()}
     )
-    raw["missed_payments_12m"] = clean["missed_payments_12m"]
+    raw["late_payments_12m"] = clean["late_payments_12m"]
+    raw["account_reviews_12m"] = _blank_some(rng, clean["account_reviews_12m"], 0.04)
+    raw["service_issues_12m"] = clean["service_issues_12m"]
     yes_no = {"Yes": YES, "No": NO}
-    for name in ("has_advisor", "online_account", "smoker"):
+    for name in ("online_admin", "wellness_program"):
         raw[name] = _spell(rng, clean[name], yes_no)
-    raw["advisor_contacts_12m"] = _blank_some(rng, clean["advisor_contacts_12m"], 0.04)
-    raw["other_products"] = clean["other_products"]
-    raw["claims_12m"] = clean["claims_12m"]
-    raw["dependents"] = _blank_some(rng, clean["dependents"], 0.05)
+    raw["member_app_pct"] = _blank_some(rng, clean["member_app_pct"], 0.05)
     if task.TARGET in clean:
         raw[task.TARGET] = _spell(
             rng,
@@ -280,7 +335,7 @@ def _duplicate(
 
 
 def _with_junk(raw: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
-    """Internal test policies, and a totals row at the bottom."""
+    """Internal test plans, and a totals row at the bottom."""
     tests = raw.sample(n=6, random_state=int(rng.integers(1 << 31))).copy()
     tests[task.RAW_ID] = [f"TEST-{i:04d}" for i in range(1, 7)]
     out = pd.concat([raw, tests]).sample(
@@ -308,7 +363,7 @@ def build(
     ids = rng.choice(
         np.arange(100_000, 1_000_000), history_rows + current_rows, replace=False
     )
-    ids = [f"{task.POLICY_PREFIX}{i}" for i in ids]
+    ids = [f"{task.PLAN_PREFIX}{i}" for i in ids]
     history.insert(0, task.ID, ids[:history_rows])
     current.insert(0, task.ID, ids[history_rows:])
     answers = current[[task.ID, task.TARGET]]
@@ -332,7 +387,7 @@ def main(scenario: Scenario, **sizes: int) -> None:
     answers.to_csv(scenario.answers / task.ANSWERS, index=False)
     rate = (answers[task.TARGET] == task.POSITIVE).mean()
     print(
-        f"{len(history)} raw history rows ({scenario.positive_rate(history):.1%} cancelled), "
-        f"{len(current)} raw current rows for {len(answers)} policies "
-        f"({rate:.1%} will cancel) -> {scenario.workspace}"
+        f"{len(history)} raw history rows ({scenario.positive_rate(history):.1%} left), "
+        f"{len(current)} raw current rows for {len(answers)} plans "
+        f"({rate:.1%} will leave) -> {scenario.workspace}"
     )

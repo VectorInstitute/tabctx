@@ -63,22 +63,19 @@ def test_every_command_gets_a_plain_title(showcase):
         "profile",
         "profile",
         "profile",
-        "profile",
         "script",
+        "run",
         "edit",
         "run",
         "analyze",
         "prepare",
+        "prepare",
         "analyze",
-        "edit",
-        "verify",
-        "edit",
-        "verify",
         "report",
     ]
     assert out[0]["title"] == "Opened the files"
-    assert out[5]["title"] == "Wrote the cleaning script"
-    assert out[7]["title"] == "Ran the cleaning"
+    assert out[4]["title"] == "Wrote the cleaning script"
+    assert out[5]["title"] == "Ran the cleaning"
     assert all("python" not in o["title"].lower() for o in out)
 
 
@@ -90,20 +87,45 @@ def test_opening_the_files_shows_their_rows(showcase):
 
 
 def test_a_check_shows_what_it_found(showcase):
-    html = showcase[1][1]["html"]
-    assert "120 duplicate rows" in html
-    assert "columns written many ways" in html
+    first, second = showcase[1][1]["html"], showcase[1][2]["html"]
+    assert "120 duplicate rows" in first and "a totals row" in first
+    # value counts printed as dicts: Prov {'ON': 1131, ' on': 321, ...}
+    assert "columns written many ways" in first
+    # describe() output: a min of -1 and a max of 999999
+    assert "impossible values" in second and "placeholders for blanks" in second
 
 
 def test_running_the_cleaning_draws_its_own_printout(showcase):
-    html = showcase[1][7]["html"]
+    html = showcase[1][5]["html"]
+    # "6127 rows in, 6000 plans out", first file only
+    assert "6,127" in html and "6,000" in html and "1,212" not in html
+    assert "−7 non-plan rows" in html and "−120 duplicate rows" in html
+    assert "−12 duplicate rows" not in html
+    assert "43 impossible lives_covered emptied" in html
+
+
+def test_a_cleaning_printout_that_lists_its_merges_draws_them():
+    printout = """renewals_2025_export.csv
+  6127 rows read
+  - 454 placeholder values ('n/a', 'N/A', 'unknown', '-') set to empty
+  - dropped 1 'TOTAL' summary row (sum of premiums, not a policy)
+  - dropped 120 exact duplicate rows
+  - province: 33 spellings -> ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'ON', 'QC', 'SK']
+  - age: 36 impossible values ([-1, 0, 199, 999]) set to empty
+  - dates in 4 formats parsed; replaced by years_as_customer
+  6000 policies written
+
+renewals_due_export.csv
+  1212 rows read
+"""
+    (o,) = run([["Bash", {"command": "python3 clean.py"}, printout]])
+    html = o["html"]
     assert "6,127" in html and "6,000" in html
-    assert "−120 duplicate rows" in html and "−6 test policies" in html
-    assert "−1 TOTAL row" in html
-    # province: 33 spellings collapse into the 9 codes the script printed
-    assert "33&nbsp;&rarr;&nbsp;9" in html
+    assert "−1 TOTAL row" in html and "−120 duplicate rows" in html
+    assert "33&nbsp;&rarr;&nbsp;9" in html  # 33 spellings collapse into 9
     assert "454 placeholders emptied" in html
     assert "36 impossible ages emptied" in html
+    assert "4 date formats read" in html
 
 
 def test_the_cleaning_script_lists_only_what_its_code_does():

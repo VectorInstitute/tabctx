@@ -101,7 +101,20 @@ const Actions = (() => {
       if (/\bTEST-\d+/.test(out)) finds.push(chip("test records", "warn"));
       // A column with a handful of values written many ways: one bar each.
       const spell = new Map();
-      for (const [, c, k] of out.matchAll(/--[ \t]*(\w[\w ]{0,40}?)[ \t]+nunique[ \t]+(\d+)/g)) if (+k > 2 && +k < 60) spell.set(c, Math.max(+k, spell.get(c) || 0));
+      const keep = (c, k) => +k > 2 && +k < 60 && spell.set(c.trim(), Math.max(+k, spell.get(c.trim()) || 0));
+      for (const [, c, k] of out.matchAll(/--[ \t]*(\w[\w ]{0,40}?)[ \t]+nunique[ \t]+(\d+)/g)) keep(c, k);
+      // pandas value counts printed as a dict: "Prov {'ON': 1131, ' on': 321, ...}"
+      for (const [, c, body] of out.matchAll(/^([A-Za-z][\w ?%()./-]{0,40}?)[ \t]+\{([^{}\n]{1,6000})\}[ \t]*$/gm)) {
+        const keys = body.match(/(?:^|,\s*)'[^'\n]{0,60}':/g) || [];
+        // Numbers as keys are values, not spellings (a count column's 0, 1, 2 ...).
+        const numeric = keys.filter((x) => /'\s*-?[\d.]+\s*'/.test(x)).length;
+        if (keys.length && numeric * 2 < keys.length && !keys.some((x) => /'(count|mean|min|max)'/.test(x))) keep(c, keys.length);
+      }
+      const holders = ["N/A", "n/a", "unknown", "'-'"].filter((h) => out.includes(h.startsWith("'") ? h : `'${h}'`));
+      if (holders.length >= 2) finds.push(chip("placeholders for blanks", "warn"));
+      const mins = [...out.matchAll(/'min':\s*(-\d+(?:\.\d+)?)/g)].length;
+      const huge = [...out.matchAll(/\b9{5,}(?:\.0)?\b/g)].length;
+      if (mins || huge) finds.push(chip("impossible values", "warn"));
       const many = [...spell].sort((x, y) => y[1] - x[1]);
       const bars = many.length
         ? `<div class="a-spell"><span class="a-spell-k">${many.length} columns written many ways</span>${many
@@ -135,14 +148,25 @@ const Actions = (() => {
       return old != null ? `<div class="a-ops">${chip(`−${minus} line${minus > 1 ? "s" : ""}`, "minus")}${chip(`+${plus} line${plus > 1 ? "s" : ""}`, "plus")}</div>` : "";
     }
     if (kind === "run") {
-      // One file's block: "N rows read" ... "M plans written" (any noun).
-      const first = out.split(/\n\s*\n/)[0];
-      const read = first.match(/(\d[\d,]*)\s+rows read/);
-      const wrote = first.match(/(\d[\d,]*)\s+\w+\s+written/);
+      // The first file's lines: a block up to a blank line, or the lines
+      // that name it ("renewals_2025_export.csv: dropped ...").
+      const file = out.match(/^([\w.-]+\.(?:csv|xlsx|parquet)):/m)?.[1];
+      const first = file
+        ? out
+            .split("\n")
+            .filter((l) => l.startsWith(`${file}:`) || !/^[\w.-]+\.(?:csv|xlsx|parquet):/.test(l))
+            .join("\n")
+        : out.split(/\n\s*\n/)[0];
+      // "N rows read" ... "M plans written", or "N rows in, M plans out" (any noun).
+      const read = first.match(/(\d[\d,]*)\s+rows?\s+(?:read|in)\b/);
+      const wrote = first.match(/(\d[\d,]*)\s+\w+\s+(?:written|out)\b/);
       const rows = read && wrote ? `<div class="a-rows"><b>${n(read[1].replace(/,/g, ""))}</b><span>&rarr;</span><b>${n(wrote[1].replace(/,/g, ""))}</b><span class="faint">rows</span></div>` : "";
-      const drops = [...first.matchAll(/dropped\s+(\d+)\s+([^(\n]+)/g)].map(([, k, what]) => chip(`−${k} ${what.replace(/exact |summary |['"]/g, "").trim()}`, "minus"));
+      const drops = [...first.matchAll(/dropped\s+(\d+)\s+([^(\[\n]+?)(\(s\))?(?=\s*[([]|\s*$)/gm)].map(([, k, what, s]) =>
+        chip(`−${k} ${what.replace(/exact |summary |['"]/g, "").trim()}${s && +k > 1 ? "s" : ""}`, "minus"),
+      );
       const cols = [...first.matchAll(/^[ \t]*-[ \t]*(\w+):[ \t]*(\d+)[ \t]+spellings[ \t]*->[ \t]*\[([^\]\n]*)\]/gm)].map(([, c, k, to]) => collapse(c, +k, to.split(",").length));
       const fixes = [...first.matchAll(/^[ \t]*-[ \t]*(?:(\w+):[ \t]*)?(\d+)[ \t]+(placeholder|impossible) values/gm)].map(([, col, k, w]) => chip(w === "impossible" ? `${k} impossible ${col || "value"}s emptied` : `${k} placeholders emptied`, "op"));
+      for (const [, col, k] of first.matchAll(/(\w+) placeholders? [^\n:]{0,40}?set to (?:missing|empty|NaN)[^\d\n]{0,4}(\d+)/g)) fixes.push(chip(`${k} impossible ${col} emptied`, "op"));
       const dates = /dates in (\d+) formats/.exec(first);
       if (dates) fixes.push(chip(`${dates[1]} date formats read`, "op"));
       if (!rows && !drops.length && !cols.length) return "";
@@ -214,11 +238,34 @@ const Actions = (() => {
     el._cmd = `${el._cmd || ""}\n${commandOf(tool, args || {})}`;
     const viz = picture(entry.kind, null, el._out, { ...(args || {}), command: el._cmd });
     if (viz) el.querySelector(".a-viz").innerHTML = viz;
+    if (entry.kind === "run" && view) cleaningView(view); // the view may have come first
+  }
+
+  // The page's own comparison of raw and clean (cleaning.py), for a
+  // cleaning run whose printout didn't list its merges: true whatever the
+  // agent chose to print.
+  let view = null;
+  function cleaningView(v) {
+    view = v || view;
+    v = view;
+    // The first cleaning run is the one that did the cleaning; re-runs only check it.
+    const tile = [...document.querySelectorAll(".act.k-run")].find((t) => /cleaning/i.test(t.querySelector(".a-title")?.textContent || ""));
+    if (!tile || !v) return;
+    const box = tile.querySelector(".a-viz");
+    if (!box.querySelector(".a-rows") && v.rows_before && v.rows_after) {
+      box.insertAdjacentHTML("afterbegin", `<div class="a-rows"><b>${n(v.rows_before)}</b><span>&rarr;</span><b>${n(v.rows_after)}</b><span class="faint">rows</span></div>`);
+    }
+    if (!box.querySelector(".a-collapse")) {
+      const merged = (v.columns || []).filter((c) => c.kind === "category" && c.before > c.after && c.after > 0);
+      if (merged.length) box.insertAdjacentHTML("beforeend", `<div class="a-collapse">${merged.slice(0, 6).map((c) => collapse(c.clean, c.before, c.after)).join("")}</div>`);
+    }
   }
 
   return {
+    cleaningView,
     reset(setup) {
       columns = [...(setup?.dataset?.columns || []), ...(setup?.dataset?.raw_id ? [setup.dataset.raw_id] : [])];
+      view = null;
       last = null;
     },
     add,

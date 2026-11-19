@@ -157,6 +157,7 @@ const Answer = (() => {
       `The agent wrote a script that removed ${esc(list(removed))}` +
       (top ? `, and merged ${fmt(top.before)} spellings of ${esc(lower(label(top.clean)))} into ${fmt(top.after)}.` : ".");
     write("clean", sentence, cleanViz(v));
+    if (typeof Actions !== "undefined") Actions.cleaningView(v); // the work panel's cleaning tile, too
     const table = S.steps.get("clean").el.querySelector(".tidy-table");
     setTimeout(() => S === run && flip(table, true), 2200); // the mess first, then the fix
     examples(v);

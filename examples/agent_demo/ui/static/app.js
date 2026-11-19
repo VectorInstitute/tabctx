@@ -433,12 +433,13 @@ function initPresent() {
   };
   on(new URLSearchParams(location.search).has("present"));
   document.addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea, select, [contenteditable]") || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target instanceof Element ? e.target : document.body;
+    if (target.closest("input, textarea, select, [contenteditable]") || e.metaKey || e.ctrlKey || e.altKey) return;
     const key = e.key.toLowerCase();
     if (key === "p") return on(!state.present);
     if (!state.present) return;
     // Space and Enter on a focused button or link keep their own meaning.
-    const control = e.target.closest("button, a, summary, [role=button]");
+    const control = target.closest("button, a, summary, [role=button]");
     if (["arrowright", "pagedown"].includes(key) || (!control && [" ", "enter"].includes(key))) {
       if (!state.waiting) return; // nothing to show next: the key keeps its usual job
       e.preventDefault();
