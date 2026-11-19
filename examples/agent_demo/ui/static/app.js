@@ -66,6 +66,16 @@ const state = {
   queue: [],
   replaying: false,
   stats: null,
+  // Presenting: the work fills the screen, and a replay waits for the
+  // presenter before each command (→, space or a clicker) unless on auto.
+  present: false,
+  auto: false,
+  waiting: false,
+  go: false,
+  stepAt: 0,
+  stepTotal: 0,
+  gen: 0, // a new run or replay starts a new generation; old timers stand down
+  pinned: true, // the work panel follows the newest tile until the viewer scrolls up
 };
 
 // ---- class colors: the entity keeps its color everywhere -------------------
@@ -115,6 +125,7 @@ async function init() {
   initTheme();
   initTooltips();
   initPanels();
+  initPresent();
   const setup = await loadSetup();
   renderComposer(setup.dataset);
   $("#prompt").value = setup.prompt;
@@ -317,13 +328,14 @@ function notice(text) {
 function watch(agent, replay) {
   state.source?.close();
   clearInterval(state.timer);
-  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent });
+  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0, gen: state.gen + 1, pinned: true });
   const info = state.setup.agents.find((a) => a.id === agent);
   $("#empty").hidden = true;
   $("#thread").hidden = false;
   $("#again").hidden = true;
   openSettings(false);
   Answer.reset(state.setup, agent, replay);
+  Actions.reset(state.setup);
   $("#timeline").innerHTML = "";
   $("#outcome").hidden = true;
   $("#report-card").open = false;
@@ -339,7 +351,10 @@ function watch(agent, replay) {
     state.started = replay ? Date.now() : s.started * 1000;
     if (!replay) state.timer = setInterval(() => updateMeta(info), 500);
   });
-  source.addEventListener("event", (e) => enqueue(() => handle(JSON.parse(e.data), info)));
+  source.addEventListener("event", (e) => {
+    const ev = JSON.parse(e.data);
+    enqueue(() => handle(ev, info), ev.type === "tool_call" ? "call" : "");
+  });
   source.addEventListener("outcome", (e) => {
     source.close();
     enqueue(() => finish(JSON.parse(e.data), info));
@@ -359,23 +374,116 @@ function watch(agent, replay) {
 }
 
 // A replay plays at a readable pace; a live run shows events as they come.
-function enqueue(fn) {
-  if (!state.replaying) return fn();
-  state.queue.push(fn);
-  if (state.queue.length === 1) drain();
+// Presenting, a replay stops before each command until the presenter moves
+// on, or plays at a pace to talk over (auto).
+function enqueue(fn, kind = "") {
+  if (!state.replaying) {
+    const out = fn();
+    follow();
+    return out;
+  }
+  if (kind === "call") state.stepTotal++;
+  state.queue.push({ fn, kind });
+  renderStepper();
+  if (state.queue.length === 1 && !state.waiting) drain();
 }
 function drain() {
-  const fn = state.queue[0];
-  if (!fn) return;
-  let delay = 60;
+  const item = state.queue[0];
+  if (!item) return renderStepper();
+  if (state.present && item.kind === "call" && state.stepAt > 0 && !state.auto && !state.go) {
+    state.waiting = true;
+    return renderStepper();
+  }
+  state.go = false;
+  if (item.kind === "call") state.stepAt++;
+  let slow = false;
+  const gen = state.gen;
   try {
-    if (fn() === "slow") delay = 420;
+    slow = item.fn() === "slow";
+    follow();
   } finally {
+    renderStepper();
     // One event that fails to draw must not stop the rest of the replay.
+    const pace = state.present ? (slow ? (state.auto ? 2400 : 500) : 160) : slow ? 420 : 60;
     setTimeout(() => {
+      if (gen !== state.gen) return; // a new run started meanwhile: its queue isn't ours
       state.queue.shift();
       drain();
-    }, delay);
+    }, pace);
+  }
+}
+function advance() {
+  if (!state.waiting) return;
+  state.waiting = false;
+  state.go = true;
+  drain();
+}
+
+function initPresent() {
+  const on = (present) => {
+    state.present = present;
+    document.body.classList.toggle("present", present);
+    if (present) document.body.classList.add("show-work");
+    else document.body.classList.toggle("show-work", $("#work-toggle").checked);
+    if (!present && state.waiting) {
+      state.waiting = false;
+      drain();
+    }
+    renderStepper();
+  };
+  on(new URLSearchParams(location.search).has("present"));
+  document.addEventListener("keydown", (e) => {
+    const target = e.target instanceof Element ? e.target : document.body;
+    if (target.closest("input, textarea, select, [contenteditable]") || e.metaKey || e.ctrlKey || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key === "p") return on(!state.present);
+    if (!state.present) return;
+    // Space and Enter on a focused button or link keep their own meaning.
+    const control = target.closest("button, a, summary, [role=button]");
+    if (["arrowright", "pagedown"].includes(key) || (!control && [" ", "enter"].includes(key))) {
+      if (!state.waiting) return; // nothing to show next: the key keeps its usual job
+      e.preventDefault();
+      advance();
+    } else if (key === "a") {
+      state.auto = !state.auto;
+      if (state.auto) advance();
+      renderStepper();
+    }
+  });
+}
+
+function renderStepper() {
+  const el = $("#stepper");
+  const show = state.present && state.replaying && state.stepTotal > 0;
+  el.hidden = !show;
+  if (!show) return;
+  const done = !state.queue.length;
+  el.innerHTML = done
+    ? `<span>All ${state.stepTotal} steps shown</span>`
+    : `<span class="n">${state.stepAt} / ${state.stepTotal}</span>${
+        state.auto ? "<span>playing</span><kbd>A</kbd><span>to pause</span>" : `<kbd>→</kbd><span>${state.waiting ? "next step" : "…"}</span><kbd>A</kbd><span>auto</span>`
+      }`;
+  el.classList.toggle("ready", state.waiting);
+}
+
+// Keep the newest tile in view: in the work panel when it scrolls on its
+// own, else the page (a live run only, so a replay leaves the reader be).
+function follow() {
+  const work = $("#work");
+  if (!work.dataset.watched) {
+    work.dataset.watched = "1";
+    // Our own smooth scrolls pass through "far from the bottom": only the viewer's count.
+    work.addEventListener(
+      "scroll",
+      () => {
+        if (performance.now() - (state.autoScroll || 0) > 900) state.pinned = work.scrollHeight - work.scrollTop - work.clientHeight < 120;
+      },
+      { passive: true },
+    );
+  }
+  if (state.pinned && document.body.classList.contains("show-work") && work.scrollHeight > work.clientHeight + 4 && getComputedStyle(work).overflowY === "auto") {
+    state.autoScroll = performance.now();
+    work.scrollTo({ top: work.scrollHeight, behavior: "smooth" });
   }
 }
 
@@ -409,12 +517,16 @@ function handle(ev, info) {
       el.className = "card pending";
       el.innerHTML = cardHead(ev.tool, describeCall(ev.tool, ev.args), '<span class="spinner"></span>');
     } else {
-      el.className = "minor";
-      el.innerHTML = minorCall(ev.tool, ev.args);
+      // The agent's own commands, as pictures of what they do (actions.js).
+      const action = Actions.add(tl, ev.tool, ev.args);
       if (hasClean() && CLEANING.test(JSON.stringify(ev.args || {}))) {
         state.used.add(CLEAN[0]);
         renderSteps();
       }
+      state.calls.set(ev.id, { action, tool: ev.tool, args: ev.args, t0: performance.now() });
+      updateMeta(info);
+      scrollDown();
+      return "slow";
     }
     tl.appendChild(el);
     state.calls.set(ev.id, { el, tool: ev.tool, args: ev.args, t0: performance.now() });
@@ -426,8 +538,8 @@ function handle(ev, info) {
     const call = state.calls.get(ev.id);
     if (!call) return;
     if (!ev.tabctx) {
-      if (ev.error) call.el.classList.add("err");
-      return;
+      Actions.result(call.action, call.tool, call.args, ev.text, ev.error);
+      return "slow";
     }
     const secs = state.replaying ? null : (performance.now() - call.t0) / 1000;
     const right = secs == null ? "" : `<span class="card-time">${fmt(secs, 1)} s</span>`;
@@ -488,7 +600,7 @@ function renderSteps() {
 }
 
 const scrollDown = () => {
-  if (!state.replaying) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  if (!state.replaying && !document.body.classList.contains("show-work")) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 };
 
 // ---- building blocks ---------------------------------------------------------
@@ -523,16 +635,6 @@ function describeCall(tool, a = {}) {
     default:
       return "";
   }
-}
-
-function minorCall(tool, a = {}) {
-  const path = a.file_path || a.path || "";
-  const what = a.command
-    ? `<code>${esc(String(a.command).replace(/^\/bin\/\w+ -lc /, "").slice(0, 80))}</code>`
-    : path
-      ? `<code>${esc(base(path))}</code>`
-      : "";
-  return `${svg('<path d="M9 6l6 6-6 6"/>', 12)}<span>${esc(tool)}</span>${what}`;
 }
 
 // A horizontal bar on a lane with a baseline. value in [0, 1].

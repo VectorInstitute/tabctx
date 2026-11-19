@@ -1,174 +1,115 @@
-# Renewal cancellation risk: policies due Nov 2026 – Feb 2027
+# Group plan renewals: who is likely to leave, and what might keep them
 
-*For: Head of Retention, Maple Mutual. Prepared 2026-11-05.*
+For: Head of Group Retention · Prepared 2026-11-18 · Covers the 1,200 plans renewing between mid-November 2026 and mid-February 2027
 
-## In short
+## In brief
 
-- **We can predict who cancels.** The model ranks a true canceller above a true
-  renewer about 77% of the time (ROC AUC 0.77). That is better than the standard
-  gradient-boosting model, which scored 0.72.
-- Of the **1,200 policies due**, the model expects about **178 cancellations**
-  (14.9%). Last year 16.6% cancelled.
-- **The biggest driver is the size of the premium increase.** After that come
-  no recent advisor contact, holding only one product with us, short tenure,
-  missed payments and paying by cheque or invoice.
-- **Recommendation:** an advisor check-in call, with an offer to switch to
-  pre-authorized debit (PAD), for the 100 highest-risk policyholders. The model
-  expects this to cut their cancellations from about **55 to 31**. That keeps
-  about **$35,000 in annual premium**. (This is what the model learned, not a
-  proven effect. See the caveats below.)
+- We expect about **131 of the 1,200 due plans to leave** (11%). That puts about **$17.9M of annual premium at risk** (each plan's premium weighted by its chance of leaving).
+- The plans most at risk are **small employers facing a large renewal increase (over 10%) who had no account review last year**. Service issues and late payments raise the risk further.
+- **Recommended program:** before renewal, hold an account review with the 200 highest-risk due plans that had none last year. The model suggests this could cut expected departures in that group from about 59 to about 27, keeping roughly **$3.3M of premium**. That is a pattern in past data, not a proven effect, so run it as a test (see below).
 
-## 1. What was wrong with the data and how it was fixed
+## 1. What was wrong with the data, and how it was fixed
 
-Both exports were cleaned by one script, `clean.py`. It writes
-`renewals_2025.csv` (6,000 policies) and `renewals_due.csv` (1,200 policies).
+Both exports had the same problems. `clean.py` fixes them and writes `renewals_2025.csv` (6,000 plans) and `renewals_due.csv` (1,200 plans, every due plan kept).
 
-| Problem | Fix |
+| Problem | What we did |
 |---|---|
-| A **"TOTAL" row** at the bottom of last year's file (sum of premiums, $12.98M) | Removed: it is not a policy |
-| **6 test policies** (`TEST-0001`…`TEST-0006`) in last year's file | Removed |
-| **Duplicate rows**: 120 in last year's file, 12 in the due file | Kept one copy of each. The due file still has every one of its 1,200 policies |
-| **Outcome written 6 ways**: Renewed / RENEWED / Active / Cancelled / cxl / LAPSED | `cancelled` = **No** for Renewed and Active (still in force), **Yes** for Cancelled, cxl and LAPSED. Result: 994 cancelled, 5,006 renewed |
-| **Province written 33 ways** (ON, ont, ONT., Ontario, " on"; PQ, Québec; Alta; Nfld…) | Standardised to 2-letter codes (9 provinces) |
-| **Product written 14 ways** (TERM, Term-Life, term life 20, H&D, HEALTH/DENTAL, CI…) | 4 products: Term Life, Whole Life, Health & Dental, Critical Illness |
-| **Payment method written 12 ways** (PAD, pre-auth debit, Auto debit; CC, VISA/MC, credit; Cheque, Check, INVOICE…) | 3 methods: Pre-authorized debit, Credit card, Cheque/invoice |
-| **Payment frequency written 8 ways** (M, MTHLY, yearly, A…) | Monthly / Annual |
-| **Yes/No fields** (advisor, online account, smoker) mixed Y/N, yes/no, TRUE/FALSE, 1/0 | Yes / No |
-| **Premiums stored as text**: "$3,040.00", "CAD 2,384", "1247.27" | Converted to plain numbers (dollars) |
-| **Premium change** sometimes "4.4%", sometimes "4.4" | Both are percent (the two forms have the same spread of values). Stored as a number, `premium_change_pct` |
-| **Impossible ages**: -1, 0, 199, 999 (36 last year, 8 in the due file) | Set to empty (unknown) |
-| **"Unknown" written as** n/a, N/A, unknown, "-" in age, advisor contacts and dependents | Set to empty. Nothing was guessed |
-| **Dates in 4 formats** (2025-03-27, 2025/08/15, May 23, 2025, 07-Oct-2025) | Parsed every one. Replaced the start and renewal dates with `years_as_customer` at renewal |
-| Column names like "Missed Pmts (12m)", "Advisor?" | snake_case: `missed_payments_12m`, `has_advisor`, etc. |
+| Rows that are not plans in the 2025 export: 6 test plans (`TEST-0001` to `TEST-0006`) and a `TOTAL` line at the bottom ($1.27B) | Removed |
+| Exact duplicate rows: 120 in the 2025 export, 12 in the due export | Kept one copy of each. After that, every plan ID appears once. |
+| Renewal outcome written 6 ways (`Renewed`, `RENEWED`, `In force`, `Terminated`, `TERM`, `moved carrier`) | Made a `terminated` column: **Yes** = Terminated / TERM / moved carrier, **No** = Renewed / RENEWED / In force. "In force" plans look the same as renewed plans (same renewal increases and service issues), so we counted them as staying. |
+| Provinces written 33 ways (`ON`, `ont`, ` on`, `ONT.`, `Ontario`, `PQ`, `Québec`, `Alta`, `Nfld` …) | Changed to the standard two-letter codes (10 provinces) |
+| The same category under several names in industry, plan type, funding, channel and billing (e.g. `MFG`/`Mfg.`, `HDL`/`H/D/Life`, `INSURED`/`Fully Insured`, `A.S.O.`/`ASO`, `BRKR`/`broker`, `Check`/`Cheque`) | Mapped to one name each: 7 industries, 3 plan types, 3 funding types, 3 channels (`In-house` counted as Direct), 3 billing methods (PAD, EFT, Cheque/invoice) |
+| Yes/no columns written as `Y`, `yes`, `TRUE`, `1`, `N`, `no`, `FALSE`, `0` | Changed to Yes / No |
+| Premium written as `62770.46`, `$74,848.88` or `CAD 9,676` | Converted to plain numbers in dollars |
+| Renewal increase sometimes `8.1%`, sometimes `8.1` (same scale) | Converted to a percent number |
+| Loss ratio sometimes a percent (`63.2%`), sometimes a fraction (`0.856`) | Converted all to percent (0.856 → 85.6) |
+| Dates in 4 formats (`2025-01-07`, `2025/01/07`, `Jan 07, 2025`, `07-Jan-2025`) | Read all four. Replaced the two dates with `years_with_us` (renewal date minus plan start date) |
+| Placeholder values for "unknown": `n/a`, `N/A`, `unknown`, `-` in lives covered, account reviews and member app use. Impossible lives counts: `-1`, `0`, `99999`, `999999` (51 plans across both files) | Left empty (missing). We did not guess these values. |
 
-Values still unknown after cleaning were left empty. Last year: age 101,
-advisor contacts 225, dependents 268. Due file: 22, 50, 58.
+The script stops with an error if it finds a category value it does not know, so a new spelling will not get through unnoticed.
 
 ## 2. How accurate the model is
 
-I held out a quarter of last year's policies (1,500), trained on the rest, and
-predicted the held-out ones:
+We kept 1,500 of last year's plans aside, trained on the other 4,500, and checked the predictions against what really happened:
 
-| Model | ROC AUC | Accuracy | Log loss |
-|---|---|---|---|
-| **TabICL v2 (tabular foundation model), chosen** | **0.771** | **84.7%** | **0.377** |
-| Gradient boosting (scikit-learn, standard) | 0.722 | 83.8% | 0.411 |
-
-TabICL v2 was the only tabctx model available on our server. It beat gradient
-boosting on all three measures. It was then trained on all 6,000 of last
-year's policies.
-
-What this means in practice: the model is good at **ranking** who is most at
-risk. It is not a crystal ball. Of the 55 due policyholders it rates above 50%,
-some will renew, and some cancellations will come from people it rated low.
-Use the list to decide who gets attention first.
-
-## 3. The 10 policyholders most likely to cancel
-
-Every due policy's probability is in `renewals_due_predictions.csv` (column
-`p_cancelled=Yes`).
-
-| # | Policy ID | Chance of cancelling | Premium increase | Why they stand out |
-|---|---|---|---|---|
-| 1 | MM-379082 | **95%** | 22.1% | 4 missed payments, pays by cheque, no advisor contact |
-| 2 | MM-906997 | **87%** | 20.8% | 2 missed payments, credit card, no advisor contact |
-| 3 | MM-623948 | **87%** | 11.0% | 1.4 years with us, 2 missed payments, cheque |
-| 4 | MM-611036 | **82%** | 18.5% | credit card, no advisor contact |
-| 5 | MM-867409 | **81%** | 21.7% | 2 missed payments, credit card |
-| 6 | MM-209749 | **80%** | 3.1% | 3 missed payments, cheque |
-| 7 | MM-760981 | **79%** | 20.8% | no advisor contact |
-| 8 | MM-367098 | **79%** | 23.6% | 1.6 years with us, credit card |
-| 9 | MM-959451 | **77%** | 18.4% | cheque, no advisor contact |
-| 10 | MM-757837 | **75%** | 4.2% | under 1 year with us, 3 missed payments |
-
-All ten had **no advisor contact** in the last 12 months and hold **no other
-product** with us.
-
-## 4. What drives cancellation
-
-Two sources were used. The first is how much the model's accuracy drops when
-each factor is scrambled. The second is last year's actual cancellation rates.
-Last year's overall rate was 16.6%.
-
-| Driver | Importance to model | Last year's cancellation rate |
+| Model | Ranking quality (ROC AUC) | Accuracy |
 |---|---|---|
-| **Premium increase** | by far the largest | ≤5%: **11%** · 5–10%: 18% · 10–15%: 27% · >15%: **36%** |
-| **Advisor contacts (12m)** | 2nd | none: **21%** · one or more: **~10%** |
-| **Other products held** | 3rd | none: 20% · one: 14% · two or more: **9%** |
-| **Years as customer** | 4th | under 2 yrs: 22% · over 10 yrs: 13% |
-| **Missed payments (12m)** | 5th | none: 14% · one: 20% · two: 32% · three or more: 50%+ |
-| Payment frequency and method | smaller | cheque/invoice: **28%** · credit card: 18% · PAD: **14%** |
-| Product | smaller | Term Life 21% · Whole Life 11% |
+| **TabICL v2 (chosen)** | **0.765** | 87.5% |
+| TabPFN 3.5 | 0.765 | 87.3% |
+| Standard gradient boosting | 0.733 | 86.9% |
 
-Age, province, smoker status and number of dependents barely matter.
+- Both foundation models beat the standard gradient-boosting model. They are tied with each other, and we used TabICL v2.
+- **Do not read too much into accuracy.** Only 12.7% of plans left last year, so a rule that says "everyone renews" is already 87% accurate.
+- The better measure is ranking quality. An AUC of 0.77 means that if you pick one plan that left and one that stayed, the model gives the leaver the higher risk score about 3 times in 4. That is good enough to decide who to call first. It is not good enough to be sure about any one employer.
+- The 17 plans above 50% and the 86 plans above 30% are the realistic list to act on.
 
-These are associations. Someone with an advisor contact may be more engaged
-to begin with. The call may not be what keeps them.
+The model was then trained on all 6,000 plans from 2025 and used to score the due plans. All 1,200 predictions are in **`renewals_due_predictions.csv`** (column `p_terminated=Yes`).
 
-## 5. What-if tests: the three highest-risk policyholders
+## 3. The 10 plans most likely to leave
 
-I changed one thing at a time and re-scored each person.
+| # | Plan ID | Chance of leaving | Lives | Annual premium | Renewal increase | Account reviews (12m) | Service issues (12m) |
+|---|---|---|---|---|---|---|---|
+| 1 | GB-305069 | 74% | 14 | $61,387 | 16.8% | 0 | 0 |
+| 2 | GB-729984 | 72% | 15 | $35,485 | 20.3% | 0 | 2 |
+| 3 | GB-889741 | 69% | 13 | $37,383 | 16.7% | 0 | 0 |
+| 4 | GB-343860 | 69% | 8 | $20,755 | 12.6% | 0 | 2 |
+| 5 | GB-157168 | 65% | 9 | $24,346 | 10.5% | 0 | 2 |
+| 6 | GB-899808 | 65% | 88 | $215,137 | 16.0% | 0 | 1 |
+| 7 | GB-767778 | 65% | 27 | $66,809 | 15.4% | 0 | 0 |
+| 8 | GB-876966 | 62% | 4 | $10,209 | 18.5% | 0 | 2 |
+| 9 | GB-884169 | 62% | 78 | $180,826 | 10.5% | 0 | 0 |
+| 10 | GB-176292 | 59% | 15 | $52,160 | 5.8% | not recorded | 1 |
 
-| Action | MM-379082 | MM-906997 | MM-623948 |
+Every one of them had no recorded account review last year, and nine of the ten face an increase above 10%. Plans 6 (GB-899808) and 9 (GB-884169) are the largest by premium.
+
+## 4. What drives employers to leave
+
+Ranked by how much the model relies on each factor. The leave rates are from last year's 6,000 plans (12.7% overall).
+
+1. **Account reviews.** This is the strongest factor. Plans with no review last year left at **18.8%**; plans with one or more left at 7 to 9%.
+2. **Plan size (premium and lives covered).** Small plans leave more often. The smallest quarter by premium left at 20%; the largest quarter at 8%.
+3. **Renewal increase.** Increases up to 6% have little effect (10 to 11% left). Above 10%, the leave rate goes up to **27%**.
+4. **Service issues.** 11% left with none, 16% with one, 23% with two or more.
+5. **Smaller factors:** late payments (27% left with 2 or more), industry (Retail, Construction and Technology highest; Non-Profit lowest), newer clients (17% left in their first 2 years vs 10% after 10 years), and not using online admin.
+
+Channel, billing method, funding type and the wellness program made almost no difference.
+
+## 5. What-if tests on the three plans most likely to leave
+
+For each plan, we changed one thing and asked the model again. "Account review" means one review held in the year before renewal.
+
+| Plan | Today | + 1 account review | Increase cut to 8% | Increase cut to 5% | Service issues resolved | Review + 8% cap (+ issues resolved) |
+|---|---|---|---|---|---|---|
+| GB-305069 (16.8% increase, 2 late payments) | 74% | 48% | 55% | 49% | none open | **29%** |
+| GB-729984 (20.3% increase, 2 service issues) | 72% | 39% | 54% | — | 54% | **14%** (all three) |
+| GB-889741 (16.7% increase, new client) | 69% | 37% | 54% | 50% | none open | **26%** |
+
+- For each plan, **an account review is the biggest single lever**. It lowers the chance of leaving by 26 to 33 points.
+- Cutting the increase to 8% lowers it by 15 to 19 points.
+- Resolving GB-729984's two service issues lowers it by 18 points.
+- **Doing several together works best.** All three plans drop to between 14% and 29%.
+
+**Important caveat.** These numbers show what the model learned about how plans that looked like this behaved last year. They are **not proven effects**. For example, employers who agree to an account review may already be more engaged and more likely to stay, and the review itself may not be what keeps them. A smaller increase may also hurt our margins on plans running loss ratios of 114 to 125%. Treat these numbers as a ranking of which actions are worth testing, not as a promise.
+
+## 6. Recommended program: account reviews before renewal for high-risk plans with none
+
+**What:** In the next few weeks, the account team holds one account review with each of the **200 highest-risk due plans that had no review last year**. Each of these plans has at least a 16% chance of leaving. Where the renewal increase is above 10% or a service issue is open, offer a reconsidered increase or a fix for the issue at the same meeting.
+
+**Expected impact (model estimate):**
+
+| Group | Expected departures now | With one review | Premium at risk now → with review |
 |---|---|---|---|
-| As is | 95% | 87% | 87% |
-| Advisor check-in call (+1 contact) | 86% (−9 pts) | 68% (**−19**) | 73% (−13) |
-| Move to pre-authorized debit | 91% (−3) | 82% (−5) | 78% (−9) |
-| Cap premium increase at 5% (from 22.1 / 20.8 / 11.0%) | 78% (−17) | 56% (**−31**) | 73% (−14) |
-| All three together | 55% (−40) | **29% (−58)** | 44% (−43) |
+| Top 100 highest-risk with no review | 39 | 18 | $3.76M → $1.71M |
+| **Top 200 highest-risk with no review (recommended)** | **59** | **27** | **$5.87M → $2.53M** |
+| All 533 due plans with no review (or none recorded) | 86 | 38 | — |
 
-What this says:
-- The **premium cap** moves risk the most, when the increase was large.
-- The **advisor call** is the best single cheap action. It took 9–19 points
-  off for each person.
-- **PAD** helps a little on its own.
-- Together, the actions add up to a large drop. MM-379082 still has a 55%
-  chance even with all three, because of the four missed payments. An
-  affordability conversation may matter more than any of these levers.
+For the recommended 200 plans, that is about **32 fewer employers leaving and about $3.3M of annual premium kept**. Only reviews were changed in this estimate. Adding increase cuts or service fixes for the top plans should help more.
 
-**Important:** these are **patterns the model learned from last year's data,
-not proven effects.** The model sees, for example, that policyholders who had
-an advisor contact cancelled less often. It cannot tell whether the contact
-caused that. A call that the retention team starts may work better or worse
-than the contacts in last year's data. Treat these numbers as a guide to where
-to start, and test them (see below).
-
-## 6. Recommended program: "Renewal check-in" for the top 100
-
-**What:** an advisor calls each of the 100 highest-risk due policyholders
-before their renewal date. Their predicted risk ranges from 39% to 95%. 96 of
-them had no advisor contact last year. On each call the advisor:
-1. explains the renewal and the premium change,
-2. offers to move them to pre-authorized debit (57 of the 100 aren't on it),
-3. may offer a smaller increase if the increase is over 10% and the customer
-   is clearly price-sensitive (80 of the 100 face increases over 10%). This
-   step is case by case.
-
-**Expected impact (model estimates for these 100 policyholders):**
-
-| Scenario | Expected cancellations | Annual premium at risk |
-|---|---|---|
-| Do nothing | 55 | $78,000 |
-| Call only | 37 | $50,000 |
-| **Call + PAD offer (recommended)** | **31** | **$42,000** |
-| Call + PAD + cap every increase at 5% | 18 | $24,000 |
-
-- **Call + PAD:** about **24 fewer cancellations** and about **$35,000 of
-  annual premium kept**, for roughly 100 phone calls.
-- **Adding a 5% cap for everyone** saves about 13 more policies (about
-  $18,000). But it gives up roughly $14,500 of premium increases, so in the
-  first year it about breaks even. Use it selectively, not across the board.
-
-**Prove it works:** call a random 80 of the 100 and leave 20 alone, then
-compare their renewal rates. This is the only way to learn whether the calls
-really cause people to stay, rather than relying on the model's patterns. The
-result will also sharpen next year's model.
+**How to prove it works:** because the effect is not proven, set aside a random 20 to 25% of the 200 plans and do not contact them early. Then compare renewal rates between the two groups in February. That will show what the reviews are really worth before we roll them out to the whole book.
 
 ## Files
 
-- `clean.py`: the cleaning script. Re-run with `python3 clean.py`.
-- `renewals_2025.csv`, `renewals_due.csv`: the clean tables.
-- `renewals_due_predictions.csv`: every due policy with its predicted
-  probability of cancelling.
-- `scenarios/`: the program what-if inputs and their predictions. These are
-  for the impact estimate only; they are not the forecast.
+- `clean.py`: the cleaning script (run with `python3 clean.py`)
+- `renewals_2025.csv`, `renewals_due.csv`: the clean data
+- `renewals_due_predictions.csv`: every due plan's predicted chance of leaving
+- `scenario/`: the due plans rescored as if each had one account review (used only for section 6)

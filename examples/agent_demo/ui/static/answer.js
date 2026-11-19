@@ -11,6 +11,7 @@ const Answer = (() => {
   // Each step: its question, and its short name on the progress line.
   const STEPS = {
     clean: ["Is the data usable?", "Tidy"],
+    examples: ["Which past rows will it learn from?", "Choose"],
     evaluate: ["Can it be predicted?", "Check"],
     predict: ["Who is most at risk?", "Score"],
     explain: ["What drives it?", "Explain"],
@@ -48,7 +49,9 @@ const Answer = (() => {
   function reset(setup, agent, replaying) {
     const d = setup.dataset || {};
     S = { d, agent, replaying, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false };
-    const keys = (d.steps || []).map(([k]) => k).filter((k) => STEPS[k]);
+    // With a cleaning step, choosing the examples follows it: the clean
+    // past rows are what the tabular model learns from.
+    const keys = (d.steps || []).map(([k]) => k).flatMap((k) => (k === "clean" ? [k, "examples"] : [k])).filter((k) => STEPS[k]);
     $("#answer").innerHTML = `
       <ol class="progress" id="progress">${keys.map((k) => `<li data-step="${k}">${STEPS[k][1]}</li>`).join("")}</ol>
       <p class="status-line" id="agent-status"><span class="pulse-dot"></span>Working on it</p>
@@ -143,7 +146,10 @@ const Answer = (() => {
       if (res.ok) v = await res.json();
     } catch {}
     if (S !== run) return; // another run started meanwhile
-    if (!v) return write("clean", "The agent cleaned both exports with a script of its own.", "");
+    if (!v) {
+      write("clean", "The agent cleaned both exports with a script of its own.", "");
+      return write("examples", `It learns from the clean table of ${esc(S.d.history || "past rows")}, one row per ${esc(S.d.entity || "record")}.`, "");
+    }
     const removed = (v.removed || []).map((x) => `${fmt(x.n)} ${x.what.replace(/ \(.*\)$/, "")}`);
     const top = (v.columns || []).filter((c) => c.kind === "category" && c.before > c.after).sort((a, b) => b.before - a.before)[0];
     const sentence =
@@ -151,8 +157,56 @@ const Answer = (() => {
       `The agent wrote a script that removed ${esc(list(removed))}` +
       (top ? `, and merged ${fmt(top.before)} spellings of ${esc(lower(label(top.clean)))} into ${fmt(top.after)}.` : ".");
     write("clean", sentence, cleanViz(v));
+    if (typeof Actions !== "undefined") Actions.cleaningView(v); // the work panel's cleaning tile, too
     const table = S.steps.get("clean").el.querySelector(".tidy-table");
     setTimeout(() => S === run && flip(table, true), 2200); // the mess first, then the fix
+    examples(v);
+  }
+
+  // ---- 02 · which past rows will it learn from? -----------------------------------
+  // The cohort: who counts once, what counts as the outcome (the export's
+  // spellings, read one way or the other), and what each row says.
+  function examples(v) {
+    const e = v.examples;
+    if (!e) return write("examples", `It learns from ${fmt(v.rows_after)} past ${esc(S.d.entity || "rows")}, each counted once.`, "");
+    const classes = e.outcome?.classes || [];
+    const pos = classes.find((c) => c.value === String(S.d.positive));
+    const rest = classes.filter((c) => c !== pos);
+    const said = classes.reduce((n, c) => n + c.spellings.length, 0);
+    const outcome = S.d.outcome || "the outcome";
+    const sentence =
+      `It learns from <b>${fmt(e.rows)}</b> past ${esc(S.d.entity || "rows")}, each counted once` +
+      (pos ? `: <b>${fmt(pos.n)}</b> ${esc(outcome)}, ${fmt(rest.reduce((n, c) => n + c.n, 0))} didn't.` : ".") +
+      (pos && said > classes.length ? ` The export wrote the outcome ${words(said)} ways; the agent read ${esc(list(pos.spellings.map((x) => `“${x}”`)))} as ${esc(outcome)}.` : "");
+    write("examples", sentence, examplesViz(v, e, pos, rest));
+  }
+
+  function examplesViz(v, e, pos, rest) {
+    const chips = (xs) => xs.map((x) => `<span class="chip">${esc(x).replace(/^ | $/g, "␣")}</span>`).join("");
+    const removed = (v.removed || []).map((x) => `<span class="chip">−${fmt(x.n)} ${esc(x.what.replace(/ \(.*\)$/, ""))}</span>`).join("");
+    const total = (pos?.n || 0) + rest.reduce((n, c) => n + c.n, 0);
+    const outcome = pos
+      ? `<div class="ex-tile">
+          <div class="ex-k">What counts as ${esc(S.d.outcome || "the outcome")}</div>
+          <div class="ex-map"><span class="ex-from">${chips(pos.spellings)}</span><span class="arrow">→</span><span class="ex-to pos">${esc(S.d.outcome || pos.value)}</span>
+            <span class="ex-from">${chips(rest.flatMap((c) => c.spellings))}</span><span class="arrow">→</span><span class="ex-to">not ${esc(S.d.outcome || "")}</span></div>
+          <div class="ex-bar" ${tipAttr(`${fmt(pos.n)} of ${fmt(total)}`)}><i style="width:${(pos.n / total) * 100}%"></i></div>
+          <div class="ex-legend"><span>${fmt(pos.n)} ${esc(S.d.outcome || "")}</span><span>${fmt(total - pos.n)} not ${esc(S.d.outcome || "")}</span></div>
+        </div>`
+      : "";
+    return `<div class="ex">
+        <div class="ex-tile">
+          <div class="ex-k">Who counts</div>
+          <div class="ex-big">${v.rows_before > e.rows ? `<s>${fmt(v.rows_before)}</s>` : ""}${fmt(e.rows)}</div>
+          <div class="ex-chips">${removed}</div>
+        </div>
+        ${outcome}
+        <div class="ex-tile">
+          <div class="ex-k">What each row says</div>
+          <div class="ex-big">${fmt(e.features)}</div>
+          <div class="ex-sub">columns each, not counting the ID</div>
+        </div>
+      </div>`;
   }
 
   function flip(table, tidy) {
@@ -184,7 +238,7 @@ const Answer = (() => {
       <div class="merges">${merges}</div>`;
   }
 
-  // ---- 02 · can it be predicted? -------------------------------------------------
+  // ---- 03 · can it be predicted? -------------------------------------------------
   function evaluate(r) {
     const m = r.best_by;
     const ok = (r.results || []).filter((x) => !x.error && x.metrics?.[m] != null);
@@ -210,7 +264,7 @@ const Answer = (() => {
     write("evaluate", sentence, viz);
   }
 
-  // ---- 03 · who is most at risk? -------------------------------------------------
+  // ---- 04 · who is most at risk? -------------------------------------------------
   function predict(r, args = {}) {
     S.predicted = true;
     const key = r.ranked_by || "";
@@ -239,7 +293,7 @@ const Answer = (() => {
     write("predict", sentence, rows ? `<table class="ranked"><tbody>${rows}</tbody></table>` : "");
   }
 
-  // ---- 04 · what drives it? -------------------------------------------------------
+  // ---- 05 · what drives it? -------------------------------------------------------
   function explain(r) {
     const top = (r.importance || []).filter((i) => i.score_drop > 0).slice(0, 6);
     if (!top.length) return write("explain", "No single column stands out.", "");
@@ -255,7 +309,7 @@ const Answer = (() => {
     write("explain", sentence, viz);
   }
 
-  // ---- 05 · what could change it? --------------------------------------------------
+  // ---- 06 · what could change it? --------------------------------------------------
   function whatIf(r, args = {}) {
     const pos = S.d.positive || "Yes";
     const res = r.results || [];

@@ -129,7 +129,10 @@ class ClaudeParser(Parser):
                     },
                 }
             ]
-        content = (raw.get("message") or {}).get("content")
+        # Only the assistant's and the tools' messages are objects; a system
+        # notice (e.g. "permission_denied") carries its message as text.
+        message = raw.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
             return []
         events = []

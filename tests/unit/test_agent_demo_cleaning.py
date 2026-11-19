@@ -75,6 +75,50 @@ def test_categories_report_spellings_and_the_most_spelled_value(run):
     assert (status["before"], status["after"]) == (4, 2)
 
 
+def test_examples_count_the_rows_and_read_the_outcome_spellings(run):
+    e = cleaning.summarize(
+        run / "raw.csv",
+        run / "clean.csv",
+        "Policy ID",
+        "policy_id",
+        COLUMNS,
+        "cancelled",
+    )["examples"]
+    assert (e["rows"], e["features"]) == (5, 3)  # province, premium, age
+    assert e["outcome"]["raw"] == "Status"
+    by = {c["value"]: c for c in e["outcome"]["classes"]}
+    assert by["Yes"] == {"value": "Yes", "n": 2, "spellings": ["Cancelled", "cxl"]}
+    assert by["No"] == {"value": "No", "n": 3, "spellings": ["RENEWED", "Renewed"]}
+
+
+def test_rows_with_no_outcome_are_not_examples_and_spellings_keep_their_spaces(
+    tmp_path,
+):
+    (tmp_path / "raw.csv").write_text(
+        "Policy ID,Status\nA-1,Renewed\nA-2,Renewed \nA-3,cxl\nA-4,N/A\n"
+    )
+    (tmp_path / "clean.csv").write_text(
+        "policy_id,cancelled\nA-1,No\nA-2,No\nA-3,Yes\nA-4,\n"
+    )
+    e = cleaning.summarize(
+        tmp_path / "raw.csv",
+        tmp_path / "clean.csv",
+        "Policy ID",
+        "policy_id",
+        {"Status": "cancelled"},
+        "cancelled",
+    )["examples"]
+    assert (e["rows"], e["unlabeled"]) == (3, 1)
+    by = {c["value"]: c for c in e["outcome"]["classes"]}
+    assert set(by) == {"Yes", "No"}  # no "nan" class
+    assert by["No"]["spellings"] == ["Renewed", "Renewed "]
+
+
+def test_examples_without_a_target_give_only_the_rows(run):
+    e = view(run)["examples"]
+    assert e == {"rows": 5, "features": 4}  # every column but the id
+
+
 def test_numbers_report_text_converted_and_impossible_values_emptied(run):
     by = {c["clean"]: c for c in view(run)["columns"]}
     assert by["premium"] == {

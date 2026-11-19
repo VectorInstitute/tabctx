@@ -5,9 +5,15 @@ the id.
     {"file", "rows_before", "rows_after",
      "removed": [{"n", "what"}, ...],
      "columns": [{"raw", "clean", "kind", "before", "after", "example"}],
-     "sample": {"columns": [[raw, clean], ...], "rows": [[[raw, clean], ...]]}}
+     "sample": {"columns": [[raw, clean], ...], "rows": [[[raw, clean], ...]]},
+     "examples": {"rows", "features", "unlabeled"?, "outcome": {"raw", "clean",
+                  "classes": [{"value", "n", "spellings"}]}}}
 
-A categorical column reports how many spellings became how many values
+The examples are the past rows the model will learn from: how many,
+how many columns each, and how the export's outcome spellings were read
+(which is the question's definition: what counts as leaving). Rows left
+with no outcome are not examples; "unlabeled" counts them. A
+categorical column reports how many spellings became how many values
 (and the value with the most spellings); a numeric one, how many values
 were text (converted) or impossible (left empty). The sample is the rows
 with the most fixed cells. Which raw column became which clean one is the
@@ -68,6 +74,7 @@ def summarize(
     raw_id: str,
     clean_id: str,
     columns: dict[str, str],
+    target: str | None = None,
 ) -> dict:
     raw = pd.read_csv(raw_file, dtype=str, keep_default_na=False)
     clean = pd.read_csv(clean_file)
@@ -135,7 +142,41 @@ def summarize(
         "removed": [x for x in removed if x["n"]],
         "columns": out,
         "sample": _sample(joined, pairs),
+        "examples": _examples(clean, joined, columns, clean_id, target),
     }
+
+
+def _examples(clean, joined, columns, clean_id, target) -> dict:
+    """The rows the model learns from, and how the outcome was read."""
+    out = {
+        "rows": len(clean),
+        "features": len([c for c in clean if c not in (clean_id, target)]),
+    }
+    raw_target = next((r for r, c in columns.items() if c == target), None)
+    if target in clean and raw_target in joined:
+        # As the export wrote it (a trailing space is a spelling too); rows
+        # with no outcome after cleaning belong to no class.
+        said = joined[raw_target].astype(str)
+        read = joined[CLEAN + target].astype("string")
+        counts = clean[target].dropna().astype(str).value_counts()
+        out["rows"] = int(counts.sum())  # a row with no outcome teaches nothing
+        if unlabeled := len(clean) - out["rows"]:
+            out["unlabeled"] = unlabeled
+        out["outcome"] = {
+            "raw": raw_target,
+            "clean": target,
+            "classes": [
+                {
+                    "value": value,
+                    "n": int(n),
+                    "spellings": sorted(
+                        said[(read == value).fillna(False)].unique().tolist()
+                    ),
+                }
+                for value, n in counts.items()
+            ],
+        }
+    return out
 
 
 def _sample(joined: pd.DataFrame, pairs: list[tuple[str, str]]) -> dict:
@@ -173,7 +214,14 @@ def for_run(run_dir: Path, scenario, saved: bool = False) -> dict | None:
     clean = _readable(run_dir, getattr(task, "CLEAN_HISTORY", None))
     if not columns or raw is None or clean is None:
         return None
-    return _cached(raw, clean, scenario.raw_id, task.ID, tuple(columns.items()))
+    return _cached(
+        raw,
+        clean,
+        scenario.raw_id,
+        task.ID,
+        tuple(columns.items()),
+        getattr(task, "TARGET", None),
+    )
 
 
 def _readable(run_dir: Path, name: str | None) -> tuple[str, int, int] | None:
@@ -196,10 +244,12 @@ def _readable(run_dir: Path, name: str | None) -> tuple[str, int, int] | None:
 
 
 @lru_cache(maxsize=32)
-def _cached(raw, clean, raw_id, clean_id, columns) -> dict | None:
+def _cached(raw, clean, raw_id, clean_id, columns, target=None) -> dict | None:
     """summarize(), once per version of the two files (their size and time
     are part of the key)."""
     try:
-        return summarize(Path(raw[0]), Path(clean[0]), raw_id, clean_id, dict(columns))
+        return summarize(
+            Path(raw[0]), Path(clean[0]), raw_id, clean_id, dict(columns), target
+        )
     except (KeyError, ValueError, TypeError, pd.errors.ParserError):
         return None  # the agent's table isn't what the prompt asked for

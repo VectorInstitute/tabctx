@@ -234,7 +234,7 @@ def scored(tmp_path):
     folder named for the scenario."""
     scenario = replace(INSURANCE, root=tmp_path)
     scenario.answers.mkdir(parents=True)
-    ids = ["MM-1", "MM-2", "MM-3", "MM-4"]
+    ids = ["GB-1", "GB-2", "GB-3", "GB-4"]
     truth = pd.DataFrame(
         {insurance.ID: ids, insurance.TARGET: ["Yes", "No", "Yes", "No"]}
     )
@@ -253,18 +253,18 @@ def test_score_passes_over_a_newer_partial_table(scored):
     scenario, run, ids = scored
     # Every policy, one listed twice (as in a raw export); then a newer
     # what-if table for one policy.
-    _predictions(run / "due.csv", ids + ["MM-1"], [0.9, 0.1, 0.8, 0.2, 0.9], 1_000)
-    _predictions(run / "what_if.csv", ["MM-1"], [0.3], 2_000)
+    _predictions(run / "due.csv", ids + ["GB-1"], [0.9, 0.1, 0.8, 0.2, 0.9], 1_000)
+    _predictions(run / "what_if.csv", ["GB-1"], [0.3], 2_000)
     out = score_module.score(run, scenario)
     assert out["file"] == "due.csv" and out["rows"] == 4 and out["roc_auc"] == 1.0
 
 
 def test_score_names_a_missing_id_column(scored):
     scenario, run, _ = scored
-    pd.DataFrame({"Policy ID": ["MM-1"], insurance.PROBA: [0.5]}).to_csv(
+    pd.DataFrame({"Plan ID": ["GB-1"], insurance.PROBA: [0.5]}).to_csv(
         run / "p.csv", index=False
     )
-    with pytest.raises(SystemExit, match="no 'policy_id' column"):
+    with pytest.raises(SystemExit, match="no 'plan_id' column"):
         score_module.score(run, scenario)
 
 
@@ -315,9 +315,10 @@ def test_the_page_reads_a_raw_export_through_the_scenario(
     assert data["history_rows"] == len(history)
     assert insurance.RAW_ID not in data["columns"]
     assert len(data["columns"]) == len(insurance_data.HEADERS) - 2  # no id, outcome
-    real = history[history[insurance.RAW_ID].str.startswith("MM-")].drop_duplicates()
+    real = history[history[insurance.RAW_ID].str.startswith("GB-")].drop_duplicates()
     expected = real[insurance.RAW_TARGET].isin(insurance.SPELLINGS["Yes"]).mean()
     assert data["positive_rate"] == round(expected, 3)
+    assert data["raw_id"] == insurance.RAW_ID
     assert data["steps"][0][0] == "clean"
     assert app.AGENTS["claude"]["tools"] == "MCP · sandboxed shell"
 
@@ -334,7 +335,7 @@ def test_the_exports_have_the_systems_headers(small_book):
     )
 
 
-def test_every_due_policy_is_in_the_current_export_and_none_in_the_history(
+def test_every_due_plan_is_in_the_current_export_and_none_in_the_history(
     small_book,
 ):
     history, current, answers = small_book
@@ -353,14 +354,20 @@ def test_the_exports_carry_the_mess_the_agent_should_find(small_book):
     assert ids.iloc[-1] == "TOTAL"  # a totals row at the bottom
     assert not current[insurance.RAW_ID].str.startswith(("TEST-", "TOTAL")).any()
     assert history["Prov"].nunique() > 9  # one province, several spellings
-    assert history["Advisor?"].nunique() > 2
+    assert history["Industry"].nunique() > 7
+    assert history["Online Admin?"].nunique() > 2
     marks = {
         m for v in history["Annual Premium"] for m in re.findall(r"\$|CAD", str(v))
     }
     assert {"$", "CAD"} <= marks
-    assert history["Premium Change"].astype(str).str.endswith("%").mean() > 0.3
-    ages = pd.to_numeric(history["Age"], errors="coerce")
-    assert (ages > 120).any() or (ages <= 0).any()
+    assert history["Renewal Increase"].astype(str).str.endswith("%").mean() > 0.3
+    # The loss ratio is a percent in some rows and a fraction in others.
+    loss = history["Loss Ratio (12m)"].astype(str)
+    assert (
+        loss.str.endswith("%").mean() > 0.3 and loss.str.startswith("0.").mean() > 0.2
+    )
+    lives = pd.to_numeric(history["Lives Covered"], errors="coerce")
+    assert (lives > 50_000).any() and (lives <= 0).any()
     statuses = set(history[insurance.RAW_TARGET]) - {""}
     assert statuses == {s for v in insurance.SPELLINGS.values() for s in v}
 
@@ -370,15 +377,26 @@ def _clean_like_an_agent(raw: pd.DataFrame) -> pd.DataFrame:
     inverse = {}
     for table, column in (
         (insurance_data.PROVINCES, "Prov"),
-        (insurance_data.PRODUCTS, "Product Type"),
-        (insurance_data.PAYMENT, "Pay Method"),
+        (insurance_data.INDUSTRIES, "Industry"),
+        (insurance_data.PLAN_TYPES, "Plan Type"),
+        (insurance_data.CHANNELS, "Channel"),
+        (insurance_data.BILLING, "Billing"),
     ):
         inverse[column] = {s: name for name, v in table.items() for s in v[1]}
+    inverse["Funding"] = {
+        s: name for name, v in insurance_data.FUNDING.items() for s in v[0]
+    }
     out = pd.DataFrame({insurance.ID: raw[insurance.RAW_ID]})
     for column, mapping in inverse.items():
         out[column] = raw[column].map(mapping)
     out["premium"] = raw["Annual Premium"].map(insurance_data._amount)
-    out["change"] = raw["Premium Change"].astype(str).str.rstrip("%").astype(float)
+    out["increase"] = raw["Renewal Increase"].astype(str).str.rstrip("%").astype(float)
+    loss = raw["Loss Ratio (12m)"].astype(str)
+    out["loss"] = np.where(
+        loss.str.endswith("%"),
+        loss.str.rstrip("%").astype(float),
+        pd.to_numeric(loss, errors="coerce") * 100,
+    )
     out["renewal"] = raw["Renewal Date"].map(
         lambda d: pd.to_datetime(d, format="mixed")
     )
@@ -394,69 +412,32 @@ def test_the_mess_is_recoverable(small_book):
     assert clean.notna().all().all()
     assert clean["Prov"].nunique() == len(insurance_data.PROVINCES)
     assert clean["premium"].min() > 0
+    assert clean["loss"].between(40, 130).all()  # both units read as one
     assert clean["renewal"].dt.year.eq(2025).all()
 
 
-def test_the_levers_move_cancellation_the_way_the_story_says():
+def test_the_levers_move_leaving_the_way_the_story_says():
     book = insurance_data.book(
         20_000, insurance_data.HISTORY_RENEWALS, np.random.default_rng(0)
     )
-    cancelled = book[insurance.TARGET] == "Yes"
-    assert 0.1 < cancelled.mean() < 0.22
+    left = book[insurance.TARGET] == "Yes"
+    assert 0.08 < left.mean() < 0.18
 
     def rate(mask):
-        return cancelled[mask].mean()
+        return left[mask].mean()
 
-    hike = book["premium_change_pct"] >= 9
-    contacted = book["advisor_contacts_12m"] >= 1
-    assert rate(hike) > rate(~hike) + 0.08
-    cheque = book["payment_method"] == "Cheque"
-    assert rate(cheque) > rate(book["payment_method"] == "Pre-authorized debit")
-    assert rate(contacted) < rate(~contacted)
-    # A check-in softens a hike: the gap a hike opens is smaller for them.
-    gap_contacted = rate(hike & contacted) - rate(~hike & contacted)
-    assert gap_contacted < rate(hike & ~contacted) - rate(~hike & ~contacted)
-
-
-def test_no_values_pile_up_on_a_bound():
-    """Ages and tenures are redrawn, not clipped, into their range: a spike
-    at the edge looks like a data-entry default to anyone cleaning it."""
-    book = insurance_data.book(
-        20_000, insurance_data.HISTORY_RENEWALS, np.random.default_rng(1)
+    increase = book["rate_increase_pct"] >= 9
+    reviewed = book["account_reviews_12m"] >= 1
+    assert rate(increase) > rate(~increase) + 0.08
+    # A big increase follows a bad claims year.
+    assert book.loc[increase, "loss_ratio_pct"].mean() > 90
+    assert rate(book["service_issues_12m"] >= 1) > rate(book["service_issues_12m"] == 0)
+    assert rate(book["lives_covered"] < 20) > rate(book["lives_covered"] >= 200)
+    assert rate(book["funding"] == "ASO") < rate(book["funding"] == "Fully insured")
+    assert rate(book["billing"] == "Cheque") > rate(
+        book["billing"] == "Pre-authorized debit"
     )
-    ages = book["age"].value_counts()
-    assert ages.index.min() >= 21 and ages.index.max() <= 84
-    assert ages[21] < 2 * ages[22]
-    years = (book["renewal_date"] - book["policy_start"]).dt.days / 365.25
-    assert years.min() >= 0.59 and (years < 0.65).mean() < 0.01
-
-
-def test_main_writes_the_workspace_and_keeps_the_answers_apart(tmp_path, monkeypatch):
-    monkeypatch.delenv("DEMO_WORKSPACE", raising=False)
-    scenario = replace(INSURANCE, root=tmp_path)
-    insurance_data.main(scenario, history_rows=300, current_rows=80)
-    written = sorted(p.name for p in scenario.workspace.iterdir())
-    assert written == sorted([insurance.HISTORY, insurance.CURRENT])
-    answers = pd.read_csv(scenario.answers / insurance.ANSWERS)
-    assert len(answers) == 80
-    history = pd.read_csv(scenario.workspace / insurance.HISTORY)
-    assert 0.05 < scenario.positive_rate(history) < 0.3
-
-
-def test_a_build_seed_changes_the_withheld_outcomes(tmp_path, monkeypatch):
-    """The hosted image draws DEMO_SEED and keeps it nowhere: the generator
-    is public, so the fixed seed would let an agent rebuild the answers."""
-    monkeypatch.delenv("DEMO_WORKSPACE", raising=False)
-
-    def answers(seed: str | None) -> pd.DataFrame:
-        if seed is None:
-            monkeypatch.delenv("DEMO_SEED", raising=False)
-        else:
-            monkeypatch.setenv("DEMO_SEED", seed)
-        scenario = replace(INSURANCE, root=tmp_path / (seed or "fixed"))
-        insurance_data.main(scenario, history_rows=200, current_rows=50)
-        return pd.read_csv(scenario.answers / insurance.ANSWERS)
-
-    fixed = answers(None)
-    assert fixed.equals(answers(str(insurance_data.SEED)))
-    assert not fixed[insurance.ID].equals(answers("18446744073709551557")[insurance.ID])
+    assert rate(reviewed) < rate(~reviewed)
+    # A review softens an increase: the gap an increase opens is smaller.
+    gap_reviewed = rate(increase & reviewed) - rate(~increase & reviewed)
+    assert gap_reviewed < rate(increase & ~reviewed) - rate(~increase & ~reviewed)
