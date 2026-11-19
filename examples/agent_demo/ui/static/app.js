@@ -66,6 +66,14 @@ const state = {
   queue: [],
   replaying: false,
   stats: null,
+  // Presenting: the work fills the screen, and a replay waits for the
+  // presenter before each command (→, space or a clicker) unless on auto.
+  present: false,
+  auto: false,
+  waiting: false,
+  go: false,
+  stepAt: 0,
+  stepTotal: 0,
 };
 
 // ---- class colors: the entity keeps its color everywhere -------------------
@@ -115,6 +123,7 @@ async function init() {
   initTheme();
   initTooltips();
   initPanels();
+  initPresent();
   const setup = await loadSetup();
   renderComposer(setup.dataset);
   $("#prompt").value = setup.prompt;
@@ -317,7 +326,7 @@ function notice(text) {
 function watch(agent, replay) {
   state.source?.close();
   clearInterval(state.timer);
-  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent });
+  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0 });
   const info = state.setup.agents.find((a) => a.id === agent);
   $("#empty").hidden = true;
   $("#thread").hidden = false;
@@ -340,7 +349,10 @@ function watch(agent, replay) {
     state.started = replay ? Date.now() : s.started * 1000;
     if (!replay) state.timer = setInterval(() => updateMeta(info), 500);
   });
-  source.addEventListener("event", (e) => enqueue(() => handle(JSON.parse(e.data), info)));
+  source.addEventListener("event", (e) => {
+    const ev = JSON.parse(e.data);
+    enqueue(() => handle(ev, info), ev.type === "tool_call" ? "call" : "");
+  });
   source.addEventListener("outcome", (e) => {
     source.close();
     enqueue(() => finish(JSON.parse(e.data), info));
@@ -360,23 +372,98 @@ function watch(agent, replay) {
 }
 
 // A replay plays at a readable pace; a live run shows events as they come.
-function enqueue(fn) {
-  if (!state.replaying) return fn();
-  state.queue.push(fn);
-  if (state.queue.length === 1) drain();
+// Presenting, a replay stops before each command until the presenter moves
+// on, or plays at a pace to talk over (auto).
+function enqueue(fn, kind = "") {
+  if (!state.replaying) {
+    const out = fn();
+    follow();
+    return out;
+  }
+  if (kind === "call") state.stepTotal++;
+  state.queue.push({ fn, kind });
+  renderStepper();
+  if (state.queue.length === 1 && !state.waiting) drain();
 }
 function drain() {
-  const fn = state.queue[0];
-  if (!fn) return;
-  let delay = 60;
+  const item = state.queue[0];
+  if (!item) return renderStepper();
+  if (state.present && item.kind === "call" && state.stepAt > 0 && !state.auto && !state.go) {
+    state.waiting = true;
+    return renderStepper();
+  }
+  state.go = false;
+  if (item.kind === "call") state.stepAt++;
+  let slow = false;
   try {
-    if (fn() === "slow") delay = 420;
+    slow = item.fn() === "slow";
+    follow();
   } finally {
+    renderStepper();
     // One event that fails to draw must not stop the rest of the replay.
+    const pace = state.present ? (slow ? (state.auto ? 2400 : 500) : 160) : slow ? 420 : 60;
     setTimeout(() => {
       state.queue.shift();
       drain();
-    }, delay);
+    }, pace);
+  }
+}
+function advance() {
+  if (!state.waiting) return;
+  state.waiting = false;
+  state.go = true;
+  drain();
+}
+
+function initPresent() {
+  const on = (present) => {
+    state.present = present;
+    document.body.classList.toggle("present", present);
+    if (present) document.body.classList.add("show-work");
+    else document.body.classList.toggle("show-work", $("#work-toggle").checked);
+    if (!present && state.waiting) {
+      state.waiting = false;
+      drain();
+    }
+    renderStepper();
+  };
+  on(new URLSearchParams(location.search).has("present"));
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest("input, textarea, select, [contenteditable]") || e.metaKey || e.ctrlKey || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (key === "p") return on(!state.present);
+    if (!state.present) return;
+    if (["arrowright", " ", "pagedown", "enter"].includes(key)) {
+      e.preventDefault();
+      advance();
+    } else if (key === "a") {
+      state.auto = !state.auto;
+      if (state.auto) advance();
+      renderStepper();
+    }
+  });
+}
+
+function renderStepper() {
+  const el = $("#stepper");
+  const show = state.present && state.replaying && state.stepTotal > 0;
+  el.hidden = !show;
+  if (!show) return;
+  const done = !state.queue.length;
+  el.innerHTML = done
+    ? `<span>All ${state.stepTotal} steps shown</span>`
+    : `<span class="n">${state.stepAt} / ${state.stepTotal}</span>${
+        state.auto ? "<span>playing</span><kbd>A</kbd><span>to pause</span>" : `<kbd>→</kbd><span>${state.waiting ? "next step" : "…"}</span><kbd>A</kbd><span>auto</span>`
+      }`;
+  el.classList.toggle("ready", state.waiting);
+}
+
+// Keep the newest tile in view: in the work panel when it scrolls on its
+// own, else the page (a live run only, so a replay leaves the reader be).
+function follow() {
+  const work = $("#work");
+  if (document.body.classList.contains("show-work") && work.scrollHeight > work.clientHeight + 4 && getComputedStyle(work).overflowY === "auto") {
+    work.scrollTo({ top: work.scrollHeight, behavior: "smooth" });
   }
 }
 
@@ -493,7 +580,7 @@ function renderSteps() {
 }
 
 const scrollDown = () => {
-  if (!state.replaying) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
+  if (!state.replaying && !document.body.classList.contains("show-work")) window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 };
 
 // ---- building blocks ---------------------------------------------------------
