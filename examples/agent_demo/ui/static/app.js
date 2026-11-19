@@ -74,6 +74,8 @@ const state = {
   go: false,
   stepAt: 0,
   stepTotal: 0,
+  gen: 0, // a new run or replay starts a new generation; old timers stand down
+  pinned: true, // the work panel follows the newest tile until the viewer scrolls up
 };
 
 // ---- class colors: the entity keeps its color everywhere -------------------
@@ -326,7 +328,7 @@ function notice(text) {
 function watch(agent, replay) {
   state.source?.close();
   clearInterval(state.timer);
-  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0 });
+  Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0, gen: state.gen + 1, pinned: true });
   const info = state.setup.agents.find((a) => a.id === agent);
   $("#empty").hidden = true;
   $("#thread").hidden = false;
@@ -395,6 +397,7 @@ function drain() {
   state.go = false;
   if (item.kind === "call") state.stepAt++;
   let slow = false;
+  const gen = state.gen;
   try {
     slow = item.fn() === "slow";
     follow();
@@ -403,6 +406,7 @@ function drain() {
     // One event that fails to draw must not stop the rest of the replay.
     const pace = state.present ? (slow ? (state.auto ? 2400 : 500) : 160) : slow ? 420 : 60;
     setTimeout(() => {
+      if (gen !== state.gen) return; // a new run started meanwhile: its queue isn't ours
       state.queue.shift();
       drain();
     }, pace);
@@ -433,7 +437,10 @@ function initPresent() {
     const key = e.key.toLowerCase();
     if (key === "p") return on(!state.present);
     if (!state.present) return;
-    if (["arrowright", " ", "pagedown", "enter"].includes(key)) {
+    // Space and Enter on a focused button or link keep their own meaning.
+    const control = e.target.closest("button, a, summary, [role=button]");
+    if (["arrowright", "pagedown"].includes(key) || (!control && [" ", "enter"].includes(key))) {
+      if (!state.waiting) return; // nothing to show next: the key keeps its usual job
       e.preventDefault();
       advance();
     } else if (key === "a") {
@@ -462,7 +469,19 @@ function renderStepper() {
 // own, else the page (a live run only, so a replay leaves the reader be).
 function follow() {
   const work = $("#work");
-  if (document.body.classList.contains("show-work") && work.scrollHeight > work.clientHeight + 4 && getComputedStyle(work).overflowY === "auto") {
+  if (!work.dataset.watched) {
+    work.dataset.watched = "1";
+    // Our own smooth scrolls pass through "far from the bottom": only the viewer's count.
+    work.addEventListener(
+      "scroll",
+      () => {
+        if (performance.now() - (state.autoScroll || 0) > 900) state.pinned = work.scrollHeight - work.scrollTop - work.clientHeight < 120;
+      },
+      { passive: true },
+    );
+  }
+  if (state.pinned && document.body.classList.contains("show-work") && work.scrollHeight > work.clientHeight + 4 && getComputedStyle(work).overflowY === "auto") {
+    state.autoScroll = performance.now();
     work.scrollTo({ top: work.scrollHeight, behavior: "smooth" });
   }
 }

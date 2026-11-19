@@ -30,6 +30,8 @@ const Actions = (() => {
     other: '<path d="M4 17l6-5-6-5M12 19h8"/>',
   };
 
+  // Output read for a picture, at most (an agent can print megabytes).
+  const LIMIT = 40_000;
   // Columns of the raw export, so a check can show which ones it looked at.
   let columns = [];
   let last = null; // the tile a following check can fold into
@@ -42,21 +44,21 @@ const Actions = (() => {
   // What a command is, from the command alone.
   function classify(tool, a = {}) {
     const t = tool.toLowerCase();
-    const path = a.file_path || a.path || "";
+    const path = a.file_path || a.path || a.absolute_path || "";
     if (/^(write|create|write_file)$/.test(t)) {
       if (/\.md$/i.test(path)) return { kind: "report", title: "Wrote the report" };
       return { kind: "script", title: /clean/i.test(path) ? "Wrote the cleaning script" : `Wrote ${fileOf(path)}` };
     }
-    if (/^(edit|multiedit|str_replace|apply_patch|patch)$/.test(t)) return { kind: "edit", title: `Adjusted ${fileOf(path) || "a script"}` };
-    if (/^(read|read_file|view|cat)$/.test(t)) return { kind: "look", title: `Read ${fileOf(path)}` };
-    if (/^(ls|glob|grep|find|list)$/.test(t)) return { kind: "look", title: "Looked around the folder" };
+    if (/^(edit|multiedit|replace|str_replace|apply_patch|patch)$/.test(t)) return { kind: "edit", title: `Adjusted ${fileOf(path) || "a script"}` };
+    if (/^(read|read_file|read_many_files|view|cat)$/.test(t)) return { kind: "look", title: `Read ${fileOf(path)}` };
+    if (/^(ls|glob|grep|find|list|list_directory|search_file_content)$/.test(t)) return { kind: "look", title: "Looked around the folder" };
     const cmd = commandOf(tool, a);
     if (!cmd) return { kind: "other", title: a.description || tool };
-    if (/\bmd5|sha\d*sum|cmp\b|diff\b/.test(cmd)) return { kind: "verify", title: "Re-ran it to confirm nothing changed" };
-    const script = cmd.match(/python3?\s+([\w./-]+\.py)/);
+    if (/(?:^|[\s;&|(])(?:md5(?:sum)?|sha\d*sum|cmp|diff)\s/m.test(cmd)) return { kind: "verify", title: "Re-ran it to confirm nothing changed" };
+    const script = cmd.match(/python3?(?:\s+-\w+)*\s+([\w./-]+\.py)/);
     if (script) return { kind: "run", title: /clean/i.test(script[1]) ? "Ran the cleaning" : `Ran ${fileOf(script[1])}`, file: script[1] };
     if (/python|pandas|read_csv|duckdb/.test(cmd)) {
-      if (/to_csv|to_parquet/.test(cmd)) return { kind: "prepare", title: "Built test files for the what-ifs" };
+      if (/to_csv|to_parquet/.test(cmd)) return { kind: "prepare", title: "Built new input files" };
       if (/_export\.|raw|\.xlsx/i.test(cmd)) return { kind: "profile", title: "Checked the raw data for problems" };
       return { kind: "analyze", title: "Checked a pattern in the clean data" };
     }
@@ -83,9 +85,9 @@ const Actions = (() => {
 
   // What a command did, from its output. Each piece only if the output says it.
   function picture(kind, call, text, a = {}) {
-    const out = String(text || "");
+    const out = String(text || "").slice(0, LIMIT);
     if (kind === "look") {
-      const files = [...out.matchAll(/^\s*(\d+)\s+(\S+\.csv)\s*$/gm)].map(([, k, f]) => [f, Number(k) - 1]);
+      const files = [...out.matchAll(/^[ \t]*(\d+)[ \t]+(\S+\.csv)[ \t]*$/gm)].map(([, k, f]) => [f, Number(k) - 1]);
       if (files.length) return `<div class="a-files">${files.map(([f, k]) => sheet(f, k)).join("")}</div>`;
       const named = [...new Set(commandOf("", a).match(/[\w.-]+\.csv/g) || [])];
       return named.length ? `<div class="a-files">${named.map((f) => sheet(f)).join("")}</div>` : "";
@@ -93,13 +95,13 @@ const Actions = (() => {
     if (kind === "profile") {
       const cols = columnsIn(commandOf("", a));
       const finds = [];
-      const dup = out.match(/dup\w*[^\d\n]{0,24}(\d+)/i);
+      const dup = out.match(/\bdup\w{0,15}\b[^\d\n]{0,24}(\d+)/i);
       if (dup && +dup[1]) finds.push(chip(`${n(dup[1])} duplicate rows`, "warn"));
       if (/\bTOTAL\b/.test(out)) finds.push(chip("a totals row", "warn"));
-      if (/\bTEST-\d+/.test(out)) finds.push(chip("test policies", "warn"));
+      if (/\bTEST-\d+/.test(out)) finds.push(chip("test records", "warn"));
       // A column with a handful of values written many ways: one bar each.
       const spell = new Map();
-      for (const [, c, k] of out.matchAll(/--\s*([\w ]+?)\s+nunique\s+(\d+)/g)) if (+k > 2 && +k < 60) spell.set(c, Math.max(+k, spell.get(c) || 0));
+      for (const [, c, k] of out.matchAll(/--[ \t]*(\w[\w ]{0,40}?)[ \t]+nunique[ \t]+(\d+)/g)) if (+k > 2 && +k < 60) spell.set(c, Math.max(+k, spell.get(c) || 0));
       const many = [...spell].sort((x, y) => y[1] - x[1]);
       const bars = many.length
         ? `<div class="a-spell"><span class="a-spell-k">${many.length} columns written many ways</span>${many
@@ -127,19 +129,20 @@ const Actions = (() => {
       return `<div class="a-ops">${ops.map(([, l]) => chip(l, "op")).join("")}${lines ? chip(`${lines} lines`, "faint") : ""}</div>`;
     }
     if (kind === "edit") {
-      const minus = String(a.old_string || "").split("\n").length;
-      const plus = String(a.new_string || "").split("\n").length;
-      return a.old_string != null ? `<div class="a-ops">${chip(`−${minus} line${minus > 1 ? "s" : ""}`, "minus")}${chip(`+${plus} line${plus > 1 ? "s" : ""}`, "plus")}</div>` : "";
+      const old = a.old_string ?? a.oldText;
+      const minus = String(old || "").split("\n").length;
+      const plus = String(a.new_string ?? a.newText ?? "").split("\n").length;
+      return old != null ? `<div class="a-ops">${chip(`−${minus} line${minus > 1 ? "s" : ""}`, "minus")}${chip(`+${plus} line${plus > 1 ? "s" : ""}`, "plus")}</div>` : "";
     }
     if (kind === "run") {
-      // One file's block: "N rows read" ... "M policies written".
+      // One file's block: "N rows read" ... "M plans written" (any noun).
       const first = out.split(/\n\s*\n/)[0];
       const read = first.match(/(\d[\d,]*)\s+rows read/);
       const wrote = first.match(/(\d[\d,]*)\s+\w+\s+written/);
       const rows = read && wrote ? `<div class="a-rows"><b>${n(read[1].replace(/,/g, ""))}</b><span>&rarr;</span><b>${n(wrote[1].replace(/,/g, ""))}</b><span class="faint">rows</span></div>` : "";
       const drops = [...first.matchAll(/dropped\s+(\d+)\s+([^(\n]+)/g)].map(([, k, what]) => chip(`−${k} ${what.replace(/exact |summary |['"]/g, "").trim()}`, "minus"));
-      const cols = [...first.matchAll(/^\s*-\s*(\w+):\s*(\d+)\s+spellings\s*->\s*\[([^\]]*)\]/gm)].map(([, c, k, to]) => collapse(c, +k, to.split(",").length));
-      const fixes = [...first.matchAll(/^\s*-\s*(?:(\w+):\s*)?(\d+)\s+(placeholder|impossible) values/gm)].map(([, col, k, w]) => chip(w === "impossible" ? `${k} impossible ${col || "value"}s emptied` : `${k} placeholders emptied`, "op"));
+      const cols = [...first.matchAll(/^[ \t]*-[ \t]*(\w+):[ \t]*(\d+)[ \t]+spellings[ \t]*->[ \t]*\[([^\]\n]*)\]/gm)].map(([, c, k, to]) => collapse(c, +k, to.split(",").length));
+      const fixes = [...first.matchAll(/^[ \t]*-[ \t]*(?:(\w+):[ \t]*)?(\d+)[ \t]+(placeholder|impossible) values/gm)].map(([, col, k, w]) => chip(w === "impossible" ? `${k} impossible ${col || "value"}s emptied` : `${k} placeholders emptied`, "op"));
       const dates = /dates in (\d+) formats/.exec(first);
       if (dates) fixes.push(chip(`${dates[1]} date formats read`, "op"));
       if (!rows && !drops.length && !cols.length) return "";
@@ -159,7 +162,8 @@ const Actions = (() => {
 
   function rawOf(tool, a = {}) {
     if (a.content != null) return `${a.file_path || a.path || ""}\n\n${a.content}`;
-    if (a.old_string != null) return `${a.file_path || ""}\n- ${a.old_string}\n+ ${a.new_string}`;
+    const old = a.old_string ?? a.oldText;
+    if (old != null) return `${a.file_path || a.path || ""}\n- ${old}\n+ ${a.new_string ?? a.newText ?? ""}`;
     return commandOf(tool, a) || JSON.stringify(a, null, 2);
   }
 
@@ -206,7 +210,7 @@ const Actions = (() => {
     }
     if (["script", "edit", "report"].includes(entry.kind)) return;
     // A folded tile draws once from everything its checks printed.
-    el._out = `${el._out || ""}\n${text || ""}`;
+    el._out = `${el._out || ""}\n${String(text || "").slice(0, LIMIT / 4)}`.slice(-LIMIT);
     el._cmd = `${el._cmd || ""}\n${commandOf(tool, args || {})}`;
     const viz = picture(entry.kind, null, el._out, { ...(args || {}), command: el._cmd });
     if (viz) el.querySelector(".a-viz").innerHTML = viz;
@@ -214,12 +218,13 @@ const Actions = (() => {
 
   return {
     reset(setup) {
-      columns = [...(setup?.dataset?.columns || []), "Policy ID"];
+      columns = [...(setup?.dataset?.columns || []), ...(setup?.dataset?.raw_id ? [setup.dataset.raw_id] : [])];
       last = null;
     },
     add,
     result,
     classify,
+    commandOf,
     picture: (kind, text, args) => picture(kind, null, text, args),
   };
 })();

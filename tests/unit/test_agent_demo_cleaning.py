@@ -91,6 +91,29 @@ def test_examples_count_the_rows_and_read_the_outcome_spellings(run):
     assert by["No"] == {"value": "No", "n": 3, "spellings": ["RENEWED", "Renewed"]}
 
 
+def test_rows_with_no_outcome_are_not_examples_and_spellings_keep_their_spaces(
+    tmp_path,
+):
+    (tmp_path / "raw.csv").write_text(
+        "Policy ID,Status\nA-1,Renewed\nA-2,Renewed \nA-3,cxl\nA-4,N/A\n"
+    )
+    (tmp_path / "clean.csv").write_text(
+        "policy_id,cancelled\nA-1,No\nA-2,No\nA-3,Yes\nA-4,\n"
+    )
+    e = cleaning.summarize(
+        tmp_path / "raw.csv",
+        tmp_path / "clean.csv",
+        "Policy ID",
+        "policy_id",
+        {"Status": "cancelled"},
+        "cancelled",
+    )["examples"]
+    assert (e["rows"], e["unlabeled"]) == (3, 1)
+    by = {c["value"]: c for c in e["outcome"]["classes"]}
+    assert set(by) == {"Yes", "No"}  # no "nan" class
+    assert by["No"]["spellings"] == ["Renewed", "Renewed "]
+
+
 def test_examples_without_a_target_give_only_the_rows(run):
     e = view(run)["examples"]
     assert e == {"rows": 5, "features": 4}  # every column but the id

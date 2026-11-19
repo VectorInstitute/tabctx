@@ -6,12 +6,13 @@ the id.
      "removed": [{"n", "what"}, ...],
      "columns": [{"raw", "clean", "kind", "before", "after", "example"}],
      "sample": {"columns": [[raw, clean], ...], "rows": [[[raw, clean], ...]]},
-     "examples": {"rows", "features", "outcome": {"raw", "clean",
+     "examples": {"rows", "features", "unlabeled"?, "outcome": {"raw", "clean",
                   "classes": [{"value", "n", "spellings"}]}}}
 
 The examples are the past rows the model will learn from: how many,
 how many columns each, and how the export's outcome spellings were read
-(which is the question's definition: what counts as cancelling). A
+(which is the question's definition: what counts as leaving). Rows left
+with no outcome are not examples; "unlabeled" counts them. A
 categorical column reports how many spellings became how many values
 (and the value with the most spellings); a numeric one, how many values
 were text (converted) or impossible (left empty). The sample is the rows
@@ -153,9 +154,14 @@ def _examples(clean, joined, columns, clean_id, target) -> dict:
     }
     raw_target = next((r for r, c in columns.items() if c == target), None)
     if target in clean and raw_target in joined:
-        said = joined[raw_target].str.strip()
-        read = joined[CLEAN + target].astype(str)
-        counts = clean[target].astype(str).value_counts()
+        # As the export wrote it (a trailing space is a spelling too); rows
+        # with no outcome after cleaning belong to no class.
+        said = joined[raw_target].astype(str)
+        read = joined[CLEAN + target].astype("string")
+        counts = clean[target].dropna().astype(str).value_counts()
+        out["rows"] = int(counts.sum())  # a row with no outcome teaches nothing
+        if unlabeled := len(clean) - out["rows"]:
+            out["unlabeled"] = unlabeled
         out["outcome"] = {
             "raw": raw_target,
             "clean": target,
@@ -163,7 +169,7 @@ def _examples(clean, joined, columns, clean_id, target) -> dict:
                 {
                     "value": value,
                     "n": int(n),
-                    "spellings": sorted(said[read == value].unique().tolist()),
+                    "spellings": sorted(said[(read == value).fillna(False)].unique().tolist()),
                 }
                 for value, n in counts.items()
             ],

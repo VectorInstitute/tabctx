@@ -216,6 +216,7 @@ def dataset() -> dict | None:
         "positive": task.POSITIVE,
         "negative": task.NEGATIVE,
         "positive_rate": round(SCENARIO.positive_rate(history), 3),
+        "raw_id": SCENARIO.raw_id,
         "columns": [c for c in current.columns if c != SCENARIO.raw_id],
     }
 
