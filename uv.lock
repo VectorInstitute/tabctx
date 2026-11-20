@@ -4091,7 +4091,7 @@ wheels = [
 
 [[package]]
 name = "tabpfn"
-version = "10.0.0"
+version = "10.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "einops" },
@@ -4113,9 +4113,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/c2/9999f2e622ad5df055367afa1bebf06ace17fff795ab328376fcbae7d9bf/tabpfn-10.0.0.tar.gz", hash = "sha256:d61b02edfe6080b0b1cd5a39b309104f150698e84259c5e7073f3bd6de8b5cfb", size = 961883, upload-time = "2026-11-13T15:16:36.412Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e3/b9/23bac4e737c99bb69c48585f359b8389827ae9824bd2317ebd350e3a2b4a/tabpfn-10.1.0.tar.gz", hash = "sha256:a2c37d4d4388c5ec5559513df0b4a0d053f03867de04aceb4a87f1d4fa850feb", size = 1004128, upload-time = "2026-11-17T03:24:02.565Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/d2/04ba071c068379a333966542000759f67adeb89a18d5e60656fd3b6f12d6/tabpfn-10.0.0-py3-none-any.whl", hash = "sha256:6f0c1265c55e3a7cfe25b72f2c6b9269bbef5c6a9c7f10e8a9a31451df1c9358", size = 868319, upload-time = "2026-11-13T15:16:34.519Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/59/29226cf0d1ce063182b2c92139d337fced5267804b8904201c1e686d12a5/tabpfn-10.1.0-py3-none-any.whl", hash = "sha256:f4ff3564d2719b26a48ffb65bf3becb99596f4ee31e020251af0df55770f1e75", size = 898632, upload-time = "2026-11-17T03:24:01.004Z" },
 ]
 
 [[package]]
