@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "tabctx"
 version = "0.21.0"
-description = "Serving engine for tabular foundation models (TabICL, TabPFN): fit a table once, keep its encoded context on the GPU, and serve fast repeat predictions to many tenants, with memory-aware admission and multi-GPU placement."
+description = "Serving engine for tabular foundation models (TabICL, TabPFN, TabDPT, SurvivalPFN, CausalPFN): classification, regression, survival and treatment effects behind one endpoint. Fit a table once, keep its encoded context on the GPU, and serve fast repeat predictions to many tenants. Includes MCP tools for coding agents."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
