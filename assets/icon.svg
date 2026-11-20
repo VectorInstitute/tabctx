@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="tabctx">
+<defs><linearGradient id="ga" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6366F1"/><stop offset="1" stop-color="#22D3EE"/></linearGradient></defs>
+<rect x="0" y="0" width="64" height="64" rx="15.0" fill="url(#ga)"/>
+<rect x="11.5" y="13.5" width="9.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="1"/>
+<rect x="23.0" y="13.5" width="16.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="1"/>
+<rect x="41.5" y="13.5" width="11.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="1"/>
+<rect x="11.5" y="22.0" width="9.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.8"/>
+<rect x="23.0" y="22.0" width="16.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.8"/>
+<rect x="41.5" y="22.0" width="11.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.8"/>
+<rect x="11.5" y="30.5" width="9.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.62"/>
+<rect x="23.0" y="30.5" width="16.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.62"/>
+<rect x="41.5" y="30.5" width="11.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.62"/>
+<rect x="11.5" y="39.0" width="9.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.45"/>
+<rect x="23.0" y="39.0" width="16.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.45"/>
+<rect x="41.5" y="39.0" width="11.0" height="6.0" rx="1.6" fill="#fff" fill-opacity="0.45"/>
+<rect x="11.5" y="48.7" width="41.0" height="1.2" rx="0.6" fill="#fff" fill-opacity="0.9"/>
+<rect x="11.5" y="52.3" width="9.0" height="6.0" rx="1.6" fill="#F59E0B" fill-opacity="1"/>
+<rect x="23.0" y="52.3" width="16.0" height="6.0" rx="1.6" fill="#F59E0B" fill-opacity="1"/>
+<rect x="41.5" y="52.3" width="11.0" height="6.0" rx="1.6" fill="#F59E0B" fill-opacity="1"/>
+</svg>
