@@ -162,8 +162,6 @@ class TestCausalContextRows:
         assert len(keep) == 4096 and len(set(keep)) == 4096
         assert (keep == np.sort(keep)).all()
         assert treated[keep].sum() == 173  # every treated row
-        # The rare arm's unused share goes to the other arm.
-        assert (treated[keep] == 0).sum() == 4096 - 173
 
     def test_two_large_arms_get_half_each(self):
         rng = np.random.default_rng(1)
@@ -171,6 +169,12 @@ class TestCausalContextRows:
         keep = context_rows(treated, rng.normal(size=20_000), 1_000, seed=0)
         assert len(keep) == 1_000
         assert treated[keep].sum() == 500
+
+    def test_an_odd_size_and_an_arm_just_over_half(self):
+        treated = np.r_[np.ones(600), np.zeros(500)]  # 600 of 1,100
+        keep = context_rows(treated, np.arange(1_100.0), 999, seed=0)
+        assert len(keep) == 999 and len(set(keep)) == 999
+        assert treated[keep].sum() == 500  # the larger arm, half (rounded up)
 
     def test_an_arm_keeps_the_spread_of_its_outcomes(self):
         rng = np.random.default_rng(2)

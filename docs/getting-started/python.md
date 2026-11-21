@@ -109,8 +109,9 @@ defined, while with heavy censoring many medians are `None`. A higher
 `rmst` is a longer expected event-free time, so a lower risk. Each model
 uses at most 4,096 training rows as its context (a larger table is
 subsampled: SurvivalPFN keeps the share of events and the spread of
-times; CausalPFN gives each arm up to half the context, a rare arm whole,
-and keeps the spread of outcomes;
+times; CausalPFN gives each arm up to half the context, keeps a smaller
+arm whole and gives the other arm the rest, and keeps the spread of
+outcomes;
 `TABCTX_SURVIVALPFN_CONTEXT_SIZE`, `TABCTX_CAUSALPFN_CONTEXT_SIZE`), and
 every test row is predicted against that same context, so a row's answer
 never depends on the other rows sent with it.

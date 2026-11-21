@@ -21,7 +21,9 @@ sampled: as accurate as CausalPFN's estimator (see the test's docstring).
 
 The data (17 MB for IHDP, 13 MB for CPS, from the authors' repository at
 that commit, checked by sha256) is downloaded once into pytest's cache.
-Needs the causalpfn extra and its weights; runs on CPU in a few minutes.
+Needs the causalpfn extra and its weights (`uv sync --extra causalpfn`;
+CI's integration job doesn't install it, so there it skips); runs on CPU
+in about five minutes.
 """
 
 from __future__ import annotations
@@ -36,7 +38,10 @@ import pytest
 pytest.importorskip("causalpfn")
 torch = pytest.importorskip("torch")
 
-from tabctx.backends.causalpfn import CausalPFNBackend  # noqa: E402
+from tabctx.backends.causalpfn import (  # noqa: E402
+    DEFAULT_CONTEXT_SIZE,
+    CausalPFNBackend,
+)
 
 COMMIT = "b7ed2f1e1d58a83c608d08ced3dee955f0a7c221"
 FILES = {
@@ -71,6 +76,11 @@ CPS_FILES = {
     "lalonde_cps_sample8.csv": "614b5e2aabe60a8c372c97bbc1f3d64cfd6b1a9478af16bf4f04dda67b64029a",
     "lalonde_cps_sample9.csv": "bc4ad40ad305e12ab3c4ce2a5bb120331c747256b214dad3ac75c10fdc6e9b2f",
 }
+# CPS: tabctx's mean PEHE over these 10, at most this times CausalPFN's
+# estimator's (measured 1.003; keeping each arm's share, 1.070), and the
+# mean ATE error at most this (measured 0.128; keeping shares, 0.346).
+CPS_PEHE_RATIO = 1.02
+CPS_ATE_ERROR = 0.2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
@@ -97,6 +107,14 @@ def ihdp(request) -> tuple[dict, dict]:
     cache = fetch(request, "causalpfn-ihdp", URL, FILES)
     train, test = (dict(np.load(cache / name)) for name in FILES)
     return train, test
+
+
+def upstream(cls, backend):
+    """CausalPFN's own estimator (CATEEstimator, ATEEstimator) on the
+    backend's network, so both sides run the same weights."""
+    est = cls(device=DEVICE)
+    est.load_model = lambda: setattr(est, "icl_model", backend._shared_network())
+    return est
 
 
 @pytest.fixture(scope="module")
@@ -138,10 +156,7 @@ def test_matches_the_published_benchmark(backend, ihdp):
         X, y, X_test, effect, X_all, y_all, ate = realization(train, test, i)
         ours = backend.predict(backend.fit(X, y, "causal"), X_test).predictions
 
-        theirs = CATEEstimator(device=DEVICE)
-        theirs.load_model = lambda theirs=theirs: setattr(
-            theirs, "icl_model", backend._shared_network()
-        )
+        theirs = upstream(CATEEstimator, backend)
         theirs.fit(X, y[:, 1], y[:, 0])
         np.testing.assert_allclose(
             ours, theirs.estimate_cate(X_test), rtol=1e-4, atol=1e-4
@@ -152,10 +167,7 @@ def test_matches_the_published_benchmark(backend, ihdp):
         ate_ours.append(
             abs(np.mean(backend.predict(whole, X_all).predictions) - ate) / abs(ate)
         )
-        est = ATEEstimator(device=DEVICE)
-        est.load_model = lambda est=est: setattr(
-            est, "icl_model", backend._shared_network()
-        )
+        est = upstream(ATEEstimator, backend)
         est.fit(X_all, y_all[:, 1], y_all[:, 0])
         ate_theirs.append(abs(est.estimate_ate() - ate) / abs(ate))
 
@@ -164,33 +176,42 @@ def test_matches_the_published_benchmark(backend, ihdp):
     assert np.mean(ate_ours) == pytest.approx(PUBLISHED_ATE_ERROR, abs=ATE_MARGIN)
 
 
+def lalonde_cps(path: Path, i: int):
+    """The authors' RealCauseLalondeCPSDataset[i] (benchmarks/realcause.py at
+    COMMIT): covariates, then t, y, y0, y1 and ite (the row's true effect);
+    a 90/10 train/test split by default_rng(42 + i)."""
+    with path.open() as fh:
+        names = fh.readline().strip().split(",")
+    rows = np.loadtxt(path, delimiter=",", skiprows=1, dtype=np.float64)
+    col = {name: rows[:, j] for j, name in enumerate(names)}
+    X = rows[:, : len(names) - 5].astype(np.float32)
+    t = (col["t"] != 0).astype(np.float32)
+    y, ite = col["y"].astype(np.float32), col["ite"].astype(np.float32)
+    order = np.random.default_rng(42 + i).permutation(len(X))
+    cut = int(len(X) * 0.9)
+    return X, t, y, ite, order[:cut], order[cut:]
+
+
 def test_a_rare_treatment_in_a_table_larger_than_the_context(backend, request):
     """Lalonde CPS: the context keeps every treated row (context_rows), so
-    the effects are as accurate as CausalPFN's estimator's, which picks up
-    to half its context from each arm. Measured over these 10: PEHE 8,851
-    vs the estimator's 8,828, ATE error 0.128; a context keeping each arm's
-    share (44 treated rows) scored 9,444 and 0.346."""
-    import pandas as pd
+    the effects are as accurate as CausalPFN's estimator's. Measured over
+    these 10: PEHE 8,851 against the estimator's 8,828, ATE error 0.128; a
+    context keeping each arm's share (44 treated rows) scored 9,444 and
+    0.346. The ATE is checked against a bound, not the ATE estimator."""
     from causalpfn import CATEEstimator
 
     cache = fetch(request, "causalpfn-lalonde-cps", CPS_URL, CPS_FILES)
     ours, theirs, ate_error = [], [], []
     for i, name in enumerate(CPS_FILES):
-        d = pd.read_csv(cache / name)
-        X = d.iloc[:, :-5].to_numpy(np.float32)
-        t = d["t"].astype(bool).to_numpy(np.float32)
-        y = d["y"].to_numpy(np.float32)
-        ite = d["ite"].to_numpy(np.float32)
-        order = np.random.default_rng(42 + i).permutation(len(X))
-        train, test = order[: int(len(X) * 0.9)], order[int(len(X) * 0.9) :]
-        assert len(train) > 4096 and t[train].sum() < 4096 // 2
+        X, t, y, ite, train, test = lalonde_cps(cache / name, i)
+        assert len(train) > DEFAULT_CONTEXT_SIZE
+        assert t[train].sum() < DEFAULT_CONTEXT_SIZE // 2
 
         fit = backend.fit(X[train], np.column_stack([y[train], t[train]]), "causal")
+        assert len(fit.treated) == DEFAULT_CONTEXT_SIZE
+        assert fit.treated.sum() == t[train].sum()  # every treated row
         ours.append(_pehe(backend.predict(fit, X[test]).predictions, ite[test]))
-        est = CATEEstimator(device=DEVICE)
-        est.load_model = lambda est=est: setattr(
-            est, "icl_model", backend._shared_network()
-        )
+        est = upstream(CATEEstimator, backend)
         est.fit(X[train], t[train], y[train])
         theirs.append(_pehe(est.estimate_cate(X[test]), ite[test]))
 
@@ -198,8 +219,8 @@ def test_a_rare_treatment_in_a_table_larger_than_the_context(backend, request):
         ate = np.mean(backend.predict(whole, X).predictions)
         ate_error.append(abs(ate - ite.mean()) / abs(ite.mean()))
 
-    assert np.mean(ours) <= 1.02 * np.mean(theirs)
-    assert np.mean(ate_error) <= 0.2
+    assert np.mean(ours) <= CPS_PEHE_RATIO * np.mean(theirs)
+    assert np.mean(ate_error) <= CPS_ATE_ERROR
 
 
 def _pehe(estimate, effect) -> float:

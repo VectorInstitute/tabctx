@@ -34,9 +34,10 @@ been treated or not (overlap).
 
 How it is served, and how that differs from CausalPFN's own estimator:
 the context is the training table, at most `context_size` rows of it (a
-larger table is subsampled at fit, seeded: each arm gets up to an equal
-share of the context, a rarer arm whole, and keeps the spread of its
-outcomes; see context_rows), and every test row is predicted against that same context. CausalPFN's
+larger table is subsampled at fit, seeded: each arm gets up to half the
+context, a smaller arm is kept whole and the other arm takes the rest,
+and each arm keeps the spread of its outcomes; see context_rows), and
+every test row is predicted against that same context. CausalPFN's
 estimator instead picks a context per group of test rows (the training
 rows nearest them by a gradient-boosting model's effect estimate), so a
 row's answer depends on which other rows share its call, and a server
@@ -110,14 +111,20 @@ def context_rows(
     Within an arm, rows are sampled across equal-count bands of the
     outcome (strata), so the arm keeps its spread of outcomes.
 
-    Not each arm's share of the table: the model estimates each arm's
-    expected outcome from that arm's rows, so a rare treatment (1% of
-    Lalonde CPS's rows) would leave it about 40 rows to learn from.
-    CausalPFN's own estimator likewise takes up to half its context from
-    each arm. Measured on Lalonde CPS (100 realizations, the authors'
-    splits): PEHE 9,552 and ATE error 0.39 keeping shares, against 8,955
-    and 0.13 for CausalPFN's estimator; tests/integration/
-    test_causalpfn_reference.py checks this sampling there."""
+    It does not keep each arm's share of the table, because the model
+    learns each arm's expected outcome mostly from that arm's rows: a rare
+    treatment (1% of Lalonde CPS's rows) would leave it about 40 treated
+    rows. CausalPFN's own estimator also caps each arm at half its context
+    (of the rows nearest each group of test rows); giving a smaller arm's
+    unused share to the other arm is tabctx's choice.
+
+    Measured on Lalonde CPS (its first 10 realizations, the authors'
+    splits; tests/integration/test_causalpfn_reference.py): PEHE 8,851 and
+    ATE error 0.128, against 9,444 and 0.346 keeping shares and 8,828 and
+    0.073 for CausalPFN's estimator. On simulated 20,000-row
+    tables (5 seeds), PEHE with 10% treated went from 0.63 to 0.17; with
+    30% and 50% treated, where both arms are larger than half the context,
+    it was the same or better (0.207 to 0.203, 0.192 to 0.181)."""
     n = len(treated)
     if n <= size:
         return np.arange(n)
