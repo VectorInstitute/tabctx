@@ -118,10 +118,10 @@ def context_rows(
     (of the rows nearest each group of test rows); giving a smaller arm's
     unused share to the other arm is tabctx's choice.
 
-    Measured on Lalonde CPS (its first 10 realizations, the authors'
-    splits; tests/integration/test_causalpfn_reference.py): PEHE 8,851 and
-    ATE error 0.128, against 9,444 and 0.346 keeping shares and 8,828 and
-    0.073 for CausalPFN's estimator. On simulated 20,000-row
+    Measured on Lalonde CPS (100 realizations, the authors' splits): PEHE
+    8,947 and ATE error 0.177, against 9,552 and 0.39 keeping shares and
+    8,955 and 0.133 for CausalPFN's estimator (the paper: 8,960 and 0.13);
+    tests/integration/test_causalpfn_reference.py checks the first 10. On simulated 20,000-row
     tables (5 seeds), PEHE with 10% treated went from 0.63 to 0.17; with
     30% and 50% treated, where both arms are larger than half the context,
     it was the same or better (0.207 to 0.203, 0.192 to 0.181)."""
