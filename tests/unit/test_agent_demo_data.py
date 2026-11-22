@@ -148,3 +148,14 @@ def test_showcase_transcripts_hide_the_machine(tmp_path, monkeypatch):
         make_showcase.sanitize("codex", json.dumps({"type": "thread.started"}), run_dir)
         is None
     )
+
+
+def test_showcase_drops_the_antigravity_init_event(tmp_path):
+    import make_showcase
+
+    init = json.dumps(
+        {"event": "init", "init": {"cwd": "/Users/jdoe/run", "model": "m"}}
+    )
+    assert make_showcase.sanitize("antigravity", init, tmp_path) is None
+    step = json.dumps({"event": "step_update", "step_update": {"step_index": 1}})
+    assert make_showcase.sanitize("antigravity", step, tmp_path) is not None

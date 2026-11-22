@@ -63,6 +63,13 @@ AGENTS = {
         "llm": "Gemini (your login)",
         "tools": "MCP · shell" if _SHELL else "MCP · no shell",
     },
+    "antigravity": {
+        "label": "Antigravity",
+        "binary": "agy",
+        "llm": "Gemini 3.8 Flash (your login)",
+        # Always a shell, so only for scenarios that give agents one.
+        "tools": "MCP · shell" if _SHELL else "always has a shell: not this scenario",
+    },
     "pi": {
         "label": "pi",
         "binary": "pi",
@@ -73,6 +80,8 @@ AGENTS = {
 
 
 def installed(agent: str) -> bool:
+    if agent == "antigravity" and not _SHELL:
+        return False  # it always has a shell; run.sh refuses it here
     binary = os.environ.get("PI_BIN") if agent == "pi" else None
     return (
         bool(binary and Path(binary).is_file())

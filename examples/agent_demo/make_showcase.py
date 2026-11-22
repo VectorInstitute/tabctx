@@ -39,12 +39,13 @@ _DROP = {
     ("pi", "session"),
     ("pi", "message_update"),
     ("pi", "message_start"),
+    ("antigravity", "init"),
 }
 
 
 def sanitize(agent: str, line: str, run_dir: Path) -> str | None:
     event = json.loads(line)
-    if (agent, event.get("type")) in _DROP:
+    if (agent, event.get("type") or event.get("event")) in _DROP:
         return None
     text = json.dumps(event)
     for path in sorted({str(run_dir), str(run_dir.resolve())}, key=len, reverse=True):

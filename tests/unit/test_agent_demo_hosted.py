@@ -453,3 +453,12 @@ def test_pids_of_reads_real_effective_and_saved_uids(tmp_path, monkeypatch):
     monkeypatch.setattr(runner_module, "PROC", tmp_path)
     assert sorted(runner_module._pids_of(20001)) == [7, 8]
     assert runner_module._pids_of(20002) == []
+
+
+def test_the_hosted_demo_never_offers_or_starts_antigravity(open_hosted):
+    module, client, started = open_hosted
+    client.post("/api/login", json={"key": KEY})
+    ids = [a["id"] for a in client.get("/api/setup").json()["agents"]]
+    assert "antigravity" not in ids
+    r = client.post("/api/runs", json={"agent": "antigravity", **ASK})
+    assert r.status_code == 403 and not started

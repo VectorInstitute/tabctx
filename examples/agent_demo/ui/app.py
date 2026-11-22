@@ -482,7 +482,7 @@ async def _stream(run: Run):
                 elif run.running:
                     await asyncio.sleep(POLL_SECONDS)
                 else:
-                    for event in parser.feed(pending):
+                    for event in [*parser.feed(pending), *parser.finish()]:
                         yield _sse("event", event)
                     break
     yield _sse("outcome", outcome(run))

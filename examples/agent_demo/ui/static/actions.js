@@ -49,9 +49,9 @@ const Actions = (() => {
       if (/\.md$/i.test(path)) return { kind: "report", title: "Wrote the report" };
       return { kind: "script", title: /clean/i.test(path) ? "Wrote the cleaning script" : `Wrote ${fileOf(path)}` };
     }
-    if (/^(edit|multiedit|replace|str_replace|apply_patch|patch)$/.test(t)) return { kind: "edit", title: `Adjusted ${fileOf(path) || "a script"}` };
-    if (/^(read|read_file|read_many_files|view|cat)$/.test(t)) return { kind: "look", title: `Read ${fileOf(path)}` };
-    if (/^(ls|glob|grep|find|list|list_directory|search_file_content)$/.test(t)) return { kind: "look", title: "Looked around the folder" };
+    if (/^(edit|multiedit|replace|str_replace|apply_patch|patch|edit_file|replace_file_content|multi_replace_file_content|sed_file)$/.test(t)) return { kind: "edit", title: `Adjusted ${fileOf(path) || "a script"}` };
+    if (/^(read|read_file|read_many_files|view|view_file|cat)$/.test(t)) return { kind: "look", title: `Read ${fileOf(path)}` };
+    if (/^(ls|glob|grep|find|list|list_directory|search_file_content|list_dir|find_by_name|grep_search)$/.test(t)) return { kind: "look", title: "Looked around the folder" };
     const cmd = commandOf(tool, a);
     if (!cmd) return { kind: "other", title: a.description || tool };
     if (/(?:^|[\s;&|(])(?:md5(?:sum)?|sha\d*sum|cmp|diff)\s/m.test(cmd)) return { kind: "verify", title: "Re-ran it to confirm nothing changed" };
