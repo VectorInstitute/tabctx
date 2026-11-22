@@ -27,6 +27,7 @@ class Session:
     id: str
     key: str = field(repr=False)
     agents: dict[str, dict[str, str] | None]
+    planner: str | None = None  # the model that drafts plans for this key
     created: float = field(default_factory=time.time)
     seen: float = field(default_factory=time.time)
 
@@ -56,8 +57,13 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
 
-    def create(self, key: str, agents: dict[str, dict[str, str] | None]) -> Session:
-        session = Session(secrets.token_urlsafe(32), key, agents)
+    def create(
+        self,
+        key: str,
+        agents: dict[str, dict[str, str] | None],
+        planner: str | None = None,
+    ) -> Session:
+        session = Session(secrets.token_urlsafe(32), key, agents, planner=planner)
         with self._lock:
             self._purge()
             self._sessions[session.id] = session

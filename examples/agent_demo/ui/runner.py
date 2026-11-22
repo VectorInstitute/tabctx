@@ -108,6 +108,22 @@ class Run:
     def exists(self) -> bool:
         return self.running or self.transcript.is_file()
 
+    @property
+    def ask_file(self) -> Path:
+        """The question and approved plan the run was given (beside its
+        folder, which run.sh replaces; a showcase run keeps it inside)."""
+        inside = self.dir / "ask.json"
+        return (
+            inside if inside.is_file() else self.dir.parent / f".{self.agent}.ask.json"
+        )
+
+    @property
+    def ask(self) -> dict | None:
+        try:
+            return json.loads(self.ask_file.read_text())
+        except (OSError, ValueError):
+            return None
+
 
 class BusyError(RuntimeError):
     """A run can't start now (one is going, or the demo is at capacity)."""
@@ -132,9 +148,17 @@ class Runner:
         self._lock = threading.Lock()
         self._runs: dict[Path, Run] = {}
 
-    def start(self, agent: str, folder: Path, prompt: str, env: dict[str, str]) -> Run:
+    def start(
+        self,
+        agent: str,
+        folder: Path,
+        prompt: str,
+        env: dict[str, str],
+        ask: dict | None = None,
+    ) -> Run:
         """Run run.sh for agent in folder (replacing what was there), with
-        the prompt and extra environment (the key, the models)."""
+        the prompt and extra environment (the key, the models); ask, an open
+        question's question and plan, is kept for the page."""
         with self._lock:
             live = [r for r in self._runs.values() if r.running]
             if any(r.dir.parent == folder.parent for r in live):
@@ -146,6 +170,11 @@ class Runner:
             prompt_file = folder.parent / f".{agent}.prompt.md"
             folder.parent.mkdir(parents=True, exist_ok=True)
             prompt_file.write_text(prompt)
+            ask_file = folder.parent / f".{agent}.ask.json"
+            if ask:
+                ask_file.write_text(json.dumps(ask))
+            else:
+                ask_file.unlink(missing_ok=True)
             user = {}
             if self.uids is not None:
                 uid = self._free_uid(live)
@@ -188,12 +217,33 @@ class Runner:
     def stop_in(self, parent: Path) -> None:
         """Stop every run under parent and wait for it to end."""
         for run in [r for r in self._runs.values() if r.dir.parent == parent]:
-            self._stop(run, reason="stopped: signed out")
-            if run.process:
+            self._end(run, "stopped: signed out")
+
+    def stop(self, folder: Path) -> bool:
+        """Stop the run in folder (the viewer pressed Stop) and wait for it
+        to end, so a new one can start at once. False if none was going."""
+        run = self._runs.get(folder)
+        if not (run and run.running):
+            return False
+        self._end(run, "stopped by the presenter")
+        # A half-done run is no use to replay, and (hosted) it would hide
+        # the recorded run of the same agent.
+        with self._lock:
+            self._runs.pop(folder, None)
+        shutil.rmtree(folder, ignore_errors=True)
+        return True
+
+    def _end(self, run: Run, reason: str) -> None:
+        self._stop(run, reason)
+        if run.process:
+            try:
+                run.process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
                 try:
-                    run.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
                     os.killpg(run.process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                run.process.wait()
 
     def running_in(self, parent: Path) -> Run | None:
         return next(

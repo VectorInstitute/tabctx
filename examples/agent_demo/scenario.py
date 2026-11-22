@@ -4,7 +4,8 @@ scenarios/<name>/:
 - task.py          the files, the id and outcome columns, the page's labels
                    (its steps); optionally the raw files' own names for the
                    id and outcome, and how to read the outcome's rate there
-- PROMPT.md        the agent's task
+- PROMPT.md        the agent's task (the fixed brief)
+- CONTEXT.md       optional: the setting for open questions (see .context)
 - prepare_data.py  builds the data: main(scenario) writes the workspace and
                    the withheld answers
 
@@ -53,6 +54,14 @@ class Scenario:
     @property
     def prompt(self) -> Path:
         return self.folder / "PROMPT.md"
+
+    @property
+    def context(self) -> Path | None:
+        """CONTEXT.md, when the scenario takes open questions: what the
+        organisation sets up once (who the analyst is, the files, the team's
+        conventions), to which the asker adds a question and a plan."""
+        path = self.folder / "CONTEXT.md"
+        return path if path.is_file() else None
 
     @property
     def workspace(self) -> Path:

@@ -68,9 +68,19 @@
       <div class="hero" id="empty">
         <div class="files" id="attachments"></div>
         <p class="question" id="question"></p>
+        <!-- Open questions: ask anything about the files, approve the plan. -->
+        <div class="ask" id="ask" hidden>
+          <textarea id="ask-text" class="question ask-text" rows="2" maxlength="600" placeholder="Ask anything about these two files" aria-label="Your question"></textarea>
+          <div class="suggest" id="suggest" aria-label="Questions to start from"></div>
+        </div>
+        <div class="plan-box" id="plan-box" hidden>
+          <p class="plan-head"><b>The agent's plan</b><span>Edit or remove a step, then approve</span></p>
+          <ol class="plan" id="plan"></ol>
+        </div>
         <div class="hero-actions">
           <button id="run" class="btn primary" type="button"><span id="run-label">Ask</span></button>
           <button id="replay" class="link-btn" type="button" disabled>or watch a recorded run</button>
+          <button id="replan" class="link-btn" type="button" hidden>Change the question</button>
         </div>
         <p id="notice" class="notice" role="alert" hidden></p>
       </div>
@@ -96,7 +106,7 @@
           <div class="run-title" id="run-title">The agent's work</div>
           <div class="run-meta" id="run-meta"></div>
         </div>
-        <div class="status" id="status" role="status"></div>
+        <div class="run-ctl"><div class="status" id="status" role="status"></div><button class="btn stop" id="stop" type="button" hidden title="Stop this run">Stop</button></div>
       </div>
       <details class="prompt-box" id="prompt-box">
         <summary>The agent's full instructions</summary>

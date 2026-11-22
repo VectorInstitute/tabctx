@@ -68,6 +68,9 @@ def main(agents: list[str]) -> None:
         ]
         (out / "transcript.jsonl").write_text("\n".join(kept) + "\n")
         shutil.copy(run_dir / "report.md", out / "report.md")
+        ask = run_dir.parent / f".{agent}.ask.json"
+        if ask.is_file():  # an open question: what was asked, the plan
+            shutil.copy(ask, out / "ask.json")
         (out / "score.json").write_text(
             json.dumps(score(run_dir, scenario), indent=2) + "\n"
         )
