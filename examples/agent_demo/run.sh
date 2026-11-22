@@ -5,7 +5,7 @@
 #   export DEMO_SCENARIO=insurance                     # default: readmission
 #   uv run --extra mcp python examples/agent_demo/prepare_data.py
 #   export TABCTX_API_KEY=vp_...                       # your Vector gateway key
-#   examples/agent_demo/run.sh claude|codex|gemini|pi
+#   examples/agent_demo/run.sh claude|codex|gemini|antigravity|pi
 #   uv run --extra mcp python examples/agent_demo/score.py examples/agent_demo/runs/insurance/claude
 #
 # Each run works in its own copy of the workspace (runs/<scenario>/<agent>/)
@@ -32,10 +32,10 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../.." && pwd)
-AGENT=${1:?usage: run.sh claude|codex|gemini|pi}
+AGENT=${1:?usage: run.sh claude|codex|gemini|antigravity|pi}
 case $AGENT in
-claude | codex | gemini | pi) ;;
-*) echo "unknown agent '$AGENT': use claude, codex, gemini or pi" >&2; exit 2 ;;
+claude | codex | gemini | antigravity | pi) ;;
+*) echo "unknown agent '$AGENT': use claude, codex, gemini, antigravity or pi" >&2; exit 2 ;;
 esac
 : "${TABCTX_API_KEY:?set TABCTX_API_KEY to your Vector gateway key (vp_...)}"
 export TABCTX_BASE_URL=${TABCTX_BASE_URL:-https://proxy.vectorinstitute.ai}
@@ -113,6 +113,19 @@ codex)
     -c 'mcp_servers.tabctx.tool_timeout_sec=300' \
     -c 'mcp_servers.tabctx.default_tools_approval_mode="approve"' \
     "$PROMPT" </dev/null >transcript.jsonl
+  ;;
+antigravity)
+  # The Antigravity CLI (agy), signed in with your Google account; its MCP
+  # servers for this run only, in the workspace's .agents/mcp_config.json
+  # (no key in it: the server inherits this environment).
+  mkdir -p .agents
+  printf '{"mcpServers": {"tabctx": {"command": "%s"}}}\n' "$SERVER" >.agents/mcp_config.json
+  # Headless, it can't ask before each tool. --sandbox restricts its
+  # terminal but still lets it read any file you can (the answers too),
+  # so it is for local runs, not the hosted demo.
+  agy -p "$PROMPT" --model "${AGY_MODEL:-gemini-3.8-flash-high}" \
+    --output-format stream-json --dangerously-skip-permissions --sandbox \
+    </dev/null >transcript.jsonl
   ;;
 gemini)
   mkdir -p .gemini

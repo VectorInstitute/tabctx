@@ -63,6 +63,12 @@ AGENTS = {
         "llm": "Gemini (your login)",
         "tools": "MCP · shell" if _SHELL else "MCP · no shell",
     },
+    "antigravity": {
+        "label": "Antigravity",
+        "binary": "agy",
+        "llm": "Gemini 3.8 Flash (your login)",
+        "tools": "MCP · shell",
+    },
     "pi": {
         "label": "pi",
         "binary": "pi",

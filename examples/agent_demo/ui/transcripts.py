@@ -302,10 +302,83 @@ class GeminiParser(Parser):
         return events
 
 
+class AntigravityParser(Parser):
+    """agy -p --output-format stream-json (the Antigravity CLI)"""
+
+    # Its tools' parameters, as the other agents name them (the page reads
+    # command and file_path).
+    _FILE_TOOLS = {"write_file", "edit_file", "view_file", "read_file"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._message = ""
+
+    def _flush(self) -> list[Event]:
+        text, self._message = self._message, ""
+        return [{"type": "message", "text": text}] if text.strip() else []
+
+    def _tool(self, name: str, params: dict) -> tuple[str, dict]:
+        if name == "call_mcp_tool" and params.get("ServerName") == "tabctx":
+            return f"tabctx_{params.get('ToolName', '')}", params.get("Arguments") or {}
+        if name == "run_command":
+            return name, {"command": params.get("CommandLine", "")}
+        if name in self._FILE_TOOLS:
+            return name, {"file_path": params.get("Path", "")}
+        return name, params
+
+    def _events(self, raw: dict) -> list[Event]:
+        kind = raw.get("event")
+        if kind == "step_update":
+            step = raw.get("step_update") or {}
+            if step.get("step_type") == "agent_response":
+                self._message += step.get("text_delta") or ""
+                return self._flush() if step.get("state") == "DONE" else []
+            if step.get("step_type") != "tool":
+                return []
+            events = self._flush()
+            info = step.get("tool_info") or {}
+            name = step.get("tool_name") or info.get("name") or "tool"
+            raw_name, args = self._tool(name, info.get("parameters") or {})
+            call_id = f"{step.get('conversation_id', '')}:{step.get('step_index')}"
+            if call_id not in self._tools:
+                events.append(self._call(call_id, raw_name, args))
+            state = step.get("state")
+            if state == "ACTIVE":
+                return events
+            output = _text(info.get("output") or "")
+            error = state != "DONE"
+            if name == "run_command":
+                # "Created At: ...\nCommand exited with code N.\n\nCommand output:\n..."
+                head, _, body = output.partition("Command output:\n")
+                error = error or ("exited with code 0." not in head and bool(head))
+                output = body if _ else output
+            events.append(self._result(call_id, output, error))
+            return events
+        events = self._flush()
+        if kind == "result":
+            result = raw.get("result") or {}
+            if result.get("status") not in (None, "SUCCESS"):
+                events.append({"type": "error", "text": json.dumps(result)[:2000]})
+            else:
+                events.append(
+                    {
+                        "type": "done",
+                        "stats": {
+                            "seconds": round(result.get("duration_seconds", 0), 1),
+                            "turns": result.get("num_turns"),
+                        },
+                    }
+                )
+        elif kind == "error":
+            events.append({"type": "error", "text": json.dumps(raw)[:2000]})
+        return events
+
+
 PARSERS: dict[str, type[Parser]] = {
     "claude": ClaudeParser,
     "codex": CodexParser,
     "gemini": GeminiParser,
+    "antigravity": AntigravityParser,
     "pi": PiParser,
 }
 
