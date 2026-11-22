@@ -52,8 +52,9 @@ const Answer = (() => {
   function reset(setup, agent, replaying, ask, q = null) {
     const d = setup.dataset || {};
     S = { d, agent, replaying, q, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false, planned: new Map() };
-    for (const step of ask?.plan || []) if (STEPS[step.kind] && !S.planned.has(step.kind)) S.planned.set(step.kind, step.text);
-    const kinds = ask?.plan ? [...S.planned.keys()] : (d.steps || []).map(([k]) => k);
+    const plan = Array.isArray(ask?.plan) ? ask.plan : null;
+    for (const step of plan || []) if (STEPS[step?.kind] && !S.planned.has(step.kind)) S.planned.set(step.kind, String(step.text ?? ""));
+    const kinds = plan ? [...S.planned.keys()] : (d.steps || []).map(([k]) => k);
     // With a cleaning step, choosing the examples follows it: the clean
     // past rows are what the tabular model learns from.
     const keys = kinds.flatMap((k) => (k === "clean" ? [k, "examples"] : [k])).filter((k) => STEPS[k]);
@@ -108,8 +109,9 @@ const Answer = (() => {
     const stem = String(S.d.current_file || "").replace(/(_export)?\.\w+$/, "");
     if (stem && base(a.path || "").startsWith(stem)) return true;
     if (/(test|hold|valid|train|hist)/i.test(base(a.path || ""))) return false;
+    // Cleaning drops duplicates and test rows, so a clean copy has fewer.
     const n = S.d.current_rows;
-    return r ? !n || Math.abs(r.rows - n) <= 0.05 * n : true;
+    return r ? !n || (r.rows >= 0.8 * n && r.rows <= 1.05 * n) : true;
   }
 
   function doingOf(tool, a = {}) {
@@ -154,7 +156,10 @@ const Answer = (() => {
     const r = ev.result;
     if (ev.error || !r) return;
     if (call.tool === "evaluate") evaluate(r);
-    else if (call.tool === "predict" && !S.predicted && onCurrent(call.args, r)) predict(r, call.args);
+    else if (call.tool === "predict" && !S.predicted) {
+      if (onCurrent(call.args, r)) predict(r, call.args);
+      else if (S.steps.get("predict")?.state === "working") setStep("predict", "idle"); // a check, not the ranking
+    }
     else if (call.tool === "explain") explain(r);
     else if (call.tool === "what_if") whatIf(r, call.args);
   }
@@ -352,8 +357,10 @@ const Answer = (() => {
       .filter(([x]) => x.probabilities?.[pos] != null);
     const more = Math.max(0, tried.length - MAX_TRIES);
     if (more) {
-      // Many tried (a sweep of one column): keep the ones that move it most.
-      const keep = new Set([...tried].sort((a, b) => a[0].probabilities[pos] - b[0].probabilities[pos]).slice(0, MAX_TRIES).map(([, i]) => i));
+      // Many tried (a sweep of one column): keep the ones that move it most,
+      // either way.
+      const move = ([x]) => Math.abs(x.probabilities[pos] - today);
+      const keep = new Set([...tried].sort((a, b) => move(b) - move(a)).slice(0, MAX_TRIES).map(([, i]) => i));
       tried = tried.filter(([, i]) => keep.has(i));
     }
     const tries = tried

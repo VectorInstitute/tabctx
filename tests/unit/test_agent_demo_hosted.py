@@ -238,29 +238,79 @@ def test_stop_needs_sign_in_and_stops_only_the_viewers_run(hosted, monkeypatch):
     assert stopped[-1].parent.parent == Path(module.RUNS) / "visitors"
 
 
-def test_runner_stop_ends_the_whole_process_group_and_frees_the_slot(tmp_path):
+def _started(runner_module, r, folder, cmd):
+    """A run as Runner.start makes it (with its watcher), of cmd."""
     import subprocess
+    import threading
 
+    run = runner_module.Run("claude", folder)
+    run.process = subprocess.Popen(
+        cmd, start_new_session=True, stdout=subprocess.PIPE, text=True
+    )
+    r._runs[folder] = run
+    threading.Thread(target=r._watch, args=(run,), daemon=True).start()
+    return run
+
+
+def test_runner_stop_ends_the_whole_process_group_and_frees_the_slot(tmp_path):
     import runner as runner_module
 
     r = runner_module.Runner()
     folder = tmp_path / "claude"
     folder.mkdir()
     (folder / "transcript.jsonl").write_text("{}\n")
-    run = runner_module.Run("claude", folder)
     # A shell with a child, like run.sh and its agent.
-    run.process = subprocess.Popen(
-        ["sh", "-c", "sleep 60 & wait"], start_new_session=True
-    )
-    r._runs[folder] = run
+    run = _started(runner_module, r, folder, ["sh", "-c", "sleep 60 & wait"])
     assert r.running_in(tmp_path) is run
     t = time.time()
     assert r.stop(folder) is True
-    assert time.time() - t < 10 and not run.running
+    assert time.time() - t < 10 and not run.running and run.done.is_set()
     assert r.running_in(tmp_path) is None
     assert "stopped by the presenter" in run.log
     assert not folder.exists()  # the half-done run is gone; the showcase shows again
+    assert folder not in r._runs
     assert r.stop(folder) is False  # nothing left to stop
+
+
+def test_a_run_holds_its_folder_until_cleaned_up(tmp_path, monkeypatch):
+    """A new run in the same folder can't start while the last one is still
+    being cleaned up: its watcher would delete the new run's files."""
+    import threading
+
+    import runner as runner_module
+
+    r = runner_module.Runner()
+    folder = tmp_path / "claude"
+    folder.mkdir()
+    gate = threading.Event()
+    monkeypatch.setattr(runner_module, "_kill_uid", lambda uid: gate.wait(5))
+    run = _started(runner_module, r, folder, ["sh", "-c", "exit 0"])
+    run.uid = 12345  # the watcher kills the uid's leftovers (held by gate)
+    run.process.wait()
+    assert not run.running and not run.done.is_set()
+    with pytest.raises(runner_module.BusyError):
+        r.start("claude", folder, "p", {})
+    monkeypatch.setattr(runner_module, "_own", lambda folder, uid: None)
+    gate.set()
+    assert run.done.wait(5)
+
+
+def test_leftover_processes_of_a_uid_are_killed(monkeypatch):
+    import runner as runner_module
+
+    alive = {101: [11, 12], 102: [21]}
+    killed = []
+
+    def kill(pid, sig):
+        killed.append(pid)
+        for pids in alive.values():
+            if pid in pids:
+                pids.remove(pid)
+
+    monkeypatch.setattr(runner_module, "_pids_of", lambda uid: list(alive[uid]))
+    monkeypatch.setattr(runner_module.os, "kill", kill)
+    runner_module._kill_uid(101)
+    assert killed == [11, 12] and alive == {101: [], 102: [21]}
 
 
 def test_open_questions_plan_then_run(open_hosted, monkeypatch):
@@ -322,7 +372,7 @@ def test_a_fixed_brief_has_no_planning(hosted):
     assert client.post("/api/plan", json={"question": "q"}).status_code == 404
 
 
-def test_a_runs_question_and_plan_come_back_with_its_events(tmp_path):
+def test_a_runs_question_and_plan_come_back_with_its_events(tmp_path, monkeypatch):
     import runner as runner_module
 
     folder = tmp_path / "claude"
@@ -331,8 +381,21 @@ def test_a_runs_question_and_plan_come_back_with_its_events(tmp_path):
     assert run.ask is None
     (tmp_path / ".claude.ask.json").write_text('{"question": "q", "plan": []}')
     assert run.ask == {"question": "q", "plan": []}
-    (folder / "ask.json").write_text('{"question": "showcase"}')  # a showcase run
-    assert run.ask == {"question": "showcase"}
+    # The agent can write its own folder: an ask.json there is not believed,
+    # and a live run's ask is the one it was started with.
+    (folder / "ask.json").write_text('{"question": "forged", "plan": []}')
+    assert run.ask == {"question": "q", "plan": []}
+    run.ask_data = {"question": "real", "plan": []}
+    (tmp_path / ".claude.ask.json").write_text('{"question": "forged", "plan": {}}')
+    assert run.ask["question"] == "real"
+    run.ask_data = None
+    assert run.ask is None  # a plan that isn't a list is no plan
+    # A showcase run keeps its own.
+    show = tmp_path / "showcase" / "questions" / "calls" / "claude"
+    show.mkdir(parents=True)
+    (show / "ask.json").write_text('{"question": "Which 50?", "plan": []}')
+    monkeypatch.setattr(runner_module, "SHOWCASE", tmp_path / "showcase")
+    assert runner_module.Run("claude", show).ask["question"] == "Which 50?"
 
 
 def test_the_planner_reads_a_fenced_reply_and_keeps_known_kinds():
@@ -357,6 +420,7 @@ def test_a_suggested_questions_recording_replays_by_its_id(
     (rec / "transcript.jsonl").write_text("{}\n")
     (rec / "ask.json").write_text('{"question": "Which 50?", "plan": []}')
     monkeypatch.setattr(module, "SHOWCASE", show)
+    monkeypatch.setattr(module.sys.modules["runner"], "SHOWCASE", show)
     assert client.get("/api/setup").json()["recorded"] == {"calls": ["claude"]}
     events = client.get("/api/runs/claude/events?q=calls").text
     assert '"question": "Which 50?"' in events and "event: outcome" in events
@@ -370,3 +434,21 @@ def test_claude_prefers_the_models_that_answered_open_questions_best():
     assert env["CLAUDE_MODEL"] == "claude-fable-5-2"
     env = gateway.agent_env(ALL | {"claude-fable-5-2", "claude-opus-5-5"})["claude"]
     assert env["CLAUDE_MODEL"] == "claude-opus-5-5"
+
+
+def test_pids_of_reads_real_effective_and_saved_uids(tmp_path, monkeypatch):
+    import runner as runner_module
+
+    for pid, uids in {
+        "7": "20001 20001 20001 20001",
+        "8": "0 20001 0 0",
+        "9": "0 0 0 0",
+    }.items():
+        (tmp_path / pid).mkdir()
+        (tmp_path / pid / "status").write_text(
+            f"Name:\tsh\nUid:\t{uids}\nGid:\t0 0 0 0\n"
+        )
+    (tmp_path / "self").mkdir()  # not a pid
+    monkeypatch.setattr(runner_module, "PROC", tmp_path)
+    assert sorted(runner_module._pids_of(20001)) == [7, 8]
+    assert runner_module._pids_of(20002) == []

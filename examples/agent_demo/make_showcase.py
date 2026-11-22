@@ -86,9 +86,10 @@ def main(
         ]
         (out / "transcript.jsonl").write_text("\n".join(kept) + "\n")
         shutil.copy(run_dir / "report.md", out / "report.md")
-        ask = run_dir.parent / f".{agent}.ask.json"
-        if (run_dir / "ask.json").is_file():
-            ask = run_dir / "ask.json"
+        # The run's question and plan: inside a run folder given with
+        # --from (only there: its parent may hold another run's), else
+        # beside it, where the page keeps it.
+        ask = run_dir / "ask.json" if source else run_dir.parent / f".{agent}.ask.json"
         if ask.is_file():  # an open question: what was asked, the plan
             shutil.copy(ask, out / "ask.json")
         (out / "score.json").write_text(

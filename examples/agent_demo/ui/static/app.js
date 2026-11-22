@@ -314,7 +314,8 @@ function renderAsk(d) {
   $("#ask-text").onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault(); // Enter asks; Shift+Enter is a new line
-      if (!$("#run").disabled) $("#run").click();
+      // Once a plan is up, only the button approves it: not a second Enter.
+      if (!state.plan && !$("#run").disabled) $("#run").click();
     }
   };
 }
@@ -768,7 +769,8 @@ async function stopRun() {
   $("#again").hidden = false;
   await refreshRuns(); // re-enables Ask and the replay
   // A stopped live run is thrown away: replay the recorded one, if any.
-  $("#again-replay").hidden = !state.setup.runs.some((r) => r.agent === shown);
+  const recorded = state.q && (state.setup.recorded?.[state.q] || []).includes(shown);
+  $("#again-replay").hidden = !(recorded || state.setup.runs.some((r) => r.agent === shown));
 }
 
 function setStatus(kind, text) {
