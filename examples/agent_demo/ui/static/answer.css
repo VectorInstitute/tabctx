@@ -273,3 +273,9 @@ body.present .pstep { grid-template-columns: 42px 80px 1fr 28px; }
 body.present .plan::before { left: 20px; }
 body.present .sug { font-size: 16px; }
 .sug.on { border-color: var(--text); color: var(--text); }
+/* Presenting, before a run: the question and plan have the stage. */
+body.present .layout:has(#empty:not([hidden])) { grid-template-columns: minmax(0, 1000px); justify-content: center; }
+body.present .layout:has(#empty:not([hidden])) .work { display: none; }
+body.present .hero { padding-top: 7vh; }
+.ask-text[readonly] { color: var(--text); }
+.ask-text, .ask-text:focus { box-shadow: none; border-radius: 0; }
