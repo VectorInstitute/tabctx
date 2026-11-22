@@ -10,9 +10,14 @@ Locally (agents use your own logins and $TABCTX_API_KEY):
 
 Hosted (DEMO_HOSTED=1, see ../Dockerfile): anyone can replay the showcase
 runs; to start a run a visitor signs in with their own gateway key, and
-every agent's LLM calls go through the gateway with that key. The task is
-fixed, each visitor's runs live in their own folder with their own HOME,
-and the key stays in memory (sessions.py).
+every agent's LLM calls go through the gateway with that key. Each
+visitor's runs live in their own folder with their own HOME, and the key
+stays in memory (sessions.py).
+
+A scenario with a CONTEXT.md takes open questions: the visitor asks one,
+approves the plan a quick model call drafts for it (planner.py), and the
+agent gets the context, the question and that plan. Otherwise the task is
+the scenario's fixed PROMPT.md.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ sys.path[:0] = [
     str(Path(__file__).resolve().parent),
     str(Path(__file__).resolve().parents[1]),
 ]
+import planner  # noqa: E402
 from cleaning import for_run as cleaning_of  # noqa: E402
 from gateway import (  # noqa: E402
     TABULAR,
@@ -65,6 +71,14 @@ HOSTED = os.environ.get("DEMO_HOSTED") == "1"
 GATEWAY = os.environ.get("TABCTX_BASE_URL", "https://proxy.vectorinstitute.ai")
 WORKSPACE = SCENARIO.workspace
 PROMPT = SCENARIO.prompt
+CONTEXT = SCENARIO.context  # None: the fixed brief, PROMPT
+# The model that drafts plans, the first the key can use: quick and plain.
+PLAN_MODELS = (
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-haiku-5-5",
+    "claude-opus-5",
+)
 task = SCENARIO.task
 STATIC = Path(__file__).resolve().parent / "static"
 POLL_SECONDS = 0.25
@@ -124,7 +138,13 @@ async def headers(request: Request, call_next):
 
 class StartRun(BaseModel):
     agent: str
-    prompt: str | None = None
+    prompt: str | None = None  # the fixed brief, edited (local only)
+    question: str | None = None  # an open question
+    plan: list | None = None  # and the plan the asker approved
+
+
+class PlanAsk(BaseModel):
+    question: str
 
 
 class Login(BaseModel):
@@ -188,8 +208,10 @@ def setup(request: Request) -> dict:
         "hosted": HOSTED,
         "signed_in": {"key_id": session.key_id} if session else None,
         "agents": agents_for(session),
-        "prompt": PROMPT.read_text(),
-        "prompt_editable": not HOSTED,
+        "prompt": (CONTEXT or PROMPT).read_text(),
+        "prompt_editable": not HOSTED and CONTEXT is None,
+        "open": CONTEXT is not None,
+        "recorded": recorded(),
         "dataset": dataset(),
         "gateway": GATEWAY,
         "key_set": bool(session) if HOSTED else bool(os.environ.get("TABCTX_API_KEY")),
@@ -244,7 +266,9 @@ def login(body: Login, request: Request, response: Response) -> dict:
         raise HTTPException(
             403, "this key's project has no model the demo's agents can use"
         )
-    session = sessions.create(key, agents)
+    session = sessions.create(
+        key, agents, planner=next((m for m in PLAN_MODELS if m in models), None)
+    )
     response.set_cookie(
         COOKIE,
         session.id,
@@ -307,22 +331,94 @@ def start(body: StartRun, request: Request) -> dict:
         if not os.environ.get("TABCTX_API_KEY"):
             raise HTTPException(400, "set TABCTX_API_KEY before starting the UI")
         env, prompt = {}, body.prompt or PROMPT.read_text()
+    ask = None
+    if CONTEXT is not None:
+        try:
+            question = planner.clean_question(body.question or "")
+            plan = planner.clean_plan(body.plan)
+        except planner.PlanError as e:
+            raise HTTPException(e.status, str(e)) from e
+        prompt = planner.prompt(CONTEXT.read_text(), question, plan)
+        ask = {"question": question, "plan": plan}
     if not installed(body.agent):
         raise HTTPException(400, f"{AGENTS[body.agent]['label']} is not installed")
     folder = my_runs(session)
     assert folder is not None  # signed in when hosted, RUNS locally
     try:
-        run = runner.start(body.agent, folder / body.agent, prompt, env)
+        run = runner.start(body.agent, folder / body.agent, prompt, env, ask)
     except BusyError as e:
         raise HTTPException(409, str(e)) from e
     return {"agent": run.agent, "started": run.started}
 
 
-def _run_for(agent: str, request: Request, source: str) -> Run:
-    """The viewer's own run of agent, or (source=showcase, or when they
-    have none) the showcase run."""
+@app.post("/api/plan")
+def plan(body: PlanAsk, request: Request) -> dict:
+    """A plan for an open question, for the asker to approve."""
+    if CONTEXT is None:
+        raise HTTPException(404, "this scenario has a fixed task")
+    session = viewer(request)
+    if HOSTED:
+        if not session:
+            raise HTTPException(401, "sign in with your gateway key to ask")
+        key, model = session.key, session.planner
+        if not model:
+            raise HTTPException(403, "your key's project has no model to plan with")
+    else:
+        key = os.environ.get("TABCTX_API_KEY", "")
+        model = os.environ.get("PLAN_MODEL", PLAN_MODELS[0])
+        if not key:
+            raise HTTPException(400, "set TABCTX_API_KEY before starting the UI")
+    try:
+        question = planner.clean_question(body.question)
+        steps = planner.draft(
+            GATEWAY,
+            key,
+            model,
+            CONTEXT.read_text(),
+            question,
+            [WORKSPACE / task.HISTORY, WORKSPACE / task.CURRENT],
+        )
+    except planner.PlanError as e:
+        raise HTTPException(e.status, str(e)) from e
+    return {"question": question, "plan": steps}
+
+
+@app.post("/api/runs/{agent}/stop")
+def stop(agent: str, request: Request) -> dict:
+    """Stop the viewer's own live run of agent."""
     if agent not in AGENTS:
         raise HTTPException(404, f"unknown agent {agent!r}")
+    session = viewer(request)
+    if HOSTED and not session:
+        raise HTTPException(401, "sign in to stop a run")
+    folder = my_runs(session)
+    assert folder is not None
+    return {"stopped": runner.stop(folder / agent)}
+
+
+QUESTIONS = {s[0] for s in task.LABELS.get("suggestions", [])}
+
+
+def recorded() -> dict[str, list[str]]:
+    """Per suggested question, the agents with a recording of it."""
+    return {
+        q: list(finished(SHOWCASE / "questions" / q))
+        for q in sorted(QUESTIONS)
+        if (SHOWCASE / "questions" / q).is_dir()
+    }
+
+
+def _run_for(agent: str, request: Request, source: str, q: str | None = None) -> Run:
+    """The viewer's own run of agent, or (source=showcase, or when they
+    have none) the showcase run; with q, the recording of that suggested
+    question (local too: it's there to present)."""
+    if agent not in AGENTS:
+        raise HTTPException(404, f"unknown agent {agent!r}")
+    if q is not None:
+        run = Run(agent, SHOWCASE / "questions" / q / agent) if q in QUESTIONS else None
+        if not run or not run.exists:
+            raise HTTPException(404, f"no recording of {agent} on that question")
+        return run
     mine = my_runs(viewer(request))
     run = runner.get(agent, mine / agent) if mine else None
     if source == "showcase" or not (run and run.exists):
@@ -334,17 +430,21 @@ def _run_for(agent: str, request: Request, source: str) -> Run:
 
 @app.get("/api/runs/{agent}/events")
 async def events(
-    agent: str, request: Request, source: str = "auto"
+    agent: str, request: Request, source: str = "auto", q: str | None = None
 ) -> StreamingResponse:
-    run = _run_for(agent, request, source)
+    run = _run_for(agent, request, source, q)
     return StreamingResponse(_stream(run), media_type="text/event-stream")
 
 
 @app.get("/api/runs/{agent}/cleaning")
-def cleaning(agent: str, request: Request, source: str = "auto") -> dict:
+def cleaning(
+    agent: str, request: Request, source: str = "auto", q: str | None = None
+) -> dict:
     """The run's raw export beside the clean table its agent wrote."""
-    run = _run_for(agent, request, source)
-    showcase = HOSTED and run.dir.resolve().is_relative_to(SHOWCASE.resolve())
+    run = _run_for(agent, request, source, q)
+    showcase = (HOSTED or q is not None) and run.dir.resolve().is_relative_to(
+        SHOWCASE.resolve()
+    )
     view = cleaning_of(run.dir, SCENARIO, saved=showcase)
     if view is None:
         raise HTTPException(404, "no cleaned table in this run")
@@ -355,7 +455,13 @@ async def _stream(run: Run):
     """Server-sent events: the transcript's events as they are written
     (the whole file at once for a finished run), then the outcome."""
     yield _sse(
-        "status", {"agent": run.agent, "live": run.running, "started": run.started}
+        "status",
+        {
+            "agent": run.agent,
+            "live": run.running,
+            "started": run.started,
+            "ask": run.ask,
+        },
     )
     # run.sh deletes the previous run first: wait for this run's transcript.
     while run.running and not _fresh(run):

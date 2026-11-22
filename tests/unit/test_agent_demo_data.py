@@ -134,13 +134,16 @@ def test_showcase_transcripts_hide_the_machine(tmp_path, monkeypatch):
             "item": {
                 "command": f"cat {run_dir}/report.md",
                 "aggregated_output": "-rw-r--r--  1 jdoe  staff  10 a.csv\n"
-                "-rw-r--r-- 1 jdoe jdoe 5 b.csv\n/Users/jdoe/x",
+                "-rw-r--r-- 1 jdoe jdoe 5 b.csv\n/Users/jdoe/x\n"
+                "/private/tmp/claude-501/c.py\n"
+                "/tmp/x/../../claude-501/-Users-jdoe-src-proj/s1/d.py",
             },
         }
     )
     out = make_showcase.sanitize("codex", line, run_dir)
     assert "jdoe" not in out and str(tmp_path) not in out
     assert "cat report.md" in out and "1 user  staff" in out and "1 user user 5" in out
+    assert "claude-501" not in out and "/tmp/c.py" in out
     assert (
         make_showcase.sanitize("codex", json.dumps({"type": "thread.started"}), run_dir)
         is None

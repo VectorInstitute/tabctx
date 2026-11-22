@@ -76,6 +76,15 @@ const state = {
   stepTotal: 0,
   gen: 0, // a new run or replay starts a new generation; old timers stand down
   pinned: true, // the work panel follows the newest tile until the viewer scrolls up
+  // Open questions: the question being asked and the plan drafted for it
+  // (null until drafted); ask: the question and approved plan of the run
+  // being started.
+  question: "",
+  plan: null,
+  planning: false,
+  ask: null,
+  card: null, // the suggested question in the box, if any
+  q: null, // the suggested question whose recording is shown
 };
 
 // ---- class colors: the entity keeps its color everywhere -------------------
@@ -128,6 +137,7 @@ async function init() {
   initPresent();
   const setup = await loadSetup();
   renderComposer(setup.dataset);
+  renderAsk(setup.dataset || {});
   $("#prompt").value = setup.prompt;
   $("#prompt").readOnly = !setup.prompt_editable;
   $("#reset-prompt").hidden = !setup.prompt_editable;
@@ -135,13 +145,18 @@ async function init() {
   renderAgents();
   $("#reset-prompt").onclick = () => ($("#prompt").value = setup.prompt);
   $("#run").onclick = (e) => {
-    if (!state.setup.hosted || state.setup.signed_in) return start();
-    e.stopPropagation(); // or the click, bubbling on, would close it again
-    openSettings(true);
+    if (state.setup.hosted && !state.setup.signed_in) {
+      e.stopPropagation(); // or the click, bubbling on, would close it again
+      return openSettings(true);
+    }
+    if (state.setup.open && !state.plan) return draftPlan();
+    start();
   };
-  $("#replay").onclick = () => watch(state.agent, true);
-  $("#again-replay").onclick = () => watch(state.shown, true);
+  $("#replan").onclick = () => showPlan(null);
+  $("#replay").onclick = () => watch(state.agent, true, recordedCard());
+  $("#again-replay").onclick = () => watch(state.shown, true, state.q);
   $("#again-new").onclick = newQuestion;
+  $("#stop").onclick = stopRun;
   $("#login").onsubmit = signIn;
   $("#logout").onclick = signOut;
   if (setup.running) watch(setup.running, false);
@@ -259,6 +274,130 @@ function newQuestion() {
   state.source?.close();
   $("#thread").hidden = true;
   $("#empty").hidden = false;
+  if (state.setup.open) showPlan(null);
+}
+
+// ---- open questions: ask anything, see the plan, approve it ---------------
+
+// The brief's heading: the question the shown run was asked.
+function showAsk(ask) {
+  $("#you-text").textContent = ask?.question || state.setup.dataset?.question || "";
+}
+
+// Each kind of plan step: its short name and icon (planner.py's KINDS).
+const KINDS = {
+  clean: ["Clean", ICONS.clean],
+  evaluate: ["Check", ICONS.evaluate],
+  predict: ["Score", ICONS.predict],
+  explain: ["Explain", ICONS.explain],
+  what_if: ["Test", ICONS.what_if],
+  analyze: ["Count", '<path d="M17 5H7l6 7-6 7h10" />'],
+  report: ["Write", '<path d="M6 3h9l4 4v14H6z" /><path d="M9 12h7M9 16h5" />'],
+};
+
+function renderAsk(d) {
+  const open = !!state.setup.open;
+  $("#question").hidden = open;
+  $("#ask").hidden = !open;
+  if (!open) return;
+  $("#suggest").innerHTML = (d.suggestions || [])
+    .map(([id, short], i) => `<button class="sug" type="button" data-i="${i}">${esc(short)}</button>`)
+    .join("");
+  $("#suggest").onclick = (e) => {
+    const b = e.target.closest(".sug");
+    if (!b) return;
+    $("#ask-text").value = d.suggestions[b.dataset.i][2];
+    $("#ask-text").focus();
+    pickCard();
+  };
+  $("#ask-text").oninput = pickCard;
+  $("#ask-text").onkeydown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault(); // Enter asks; Shift+Enter is a new line
+      // Once a plan is up, only the button approves it: not a second Enter.
+      if (!state.plan && !$("#run").disabled) $("#run").click();
+    }
+  };
+}
+
+// Which suggested question the box holds (if it holds one as written).
+function pickCard() {
+  const text = $("#ask-text").value.trim();
+  state.card = (state.setup.dataset?.suggestions || []).find(([, , q]) => q === text)?.[0] || null;
+  document.querySelectorAll(".sug").forEach((b) => b.classList.toggle("on", state.setup.dataset.suggestions[b.dataset.i][0] === state.card));
+  renderAgents();
+}
+// The card's recording by the chosen agent, if there is one.
+function recordedCard() {
+  return state.card && (state.setup.recorded?.[state.card] || []).includes(state.agent) ? state.card : null;
+}
+
+async function draftPlan() {
+  const question = $("#ask-text").value.trim();
+  if (!question) return notice("Ask a question first, or pick one below.");
+  notice("");
+  state.planning = true;
+  renderAgents();
+  try {
+    const res = await fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return notice(body.detail || "Could not draft a plan");
+    state.question = body.question;
+    showPlan(body.plan, true);
+  } catch {
+    notice("Could not reach the demo; try again.");
+  } finally {
+    state.planning = false;
+    renderAgents();
+  }
+}
+
+// The plan to approve (null: back to asking). Each step's words can be
+// edited in place, and a step removed.
+function showPlan(plan, fresh = false) {
+  state.plan = plan;
+  $("#plan").classList.toggle("fresh", fresh); // steps come in one by one, once
+  const has = !!plan;
+  $("#plan-box").hidden = !has;
+  $("#suggest").hidden = has;
+  $("#replan").hidden = !has;
+  $("#replay").hidden = has;
+  $("#ask-text").readOnly = has;
+  $("#ask").classList.toggle("asked", has);
+  if (has) {
+    $("#plan").innerHTML = plan
+      .map((step, i) => {
+        const [name, icon] = KINDS[step.kind] || KINDS.analyze;
+        return `<li class="pstep" data-kind="${esc(step.kind)}" style="--i:${i}">
+          <span class="pk">${svg(icon, 17)}</span><span class="pk-name">${name}</span>
+          <span class="pk-text" contenteditable="plaintext-only" spellcheck="false" data-i="${i}" aria-label="Step ${i + 1}">${esc(step.text)}</span>
+          <button class="pk-x" type="button" data-i="${i}" aria-label="Remove this step" title="Remove this step">${svg('<path d="M6 6l12 12M18 6L6 18" />', 13)}</button>
+        </li>`;
+      })
+      .join("");
+    $("#plan").oninput = (e) => {
+      const t = e.target.closest(".pk-text");
+      if (t) state.plan[t.dataset.i].text = t.textContent.trim();
+      renderAgents();
+    };
+    $("#plan").onkeydown = (e) => {
+      if (e.key === "Enter" && e.target.closest(".pk-text")) {
+        e.preventDefault(); // one line per step
+        e.target.blur();
+      }
+    };
+    $("#plan").onclick = (e) => {
+      const x = e.target.closest(".pk-x");
+      if (!x) return;
+      state.plan.splice(Number(x.dataset.i), 1);
+      showPlan(state.plan.length ? state.plan : null);
+    };
+  }
+  renderAgents();
 }
 
 function renderAgents() {
@@ -287,11 +426,22 @@ function renderAgents() {
     })
     .join("");
   document.querySelectorAll(".agent").forEach((b) => (b.onclick = () => selectAgent(b.dataset.id)));
-  $("#replay").disabled = !(state.agent in scores) || isBusy();
+  $("#replay").disabled = !(state.agent in scores || recordedCard()) || isBusy();
   const agent = state.setup.agents.find((a) => a.id === state.agent);
   const signedOut = hosted && !state.setup.signed_in;
-  $("#run").disabled = isBusy() || (!signedOut && !agent?.allowed);
-  $("#run-label").textContent = signedOut ? "Sign in to ask" : "Ask";
+  const open = state.setup.open;
+  const steps = (state.plan || []).filter((s) => s.text);
+  $("#run").disabled =
+    isBusy() || state.planning || (!signedOut && !agent?.allowed) || (open && !signedOut && (state.plan ? !steps.length : !$("#ask-text").value.trim()));
+  $("#run-label").innerHTML = signedOut
+    ? "Sign in to ask"
+    : !open
+      ? "Ask"
+      : state.planning
+        ? '<span class="pulse-dot"></span>Drafting a plan'
+        : state.plan
+          ? "Approve and run"
+          : "Draft a plan";
   $("#agent-name").textContent = agent ? agent.label : "Agent";
 }
 
@@ -304,11 +454,13 @@ const isBusy = () => ["live", "replay"].some((c) => $("#status").classList.conta
 
 async function start() {
   notice("");
+  // An open question runs with the plan as approved (steps left empty dropped).
+  state.ask = state.setup.open ? { question: state.question, plan: state.plan.filter((s) => s.text) } : null;
   $("#run").disabled = true;
   const res = await fetch("/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent: state.agent, prompt: $("#prompt").value }),
+    body: JSON.stringify(state.ask ? { agent: state.agent, ...state.ask } : { agent: state.agent, prompt: $("#prompt").value }),
   });
   if (!res.ok) {
     notice((await res.json()).detail || "Could not start the agent");
@@ -325,7 +477,9 @@ function notice(text) {
 
 // ---- a run ---------------------------------------------------------------
 
-function watch(agent, replay) {
+// q: a suggested question's id, to replay its recording.
+function watch(agent, replay, q = null) {
+  state.q = q;
   state.source?.close();
   clearInterval(state.timer);
   Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0, gen: state.gen + 1, pinned: true });
@@ -333,8 +487,13 @@ function watch(agent, replay) {
   $("#empty").hidden = true;
   $("#thread").hidden = false;
   $("#again").hidden = true;
+  $("#again-replay").hidden = false;
   openSettings(false);
-  Answer.reset(state.setup, agent, replay);
+  // A live run's question and plan are known now; a replay's (or a run
+  // still going when the page loaded) come with its status, below.
+  const ask = replay ? null : state.ask;
+  showAsk(ask);
+  Answer.reset(state.setup, agent, replay, ask, q);
   Actions.reset(state.setup);
   $("#timeline").innerHTML = "";
   $("#outcome").hidden = true;
@@ -344,11 +503,15 @@ function watch(agent, replay) {
   setStatus(replay ? "replay" : "live");
   updateMeta(info);
 
-  const source = new EventSource(`/api/runs/${agent}/events`);
+  const source = new EventSource(`/api/runs/${agent}/events${q ? `?q=${encodeURIComponent(q)}` : ""}`);
   state.source = source;
   source.addEventListener("status", (e) => {
     const s = JSON.parse(e.data);
     state.started = replay ? Date.now() : s.started * 1000;
+    if (s.ask && JSON.stringify(s.ask) !== JSON.stringify(ask)) {
+      showAsk(s.ask);
+      Answer.reset(state.setup, agent, replay, s.ask, q); // before any of its events
+    }
     if (!replay) state.timer = setInterval(() => updateMeta(info), 500);
   });
   source.addEventListener("event", (e) => {
@@ -579,7 +742,41 @@ async function refreshRuns() {
   renderAgents();
 }
 
+// Stop: a live run's agent is ended on the server (and waited for, so the
+// next can start at once); a replay just stops drawing.
+async function stopRun() {
+  const { shown, replaying } = state;
+  $("#stop").disabled = true;
+  state.source?.close();
+  clearInterval(state.timer);
+  Object.assign(state, { queue: [], waiting: false, go: false, replaying: false, gen: state.gen + 1 });
+  if (!replaying) {
+    const res = await fetch(`/api/runs/${shown}/stop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).catch(() => null);
+    if (!res?.ok) {
+      setStatus("failed", "Could not stop");
+      $("#stop").hidden = false; // let them try again
+      $("#again").hidden = false;
+      return;
+    }
+  }
+  setStatus("stopped", "Stopped");
+  renderStepper();
+  Answer.fail(replaying ? "The replay was stopped." : "The run was stopped before it finished.");
+  $("#again").hidden = false;
+  await refreshRuns(); // re-enables Ask and the replay
+  // A stopped live run is thrown away: replay the recorded one, if any.
+  const recorded = state.q && (state.setup.recorded?.[state.q] || []).includes(shown);
+  $("#again-replay").hidden = !(recorded || state.setup.runs.some((r) => r.agent === shown));
+}
+
 function setStatus(kind, text) {
+  const busy = kind === "live" || kind === "replay";
+  $("#stop").hidden = !busy;
+  $("#stop").disabled = false;
   const el = $("#status");
   el.className = `status ${kind}`;
   el.innerHTML =

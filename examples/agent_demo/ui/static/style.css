@@ -164,6 +164,9 @@ textarea:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--a
 .run-title { font-size: 20px; font-weight: 680; letter-spacing: -0.015em; }
 .run-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .meta { font-size: 12px; color: var(--text-2); padding: 2px 9px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.run-ctl { display: flex; align-items: center; gap: 8px; }
+.btn.stop { height: 32px; padding: 0 13px; font-size: 12.5px; color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+.status.stopped { color: var(--text-2); }
 .status { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; height: 32px; padding: 0 13px; border-radius: 999px; font-size: 12.5px; font-weight: 550; border: 1px solid var(--border); background: var(--surface); }
 .status .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .status.done { color: var(--good); border-color: color-mix(in srgb, var(--good) 35%, transparent); background: var(--good-soft); }
@@ -370,3 +373,4 @@ pre.json { margin: 8px 0 0; padding: 10px; max-height: 280px; overflow: auto; fo
 .a-spell-row { display: grid; grid-template-columns: 120px 1fr 28px; align-items: center; gap: 10px; font: 12px var(--mono); color: var(--text-2); }
 .a-spell-row i { display: block; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--s2) 60%, var(--track)); }
 .a-spell-row b { font-weight: 600; color: var(--s2); text-align: right; }
+.status:empty { display: none; }

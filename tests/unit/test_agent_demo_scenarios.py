@@ -109,9 +109,21 @@ def test_run_sh_gets_everything_in_one_call(name):
 def test_showcase_runs_match_the_task(name, agents):
     """The replayable runs were made with this task's data and scoring."""
     scenario = scenarios.load(name)
-    assert {p.name for p in scenario.showcase.iterdir()} == agents
-    for agent in agents:
-        folder = scenario.showcase / agent
+    assert {p.name for p in scenario.showcase.iterdir()} - {"questions"} == agents
+    folders = [scenario.showcase / agent for agent in agents]
+    # A suggested question's recordings: its own question and plan.
+    ids = {s[0] for s in scenario.task.LABELS.get("suggestions", [])}
+    questions = scenario.showcase / "questions"
+    for q in questions.iterdir() if questions.is_dir() else []:
+        assert q.name in ids
+        for folder in q.iterdir():
+            ask = json.loads((folder / "ask.json").read_text())
+            assert ask["question"] in {
+                s[2] for s in scenario.task.LABELS["suggestions"]
+            }
+            assert ask["plan"] and all(step["kind"] for step in ask["plan"])
+            folders.append(folder)
+    for folder in folders:
         stored = json.loads((folder / "score.json").read_text())
         assert {
             "roc_auc",

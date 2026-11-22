@@ -1,0 +1,8 @@
+{
+  "file": "renewals_due_predictions.csv",
+  "rows": 1200,
+  "roc_auc": 0.7843,
+  "base_rate": 0.12,
+  "positive_in_top_10": 0.9,
+  "positive_in_top_100": 0.47
+}

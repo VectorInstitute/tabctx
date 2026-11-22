@@ -56,9 +56,40 @@ LABELS = {
         "at renewal and why, and test what could keep them. Write it up for "
         "the head of group retention."
     ),
+    # Questions to start from (id, the card's words, the question). The
+    # open questions that held up against the real outcomes in testing.
+    "suggestions": [
+        [
+            "retention",
+            "Who will leave, and what could keep them?",
+            "Clean up these two exports, find which employers are likely to leave "
+            "at renewal and why, and test what could keep them. Write it up for "
+            "the head of group retention.",
+        ],
+        [
+            "calls",
+            "Which 50 employers should we call first?",
+            "Which 50 employers renewing in the next three months should our "
+            "account managers call first, and what should they talk about with "
+            "each one?",
+        ],
+        [
+            "premium",
+            "How much premium is at risk?",
+            "How much annual premium is at risk of walking out the door in the "
+            "next three months, and where is it concentrated?",
+        ],
+        [
+            "reviews",
+            "Are account reviews worth it?",
+            "We're thinking of giving every at-risk plan an account review "
+            "meeting next quarter. Is it worth it, and which plans should get one?",
+        ],
+    ],
     "audience": "the head of group retention",
     "entity": "employers",
     "outcome": "left",
+    "likely": "likely to leave",
     "window": "at renewal",
     "history": "last year's plan renewals",
     "current": "renewals due",

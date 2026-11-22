@@ -232,3 +232,50 @@ body.present .timeline { padding-bottom: 80px; }
 .stepper.ready kbd:first-of-type { background: var(--s1); border-color: var(--s1); color: #fff; animation: nudge 1.4s ease-in-out infinite; }
 @keyframes nudge { 50% { transform: translateX(3px); } }
 @media (max-width: 900px) { body.present .work { zoom: 1; } }
+
+/* ---- open questions: ask, then approve the plan ----------------------------- */
+.ask { margin: 22px 0 30px; }
+.ask-text { display: block; width: 100%; resize: none; field-sizing: content; min-height: 2.6em; max-height: 9em; padding: 0 0 12px; border: 0; border-bottom: 1px solid var(--border-strong); background: transparent; color: var(--text); font-size: 40px; outline: none; }
+.ask-text::placeholder { color: var(--text-3); }
+.ask-text:focus { border-bottom-color: var(--text); }
+.ask.asked .ask-text { border-bottom-color: transparent; }
+.suggest { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+.sug { padding: 9px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-2); font-size: 14px; cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+.sug:hover { border-color: var(--text); color: var(--text); }
+.sug:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+.plan-box { margin: 0 0 30px; }
+.plan-head { display: flex; align-items: baseline; gap: 14px; margin: 0 0 14px; font-size: 13px; color: var(--text-3); }
+.plan-head b { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }
+.plan { list-style: none; margin: 0; padding: 0; position: relative; }
+.plan::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 1px; background: var(--border-strong); }
+.pstep { position: relative; display: grid; grid-template-columns: 36px 74px 1fr 28px; align-items: center; gap: 12px; padding: 7px 0; }
+.plan.fresh .pstep { animation: pstep-in 0.4s ease-out both; animation-delay: calc(var(--i) * 90ms); }
+@keyframes pstep-in { from { opacity: 0; transform: translateY(6px); } }
+.pk { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--bg); border: 1px solid var(--border-strong); color: var(--accent); }
+.pk-name { font-size: 11px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+.pk-text { font-size: 17px; line-height: 1.4; padding: 4px 6px; margin-left: -6px; border-radius: 6px; outline: none; cursor: text; }
+.pk-text:hover { background: var(--surface-2); }
+.pk-text:focus { background: var(--surface); box-shadow: 0 0 0 1px var(--border-strong); }
+.pk-x { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 50%; background: none; color: var(--text-3); cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.pstep:hover .pk-x, .pk-x:focus-visible { opacity: 1; }
+.pk-x:hover { color: var(--bad); background: var(--surface-2); }
+#run-label { display: inline-flex; align-items: center; gap: 9px; }
+#run-label .pulse-dot { background: var(--bg); }
+
+/* In the brief: the plan step a section answers. */
+.planned { margin: 4px 0 0; font-size: 13.5px; color: var(--text-3); }
+.planned::before { content: "Plan · "; font-weight: 600; letter-spacing: 0.02em; }
+.try-more { margin: 6px 0 0; font-size: 12.5px; color: var(--text-3); }
+body.present .pk-text { font-size: 21px; }
+body.present .pk { width: 42px; height: 42px; }
+body.present .pstep { grid-template-columns: 42px 80px 1fr 28px; }
+body.present .plan::before { left: 20px; }
+body.present .sug { font-size: 16px; }
+.sug.on { border-color: var(--text); color: var(--text); }
+/* Presenting, before a run: the question and plan have the stage. */
+body.present .layout:has(#empty:not([hidden])) { grid-template-columns: minmax(0, 1000px); justify-content: center; }
+body.present .layout:has(#empty:not([hidden])) .work { display: none; }
+body.present .hero { padding-top: 7vh; }
+.ask-text[readonly] { color: var(--text); }
+.ask-text, .ask-text:focus { box-shadow: none; border-radius: 0; }

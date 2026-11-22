@@ -16,6 +16,7 @@ const Answer = (() => {
     predict: ["Who is most at risk?", "Score"],
     explain: ["What drives it?", "Explain"],
     what_if: ["What could change it?", "Test"],
+    analyze: ["What do the numbers say?", "Count"],
     report: ["The memo", "Write"],
   };
   const STEP_OF = { inspect_table: "evaluate", list_models: "evaluate", evaluate: "evaluate", fit_model: "predict", predict: "predict", explain: "explain", what_if: "what_if" };
@@ -46,12 +47,17 @@ const Answer = (() => {
   const words = (n) => ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"][n] ?? fmt(n);
 
   // ---- the run ----------------------------------------------------------------
-  function reset(setup, agent, replaying) {
+  // ask: an open question's question and approved plan, whose steps (one
+  // section per kind, in the plan's order) replace the scenario's own.
+  function reset(setup, agent, replaying, ask, q = null) {
     const d = setup.dataset || {};
-    S = { d, agent, replaying, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false };
+    S = { d, agent, replaying, q, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false, planned: new Map() };
+    const plan = Array.isArray(ask?.plan) ? ask.plan : null;
+    for (const step of plan || []) if (STEPS[step?.kind] && !S.planned.has(step.kind)) S.planned.set(step.kind, String(step.text ?? ""));
+    const kinds = plan ? [...S.planned.keys()] : (d.steps || []).map(([k]) => k);
     // With a cleaning step, choosing the examples follows it: the clean
     // past rows are what the tabular model learns from.
-    const keys = (d.steps || []).map(([k]) => k).flatMap((k) => (k === "clean" ? [k, "examples"] : [k])).filter((k) => STEPS[k]);
+    const keys = kinds.flatMap((k) => (k === "clean" ? [k, "examples"] : [k])).filter((k) => STEPS[k]);
     $("#answer").innerHTML = `
       <ol class="progress" id="progress">${keys.map((k) => `<li data-step="${k}">${STEPS[k][1]}</li>`).join("")}</ol>
       <p class="status-line" id="agent-status"><span class="pulse-dot"></span>Working on it</p>
@@ -60,7 +66,8 @@ const Answer = (() => {
       const el = document.createElement("section");
       el.className = "sec";
       el.hidden = true;
-      el.innerHTML = `<div class="sec-num">${String(i + 1).padStart(2, "0")}</div><div class="sec-main"><h2>${STEPS[key][0]}</h2><p class="lede"></p><div class="viz"></div></div>`;
+      const planned = S.planned.get(key);
+      el.innerHTML = `<div class="sec-num">${String(i + 1).padStart(2, "0")}</div><div class="sec-main"><h2>${STEPS[key][0]}</h2>${planned ? `<p class="planned">${esc(planned)}</p>` : ""}<p class="lede"></p><div class="viz"></div></div>`;
       $("#sections").appendChild(el);
       S.steps.set(key, { el, state: "idle" });
     });
@@ -95,6 +102,18 @@ const Answer = (() => {
   }
   const has = (key) => S.steps.has(key);
 
+  // Is a predict about the rows the question is about (the current file,
+  // cleaned), not a slice of the history held back to check the model?
+  // By its file's name, or (named otherwise) by its row count.
+  function onCurrent(a = {}, r = null) {
+    const stem = String(S.d.current_file || "").replace(/(_export)?\.\w+$/, "");
+    if (stem && base(a.path || "").startsWith(stem)) return true;
+    if (/(test|hold|valid|train|hist)/i.test(base(a.path || ""))) return false;
+    // Cleaning drops duplicates and test rows, so a clean copy has fewer.
+    const n = S.d.current_rows;
+    return r ? !n || (r.rows >= 0.8 * n && r.rows <= 1.05 * n) : true;
+  }
+
   function doingOf(tool, a = {}) {
     if (/^(write|edit)/i.test(tool)) return `Writing ${base(a.file_path || a.path || "a script")}`;
     if (/clean\.py/.test(a.command || "")) return "Running its cleaning script";
@@ -108,15 +127,22 @@ const Answer = (() => {
       if (!ev.tabctx) {
         const path = ev.args?.file_path || ev.args?.path || "";
         if (/report\.md$/.test(path)) {
+          if (S.steps.get("analyze")?.state === "working") write("analyze", "It worked the numbers out with its own code; they are in the memo below.", "");
           for (const [k, s] of S.steps) if (k !== "report" && s.state === "working") setStep(k, "done");
           return setStep("report", "working", "Writing the memo");
+        }
+        // Its own counting and summing, once the data is clean.
+        const cmd = Actions.commandOf(ev.tool, ev.args);
+        if (has("analyze") && (S.cleaned || !has("clean")) && cmd && !/clean\.py/.test(cmd)) {
+          return setStep("analyze", "working", "Working the numbers out with its own code");
         }
         if (has("clean") && !S.cleaned) setStep("clean", "working", doingOf(ev.tool, ev.args));
         return;
       }
       if (has("clean") && !S.cleaned) loadCleaning();
-      // Later predicts (a program tried on many rows) belong to the what-ifs.
-      const step = ev.tool === "predict" && S.predicted ? "what_if" : STEP_OF[ev.tool];
+      // A predict on held-back history checks the model; later predicts (a
+      // program tried on many rows) belong to the what-ifs.
+      const step = ev.tool !== "predict" ? STEP_OF[ev.tool] : S.predicted ? "what_if" : onCurrent(ev.args) ? "predict" : "evaluate";
       if (step) setStep(step, "working", DOING[ev.tool]);
       return;
     }
@@ -130,7 +156,10 @@ const Answer = (() => {
     const r = ev.result;
     if (ev.error || !r) return;
     if (call.tool === "evaluate") evaluate(r);
-    else if (call.tool === "predict" && !S.predicted) predict(r, call.args);
+    else if (call.tool === "predict" && !S.predicted) {
+      if (onCurrent(call.args, r)) predict(r, call.args);
+      else if (S.steps.get("predict")?.state === "working") setStep("predict", "idle"); // a check, not the ranking
+    }
     else if (call.tool === "explain") explain(r);
     else if (call.tool === "what_if") whatIf(r, call.args);
   }
@@ -142,13 +171,13 @@ const Answer = (() => {
     setStep("clean", "working", "Setting the raw rows beside the clean ones");
     let v = null;
     try {
-      const res = await fetch(`/api/runs/${S.agent}/cleaning`);
+      const res = await fetch(`/api/runs/${S.agent}/cleaning${S.q ? `?q=${encodeURIComponent(S.q)}` : ""}`);
       if (res.ok) v = await res.json();
     } catch {}
     if (S !== run) return; // another run started meanwhile
     if (!v) {
       write("clean", "The agent cleaned both exports with a script of its own.", "");
-      return write("examples", `It learns from the clean table of ${esc(S.d.history || "past rows")}, one row per ${esc(S.d.entity || "record")}.`, "");
+      return write("examples", `It learns from the clean table of ${esc(S.d.history || "past rows")}, one row for each of the ${esc(S.d.entity || "records")}.`, "");
     }
     const removed = (v.removed || []).map((x) => `${fmt(x.n)} ${x.what.replace(/ \(.*\)$/, "")}`);
     const top = (v.columns || []).filter((c) => c.kind === "category" && c.before > c.after).sort((a, b) => b.before - a.before)[0];
@@ -276,7 +305,7 @@ const Answer = (() => {
     const show = (args.show || []).filter((c) => c !== id).slice(0, 2);
     S.show = show;
     const sentence =
-      (mean != null ? `About <b>${fmt(Math.round(mean * r.rows))}</b> of the ${fmt(r.rows)} ${esc(S.d.current)} are likely ${esc(S.d.outcome)}. ` : `The agent scored all ${fmt(r.rows)} ${esc(S.d.current)}. `) +
+      (mean != null ? `About <b>${fmt(Math.round(mean * r.rows))}</b> of the ${fmt(r.rows)} ${esc(S.d.current)} are ${esc(S.d.likely || `likely ${S.d.outcome}`)}. ` : `The agent scored all ${fmt(r.rows)} ${esc(S.d.current)}. `) +
       (top.length ? `These ${words(top.length)} are ${proba ? "the most likely" : "at the top"}.` : "");
     const rows = top
       .map((row, i) => {
@@ -321,10 +350,20 @@ const Answer = (() => {
     const known = S.top.get(String(id));
     const facts = known ? (S.show || []).filter((c) => c in known).map((c) => said(c, known[c])).join(" · ") : "";
     const at = (p) => `${Math.max(0, Math.min(1, p)) * 100}%`;
-    const tries = res
+    const MAX_TRIES = 6;
+    let tried = res
       .map((x, i) => [x, i])
       .slice(1)
-      .filter(([x]) => x.probabilities?.[pos] != null)
+      .filter(([x]) => x.probabilities?.[pos] != null);
+    const more = Math.max(0, tried.length - MAX_TRIES);
+    if (more) {
+      // Many tried (a sweep of one column): keep the ones that move it most,
+      // either way.
+      const move = ([x]) => Math.abs(x.probabilities[pos] - today);
+      const keep = new Set([...tried].sort((a, b) => move(b) - move(a)).slice(0, MAX_TRIES).map(([, i]) => i));
+      tried = tried.filter(([, i]) => keep.has(i));
+    }
+    const tries = tried
       .map(([x, i]) => {
         const p = x.probabilities[pos];
         // The change itself; args.rows are whole rows unless based on one.
@@ -336,7 +375,7 @@ const Answer = (() => {
           <span class="try-track"><span class="try-span ${dir}" style="left:${at(lo)};width:calc(${at(hi)} - ${at(lo)})"></span><i class="now" style="left:${at(today)}"></i><i class="${dir}" style="left:${at(p)}" ${tipAttr(`${pct(today)} → ${pct(p)}`)}></i></span>
           <b class="${dir}">${pct(p)}</b></div>`;
       })
-      .join("");
+      .join("") + (more ? `<div class="try-more">and ${words(more)} more it tried that moved it less</div>` : "");
     const person = `<div class="person"><div class="person-head"><span class="id">${esc(id)}</span><span class="facts">${esc(facts)}</span><span class="today">today <b>${pct(today)}</b></span></div>${tries}</div>`;
     const who = S.people === 1 ? `one of the ${esc(S.d.entity || "rows")}` : `${words(S.people)} ${esc(S.d.entity || "rows")}`;
     write("what_if", `For ${who} most at risk, the agent changed one thing at a time and asked the model again. These are patterns the model learned, worth a pilot, not proven effects.`, person, true);
