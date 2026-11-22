@@ -17,6 +17,7 @@ returns its events, so a live transcript can be streamed as it grows.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 TABCTX_TOOLS = {
@@ -82,6 +83,10 @@ class Parser:
 
     def _events(self, raw: dict) -> list[Event]:
         raise NotImplementedError
+
+    def finish(self) -> list[Event]:
+        """Events held back when the transcript ends (a stopped run)."""
+        return []
 
     def _call(self, call_id: str, raw_name: str, args: Any) -> Event:
         name, tabctx = tool_name(raw_name)
@@ -308,14 +313,23 @@ class AntigravityParser(Parser):
     # Its tools' parameters, as the other agents name them (the page reads
     # command and file_path).
     _FILE_TOOLS = {"write_file", "edit_file", "view_file", "read_file"}
+    # States a step ends in; any other (ACTIVE, PENDING, ...) is still going.
+    _ENDED = {"DONE", "ERROR", "FAILED", "CANCELLED", "CANCELED", "SKIPPED"}
+    _EXIT = re.compile(r"Command exited with code (-?\d+)\.")
 
     def __init__(self) -> None:
         super().__init__()
         self._message = ""
+        self._ended: set[str] = set()
+        self._open: str | None = None  # a step without an index (to pair its end)
+        self._n = 0
 
     def _flush(self) -> list[Event]:
         text, self._message = self._message, ""
         return [{"type": "message", "text": text}] if text.strip() else []
+
+    def finish(self) -> list[Event]:
+        return self._flush()  # a run stopped before its result event
 
     def _tool(self, name: str, params: dict) -> tuple[str, dict]:
         if name == "call_mcp_tool" and params.get("ServerName") == "tabctx":
@@ -325,6 +339,32 @@ class AntigravityParser(Parser):
         if name in self._FILE_TOOLS:
             return name, {"file_path": params.get("Path", "")}
         return name, params
+
+    def _id(self, step: dict) -> str:
+        if step.get("step_index") is not None:
+            return f"{step.get('conversation_id', '')}:{step['step_index']}"
+        # No index: a step's updates come in a row, so pair them in order.
+        if self._open is None:
+            self._n += 1
+            self._open = f"step-{self._n}"
+        return self._open
+
+    def _command(self, output: str) -> tuple[str, bool]:
+        """A run_command's output without its header, and whether it failed
+        (a non-zero exit code; no code found is not a failure)."""
+        code = self._EXIT.search(output)
+        body = (
+            output.partition("Command output:\n")[2]
+            if "Command output:\n" in output
+            else output
+        )
+        if code and body is output:
+            body = (
+                "" if "No output from the command." in output else output[code.end() :]
+            )
+        return body.strip("\n") + ("\n" if body.strip() else ""), bool(
+            code and code.group(1) != "0"
+        )
 
     def _events(self, raw: dict) -> list[Event]:
         kind = raw.get("event")
@@ -336,22 +376,28 @@ class AntigravityParser(Parser):
             if step.get("step_type") != "tool":
                 return []
             events = self._flush()
+            call_id = self._id(step)
+            state = str(step.get("state", ""))
+            ended = state in self._ENDED
+            if call_id in self._ended:
+                return events  # a repeated end
             info = step.get("tool_info") or {}
             name = step.get("tool_name") or info.get("name") or "tool"
-            raw_name, args = self._tool(name, info.get("parameters") or {})
-            call_id = f"{step.get('conversation_id', '')}:{step.get('step_index')}"
-            if call_id not in self._tools:
+            params = info.get("parameters") or {}
+            # Wait for the arguments: an early update may not have them yet.
+            if call_id not in self._tools and (params or ended):
+                raw_name, args = self._tool(name, params)
                 events.append(self._call(call_id, raw_name, args))
-            state = step.get("state")
-            if state == "ACTIVE":
+            if not ended:
                 return events
+            self._ended.add(call_id)
+            if self._open == call_id:
+                self._open = None
             output = _text(info.get("output") or "")
             error = state != "DONE"
             if name == "run_command":
-                # "Created At: ...\nCommand exited with code N.\n\nCommand output:\n..."
-                head, _, body = output.partition("Command output:\n")
-                error = error or ("exited with code 0." not in head and bool(head))
-                output = body if _ else output
+                output, failed = self._command(output)
+                error = error or failed
             events.append(self._result(call_id, output, error))
             return events
         events = self._flush()
@@ -385,4 +431,4 @@ PARSERS: dict[str, type[Parser]] = {
 
 def parse_lines(agent: str, lines) -> list[Event]:
     parser = PARSERS[agent]()
-    return [event for line in lines for event in parser.feed(line)]
+    return [event for line in lines for event in parser.feed(line)] + parser.finish()

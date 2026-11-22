@@ -115,6 +115,12 @@ codex)
     "$PROMPT" </dev/null >transcript.jsonl
   ;;
 antigravity)
+  # agy's terminal can't be turned off from here: in a scenario where the
+  # agents get no shell, it would get one when the others don't.
+  if [[ $SHELL_TOOLS != 1 ]]; then
+    echo "antigravity always has a shell, and this scenario gives agents none" >&2
+    exit 2
+  fi
   # The Antigravity CLI (agy), signed in with your Google account; its MCP
   # servers for this run only, in the workspace's .agents/mcp_config.json
   # (no key in it: the server inherits this environment).
