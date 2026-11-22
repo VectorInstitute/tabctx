@@ -345,3 +345,28 @@ def test_the_planner_reads_a_fenced_reply_and_keeps_known_kinds():
     assert planner.parse("no json") is None
     prompt = planner.prompt("CTX", "Q?", [{"kind": "clean", "text": "Fix it"}])
     assert prompt.startswith("CTX") and "Q?" in prompt and "1. Fix it" in prompt
+
+
+def test_a_suggested_questions_recording_replays_by_its_id(
+    open_hosted, monkeypatch, tmp_path
+):
+    module, client, _ = open_hosted
+    show = tmp_path / "showcase"
+    rec = show / "questions" / "calls" / "claude"
+    rec.mkdir(parents=True)
+    (rec / "transcript.jsonl").write_text("{}\n")
+    (rec / "ask.json").write_text('{"question": "Which 50?", "plan": []}')
+    monkeypatch.setattr(module, "SHOWCASE", show)
+    assert client.get("/api/setup").json()["recorded"] == {"calls": ["claude"]}
+    events = client.get("/api/runs/claude/events?q=calls").text
+    assert '"question": "Which 50?"' in events and "event: outcome" in events
+    for q in ("premium", "../calls", "nope"):  # no recording, or not a question
+        assert client.get(f"/api/runs/claude/events?q={q}").status_code == 404
+    assert client.get("/api/runs/codex/events?q=calls").status_code == 404
+
+
+def test_claude_prefers_the_models_that_answered_open_questions_best():
+    env = gateway.agent_env(ALL | {"claude-fable-5-2"})["claude"]
+    assert env["CLAUDE_MODEL"] == "claude-fable-5-2"
+    env = gateway.agent_env(ALL | {"claude-fable-5-2", "claude-opus-5-5"})["claude"]
+    assert env["CLAUDE_MODEL"] == "claude-opus-5-5"

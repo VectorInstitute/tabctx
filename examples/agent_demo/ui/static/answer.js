@@ -49,9 +49,9 @@ const Answer = (() => {
   // ---- the run ----------------------------------------------------------------
   // ask: an open question's question and approved plan, whose steps (one
   // section per kind, in the plan's order) replace the scenario's own.
-  function reset(setup, agent, replaying, ask) {
+  function reset(setup, agent, replaying, ask, q = null) {
     const d = setup.dataset || {};
-    S = { d, agent, replaying, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false, planned: new Map() };
+    S = { d, agent, replaying, q, steps: new Map(), calls: new Map(), top: new Map(), people: 0, predicted: false, cleaned: false, planned: new Map() };
     for (const step of ask?.plan || []) if (STEPS[step.kind] && !S.planned.has(step.kind)) S.planned.set(step.kind, step.text);
     const kinds = ask?.plan ? [...S.planned.keys()] : (d.steps || []).map(([k]) => k);
     // With a cleaning step, choosing the examples follows it: the clean
@@ -166,7 +166,7 @@ const Answer = (() => {
     setStep("clean", "working", "Setting the raw rows beside the clean ones");
     let v = null;
     try {
-      const res = await fetch(`/api/runs/${S.agent}/cleaning`);
+      const res = await fetch(`/api/runs/${S.agent}/cleaning${S.q ? `?q=${encodeURIComponent(S.q)}` : ""}`);
       if (res.ok) v = await res.json();
     } catch {}
     if (S !== run) return; // another run started meanwhile

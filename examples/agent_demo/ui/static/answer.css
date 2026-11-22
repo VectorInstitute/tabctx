@@ -272,3 +272,4 @@ body.present .pk { width: 42px; height: 42px; }
 body.present .pstep { grid-template-columns: 42px 80px 1fr 28px; }
 body.present .plan::before { left: 20px; }
 body.present .sug { font-size: 16px; }
+.sug.on { border-color: var(--text); color: var(--text); }

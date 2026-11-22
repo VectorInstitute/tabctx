@@ -17,8 +17,10 @@ TABULAR = ("tabpfn-3.5", "tabicl-v2")
 # Preference order per agent. Codex stays on gpt-5: for newer OpenAI models
 # Codex adds a tool_search tool, which the gateway refuses (see run.sh).
 _AGENT_MODELS = {
+    # Opus 5.5 answered open questions best in testing, then Fable 5.2.
     "claude": [
         "claude-opus-5-5",
+        "claude-fable-5-2",
         "claude-opus-5",
         "claude-sonnet-5-5",
         "claude-sonnet-5",

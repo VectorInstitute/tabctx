@@ -83,6 +83,8 @@ const state = {
   plan: null,
   planning: false,
   ask: null,
+  card: null, // the suggested question in the box, if any
+  q: null, // the suggested question whose recording is shown
 };
 
 // ---- class colors: the entity keeps its color everywhere -------------------
@@ -151,8 +153,8 @@ async function init() {
     start();
   };
   $("#replan").onclick = () => showPlan(null);
-  $("#replay").onclick = () => watch(state.agent, true);
-  $("#again-replay").onclick = () => watch(state.shown, true);
+  $("#replay").onclick = () => watch(state.agent, true, recordedCard());
+  $("#again-replay").onclick = () => watch(state.shown, true, state.q);
   $("#again-new").onclick = newQuestion;
   $("#stop").onclick = stopRun;
   $("#login").onsubmit = signIn;
@@ -306,15 +308,27 @@ function renderAsk(d) {
     if (!b) return;
     $("#ask-text").value = d.suggestions[b.dataset.i][2];
     $("#ask-text").focus();
-    renderAgents();
+    pickCard();
   };
-  $("#ask-text").oninput = () => renderAgents();
+  $("#ask-text").oninput = pickCard;
   $("#ask-text").onkeydown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault(); // Enter asks; Shift+Enter is a new line
       if (!$("#run").disabled) $("#run").click();
     }
   };
+}
+
+// Which suggested question the box holds (if it holds one as written).
+function pickCard() {
+  const text = $("#ask-text").value.trim();
+  state.card = (state.setup.dataset?.suggestions || []).find(([, , q]) => q === text)?.[0] || null;
+  document.querySelectorAll(".sug").forEach((b) => b.classList.toggle("on", state.setup.dataset.suggestions[b.dataset.i][0] === state.card));
+  renderAgents();
+}
+// The card's recording by the chosen agent, if there is one.
+function recordedCard() {
+  return state.card && (state.setup.recorded?.[state.card] || []).includes(state.agent) ? state.card : null;
 }
 
 async function draftPlan() {
@@ -411,7 +425,7 @@ function renderAgents() {
     })
     .join("");
   document.querySelectorAll(".agent").forEach((b) => (b.onclick = () => selectAgent(b.dataset.id)));
-  $("#replay").disabled = !(state.agent in scores) || isBusy();
+  $("#replay").disabled = !(state.agent in scores || recordedCard()) || isBusy();
   const agent = state.setup.agents.find((a) => a.id === state.agent);
   const signedOut = hosted && !state.setup.signed_in;
   const open = state.setup.open;
@@ -462,7 +476,9 @@ function notice(text) {
 
 // ---- a run ---------------------------------------------------------------
 
-function watch(agent, replay) {
+// q: a suggested question's id, to replay its recording.
+function watch(agent, replay, q = null) {
+  state.q = q;
   state.source?.close();
   clearInterval(state.timer);
   Object.assign(state, { calls: new Map(), tabctxCalls: 0, used: new Set(), queue: [], replaying: replay, stats: null, shown: agent, waiting: false, go: false, stepAt: 0, stepTotal: 0, gen: state.gen + 1, pinned: true });
@@ -476,7 +492,7 @@ function watch(agent, replay) {
   // still going when the page loaded) come with its status, below.
   const ask = replay ? null : state.ask;
   showAsk(ask);
-  Answer.reset(state.setup, agent, replay, ask);
+  Answer.reset(state.setup, agent, replay, ask, q);
   Actions.reset(state.setup);
   $("#timeline").innerHTML = "";
   $("#outcome").hidden = true;
@@ -486,14 +502,14 @@ function watch(agent, replay) {
   setStatus(replay ? "replay" : "live");
   updateMeta(info);
 
-  const source = new EventSource(`/api/runs/${agent}/events`);
+  const source = new EventSource(`/api/runs/${agent}/events${q ? `?q=${encodeURIComponent(q)}` : ""}`);
   state.source = source;
   source.addEventListener("status", (e) => {
     const s = JSON.parse(e.data);
     state.started = replay ? Date.now() : s.started * 1000;
     if (s.ask && JSON.stringify(s.ask) !== JSON.stringify(ask)) {
       showAsk(s.ask);
-      Answer.reset(state.setup, agent, replay, s.ask); // before any of its events
+      Answer.reset(state.setup, agent, replay, s.ask, q); // before any of its events
     }
     if (!replay) state.timer = setInterval(() => updateMeta(info), 500);
   });
