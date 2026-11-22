@@ -182,7 +182,7 @@ class Runner:
             prompt_file.write_text(prompt)
             ask_file = folder.parent / f".{agent}.ask.json"
             if ask:
-                ask_file.write_text(json.dumps(ask))
+                ask_file.write_text(json.dumps(ask) + "\n")
             else:
                 ask_file.unlink(missing_ok=True)
             user = {}

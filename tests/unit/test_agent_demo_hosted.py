@@ -419,6 +419,7 @@ def test_a_suggested_questions_recording_replays_by_its_id(
     rec.mkdir(parents=True)
     (rec / "transcript.jsonl").write_text("{}\n")
     (rec / "ask.json").write_text('{"question": "Which 50?", "plan": []}')
+    (rec / "score.json").write_text('{"roc_auc": 0.78}')  # as make_showcase keeps it
     monkeypatch.setattr(module, "SHOWCASE", show)
     monkeypatch.setattr(module.sys.modules["runner"], "SHOWCASE", show)
     assert client.get("/api/setup").json()["recorded"] == {"calls": ["claude"]}
