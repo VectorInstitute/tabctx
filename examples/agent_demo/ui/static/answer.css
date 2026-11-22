@@ -267,3 +267,8 @@ body.present .timeline { padding-bottom: 80px; }
 .planned { margin: 4px 0 0; font-size: 13.5px; color: var(--text-3); }
 .planned::before { content: "Plan · "; font-weight: 600; letter-spacing: 0.02em; }
 .try-more { margin: 6px 0 0; font-size: 12.5px; color: var(--text-3); }
+body.present .pk-text { font-size: 21px; }
+body.present .pk { width: 42px; height: 42px; }
+body.present .pstep { grid-template-columns: 42px 80px 1fr 28px; }
+body.present .plan::before { left: 20px; }
+body.present .sug { font-size: 16px; }
