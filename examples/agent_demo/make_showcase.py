@@ -51,6 +51,11 @@ def sanitize(agent: str, line: str, run_dir: Path) -> str | None:
         text = text.replace(path + "/", "").replace(path, ".")
     text = text.replace(str(HERE.parent.parent), "<repo>")
     text = re.sub(r"/(Users|home)/[^/\"\\\\]+", "~", text)
+    # The agent's sandbox temp folder names the local user id.
+    # Claude Code's temp folders, which name the user id and, by project,
+    # the home folder ("claude-501/-Users-jdoe-src-x").
+    text = re.sub(r"claude-\d+/-(Users|home)-[A-Za-z0-9._-]+", "claude", text)
+    text = re.sub(r"(/private)?/tmp/claude-\d+", "/tmp", text)
     # The login as the owner, and on Linux often the group, in `ls -l`
     # output ("1 jdoe  staff", "1 jdoe jdoe").
     login = re.escape(getpass.getuser())

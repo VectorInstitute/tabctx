@@ -1,0 +1,321 @@
+{
+ "file": "renewals_2025_export.csv",
+ "rows_before": 6127,
+ "rows_after": 6000,
+ "removed": [
+  {
+   "n": 120,
+   "what": "duplicate rows"
+  },
+  {
+   "n": 7,
+   "what": "rows that aren't records (tests, totals)"
+  }
+ ],
+ "columns": [
+  {
+   "raw": "Prov",
+   "clean": "province",
+   "kind": "category",
+   "before": 33,
+   "after": 9,
+   "example": {
+    "value": "ON",
+    "spellings": [
+     "ont",
+     " on",
+     "ONT.",
+     "ON",
+     "Ontario"
+    ]
+   }
+  },
+  {
+   "raw": "Industry",
+   "clean": "industry",
+   "kind": "category",
+   "before": 21,
+   "after": 7,
+   "example": {
+    "value": "Construction",
+    "spellings": [
+     "Construction",
+     "CONSTR",
+     "construction"
+    ]
+   }
+  },
+  {
+   "raw": "Plan Type",
+   "clean": "plan_type",
+   "kind": "category",
+   "before": 11,
+   "after": 3,
+   "example": {
+    "value": "Full Package (incl. LTD)",
+    "spellings": [
+     "H/D/L/LTD",
+     "Full benefits (incl. LTD)",
+     "Full Package",
+     "FULL"
+    ]
+   }
+  },
+  {
+   "raw": "Lives Covered",
+   "clean": "lives_covered",
+   "kind": "numeric",
+   "before": 0,
+   "after": 43
+  },
+  {
+   "raw": "Annual Premium",
+   "clean": "annual_premium",
+   "kind": "numeric",
+   "before": 3916,
+   "after": 0
+  },
+  {
+   "raw": "Channel",
+   "clean": "channel",
+   "kind": "category",
+   "before": 9,
+   "after": 3,
+   "example": {
+    "value": "Broker",
+    "spellings": [
+     "Broker",
+     "BRKR",
+     "broker"
+    ]
+   }
+  },
+  {
+   "raw": "Renewal Status",
+   "clean": "terminated",
+   "kind": "category",
+   "before": 6,
+   "after": 2,
+   "example": {
+    "value": "No",
+    "spellings": [
+     "Renewed",
+     "In force",
+     "RENEWED"
+    ]
+   }
+  }
+ ],
+ "sample": {
+  "columns": [
+   [
+    "Prov",
+    "province"
+   ],
+   [
+    "Industry",
+    "industry"
+   ],
+   [
+    "Plan Type",
+    "plan_type"
+   ],
+   [
+    "Lives Covered",
+    "lives_covered"
+   ],
+   [
+    "Annual Premium",
+    "annual_premium"
+   ],
+   [
+    "Channel",
+    "channel"
+   ],
+   [
+    "Renewal Status",
+    "terminated"
+   ]
+  ],
+  "rows": [
+   [
+    [
+     "Alta",
+     "AB"
+    ],
+    [
+     "Prof. Services",
+     "Professional Services"
+    ],
+    [
+     "Full Package",
+     "Full Package (incl. LTD)"
+    ],
+    [
+     "-1",
+     ""
+    ],
+    [
+     "$610,342.60",
+     "610342.6"
+    ],
+    [
+     "BRKR",
+     "Broker"
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "Saskatchewan",
+     "SK"
+    ],
+    [
+     "Non-Profit",
+     "Non-Profit / Public Sector"
+    ],
+    [
+     "H/D/L/LTD",
+     "Full Package (incl. LTD)"
+    ],
+    [
+     "0",
+     ""
+    ],
+    [
+     "$99,700.07",
+     "99700.07"
+    ],
+    [
+     "In-house",
+     "Direct"
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "Quebec",
+     "QC"
+    ],
+    [
+     "Non-Profit",
+     "Non-Profit / Public Sector"
+    ],
+    [
+     "Full benefits (incl. LTD)",
+     "Full Package (incl. LTD)"
+    ],
+    [
+     "N/A",
+     ""
+    ],
+    [
+     "CAD 173,428",
+     "173428"
+    ],
+    [
+     "BRKR",
+     "Broker"
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ],
+   [
+    [
+     "ont",
+     "ON"
+    ],
+    [
+     "RETAIL",
+     "Retail"
+    ],
+    [
+     "Full Package",
+     "Full Package (incl. LTD)"
+    ],
+    [
+     "-",
+     ""
+    ],
+    [
+     "$38,121.39",
+     "38121.39"
+    ],
+    [
+     "BRKR",
+     "Broker"
+    ],
+    [
+     "In force",
+     "No"
+    ]
+   ],
+   [
+    [
+     "ont",
+     "ON"
+    ],
+    [
+     "Non-Profit",
+     "Non-Profit / Public Sector"
+    ],
+    [
+     "Full Package",
+     "Full Package (incl. LTD)"
+    ],
+    [
+     "999999",
+     ""
+    ],
+    [
+     "CAD 126,325",
+     "126325"
+    ],
+    [
+     "CONS.",
+     "Consultant"
+    ],
+    [
+     "Renewed",
+     "No"
+    ]
+   ]
+  ]
+ },
+ "examples": {
+  "rows": 6000,
+  "features": 19,
+  "outcome": {
+   "raw": "Renewal Status",
+   "clean": "terminated",
+   "classes": [
+    {
+     "value": "No",
+     "n": 5236,
+     "spellings": [
+      "In force",
+      "RENEWED",
+      "Renewed"
+     ]
+    },
+    {
+     "value": "Yes",
+     "n": 764,
+     "spellings": [
+      "TERM",
+      "Terminated",
+      "moved carrier"
+     ]
+    }
+   ]
+  }
+ }
+}
