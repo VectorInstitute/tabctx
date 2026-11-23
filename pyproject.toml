@@ -112,7 +112,7 @@ survivalpfn-reference = ["SurvSet", "h5py", "pandas", "lifelines"]
 # The docs site (mkdocs.yml): `uv sync --group docs && uv run mkdocs serve`.
 # The service's deps too: the build writes the HTTP API's OpenAPI spec.
 docs = [
-    "mkdocs-material>=9.6",
+    "mkdocs-material>=9.8.2",
     "mkdocstrings[python]>=1.0.8",
     "fastapi",
     "uvicorn",
