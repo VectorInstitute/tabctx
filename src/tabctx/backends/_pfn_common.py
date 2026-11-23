@@ -17,10 +17,11 @@ way:
 - One network per device, shared by every context (the context is the
   table; the network is the same for every tenant).
 - The context is the training table, at most a fixed number of rows of
-  it: a larger table is subsampled at fit, seeded, stratified on both
-  targets (strata()): each flag's share (events and censored rows;
-  treated and control rows) and, within each, the spread of times or
-  outcomes. Test rows
+  it: a larger table is subsampled at fit, seeded, with strata() and
+  subsample(): SurvivalPFN keeps the share of events and censored rows
+  and, within each, the spread of times; CausalPFN gives each arm up to
+  half the context and keeps the spread of outcomes within each arm
+  (causalpfn.context_rows). Test rows
   attend only to the context, so a row's answer never depends on the
   other rows in its request (the server merges and splits requests).
 - A cached context lives on the host; the spill tier pickles it without
@@ -62,8 +63,9 @@ def strata(
     or censored; treated or control) split into equal-count bands of
     `values` (time; outcome) ranked within that flag. A sample keeping
     every group's share keeps the flag's share and, within it, the spread
-    of times or outcomes (stratified on both, as the SurvivalPFN authors
-    suggested).
+    of times (stratified on both, as the SurvivalPFN authors suggested).
+    CausalPFN calls it once per arm, with one flag, for the outcome bands
+    alone (causalpfn.context_rows).
 
     A flag gets as many bands as its share of a `size`-row sample holds
     rows, at most `bands` and at least one: so there are never more groups

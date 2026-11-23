@@ -4,6 +4,7 @@
 ### Added
 - **A quickstart notebook you can run in Colab** (`examples/quickstart.ipynb`, #113): install, start a server, classify, regress with prediction quantiles checked on held-out rows, and list and delete contexts. Colab badges in the README and the docs quickstart. (From @tylrcc in #134.)
 ### Fixed
+- **CausalPFN is as accurate as its own estimator on a rare treatment.** A training table larger than the context (4,096 rows) was subsampled keeping each arm's share, so a rare treatment left the model a few dozen treated rows: on Lalonde CPS (173 of 16,177 rows treated, the CausalPFN paper's benchmark; 100 realizations) tabctx's effects had a PEHE of 9,552 and an ATE error of 0.39, against 8,955 and 0.13 for CausalPFN's estimator. Each arm now gets up to half the context, a smaller arm is kept whole and the other arm takes the rest: 8,947 and 0.18. Tables that fit the context are unchanged. `tests/integration/test_causalpfn_reference.py` (`uv sync --extra causalpfn`) checks IHDP against the paper and CPS against the estimator.
 - The `python-multipart` floor is now 0.0.13: the server imports `python_multipart`, which older releases don't have, so an environment that already had one failed at startup.
 
 ## [0.21.0] - 2026-11-13

@@ -13,7 +13,7 @@ from tabctx.backends._pfn_common import (
     tagged_dumps,
     tagged_loads,
 )
-from tabctx.backends.causalpfn import _column_medians, _fill
+from tabctx.backends.causalpfn import _column_medians, _fill, context_rows
 from tabctx.backends.survivalpfn import _within
 
 
@@ -144,3 +144,55 @@ def test_a_context_spills_without_its_network():
 
 def test_array_bytes():
     assert array_bytes(np.zeros((3, 2), dtype=np.float32), None) == 24
+
+
+class TestCausalContextRows:
+    """Which training rows a causal context keeps (context_rows)."""
+
+    def test_a_table_that_fits_is_kept_whole(self):
+        treated = np.array([0.0, 1.0, 0.0])
+        assert context_rows(treated, np.zeros(3), 3, seed=0).tolist() == [0, 1, 2]
+
+    def test_a_rare_arm_is_kept_whole(self):
+        # Lalonde CPS's shape: 173 of 16,177 rows treated.
+        rng = np.random.default_rng(0)
+        treated = np.zeros(16_177)
+        treated[rng.choice(16_177, 173, replace=False)] = 1
+        keep = context_rows(treated, rng.normal(size=16_177), 4096, seed=0)
+        assert len(keep) == 4096 and len(set(keep)) == 4096
+        assert (keep == np.sort(keep)).all()
+        assert treated[keep].sum() == 173  # every treated row
+
+    def test_two_large_arms_get_half_each(self):
+        rng = np.random.default_rng(1)
+        treated = (rng.random(20_000) < 0.3).astype(float)
+        keep = context_rows(treated, rng.normal(size=20_000), 1_000, seed=0)
+        assert len(keep) == 1_000
+        assert treated[keep].sum() == 500
+
+    def test_an_odd_size_and_an_arm_just_over_half(self):
+        treated = np.r_[np.ones(600), np.zeros(500)]  # 600 of 1,100
+        keep = context_rows(treated, np.arange(1_100.0), 999, seed=0)
+        assert len(keep) == 999 and len(set(keep)) == 999
+        assert treated[keep].sum() == 500  # the larger arm, half (rounded up)
+
+    def test_an_arm_keeps_the_spread_of_its_outcomes(self):
+        rng = np.random.default_rng(2)
+        treated = (rng.random(20_000) < 0.3).astype(float)
+        outcome = rng.lognormal(sigma=2.0, size=20_000)  # long right tail
+        keep = context_rows(treated, outcome, 1_000, seed=0)
+        levels = np.linspace(0.05, 0.95, 10)
+        for arm in (0.0, 1.0):
+            full = np.sort(outcome[treated == arm])
+            kept = outcome[keep][treated[keep] == arm]
+            ranks = np.searchsorted(full, np.quantile(kept, levels)) / len(full)
+            assert np.abs(ranks - levels).max() < 0.03
+
+    def test_one_arm_only_and_the_same_rows_every_time(self):
+        rng = np.random.default_rng(3)
+        outcome = rng.normal(size=5_000)
+        keep = context_rows(np.ones(5_000), outcome, 500, seed=0)
+        assert len(keep) == 500
+        assert (
+            keep.tolist() == context_rows(np.ones(5_000), outcome, 500, seed=0).tolist()
+        )

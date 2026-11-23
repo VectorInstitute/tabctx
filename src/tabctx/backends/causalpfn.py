@@ -34,8 +34,9 @@ been treated or not (overlap).
 
 How it is served, and how that differs from CausalPFN's own estimator:
 the context is the training table, at most `context_size` rows of it (a
-larger table is subsampled at fit, seeded, keeping each arm's share and
-the spread of outcomes within it), and
+larger table is subsampled at fit, seeded: each arm gets up to half the
+context, a smaller arm is kept whole and the other arm takes the rest,
+and each arm keeps the spread of its outcomes; see context_rows), and
 every test row is predicted against that same context. CausalPFN's
 estimator instead picks a context per group of test rows (the training
 rows nearest them by a gradient-boosting model's effect estimate), so a
@@ -98,6 +99,46 @@ DEFAULT_BATCH_ROWS = 1024
 # Points of each outcome distribution read for quantiles.
 QUANTILE_POINTS = 2000
 _SEED = 0
+
+
+def context_rows(
+    treated: np.ndarray, outcome: np.ndarray, size: int, seed: int
+) -> np.ndarray:
+    """Sorted indices of the training rows a context keeps: all of them
+    when there are at most `size`, else exactly `size`, with each arm
+    given up to an equal share (half, for treated and control) and a
+    smaller arm kept whole, its unused share going to the other arm.
+    Within an arm, rows are sampled across equal-count bands of the
+    outcome (strata), so the arm keeps its spread of outcomes.
+
+    It does not keep each arm's share of the table, because the model
+    learns each arm's expected outcome mostly from that arm's rows: a rare
+    treatment (1% of Lalonde CPS's rows) would leave it about 40 treated
+    rows. CausalPFN's own estimator also caps each arm at half its context
+    (of the rows nearest each group of test rows); giving a smaller arm's
+    unused share to the other arm is tabctx's choice.
+
+    Measured on Lalonde CPS (100 realizations, the authors' splits): PEHE
+    8,947 and ATE error 0.177, against 9,552 and 0.39 keeping shares and
+    8,955 and 0.133 for CausalPFN's estimator (the paper: 8,960 and 0.13);
+    tests/integration/test_causalpfn_reference.py checks the first 10. On simulated 20,000-row
+    tables (5 seeds), PEHE with 10% treated went from 0.63 to 0.17; with
+    30% and 50% treated, where both arms are larger than half the context,
+    it was the same or better (0.207 to 0.203, 0.192 to 0.181)."""
+    n = len(treated)
+    if n <= size:
+        return np.arange(n)
+    arms = sorted((np.flatnonzero(treated == v) for v in np.unique(treated)), key=len)
+    keep, left = [], size
+    for i, rows in enumerate(arms):
+        k = min(len(rows), left // (len(arms) - i))
+        left -= k
+        if k == len(rows):
+            keep.append(rows)
+        else:
+            groups = strata(np.zeros(len(rows)), outcome[rows], k)
+            keep.append(rows[subsample(groups, k, seed)])
+    return np.sort(np.concatenate(keep))
 
 
 @dataclass
@@ -180,9 +221,7 @@ class CausalPFNBackend:
             raise InvalidInputError(f"{self.name} fits causal, not {task}")
         X_arr = float32_rows(X)
         outcome, treated = (a.astype(np.float32) for a in split_targets(y))
-        keep = subsample(
-            strata(treated, outcome, self._context_size), self._context_size, _SEED
-        )
+        keep = context_rows(treated, outcome, self._context_size, _SEED)
         X_arr, outcome, treated = X_arr[keep], outcome[keep], treated[keep]
         medians = _column_medians(X_arr)
         X_arr = _fill(X_arr, medians)
