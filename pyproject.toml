@@ -113,7 +113,7 @@ survivalpfn-reference = ["SurvSet", "h5py", "pandas", "lifelines"]
 # The service's deps too: the build writes the HTTP API's OpenAPI spec.
 docs = [
     "mkdocs-material>=9.6",
-    "mkdocstrings[python]>=0.29",
+    "mkdocstrings[python]>=1.0.8",
     "fastapi",
     "uvicorn",
     "python-multipart>=0.0.13",

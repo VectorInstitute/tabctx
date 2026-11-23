@@ -4027,7 +4027,7 @@ dev = [
 docs = [
     { name = "fastapi" },
     { name = "mkdocs-material", specifier = ">=9.6" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.29" },
+    { name = "mkdocstrings", extras = ["python"], specifier = ">=1.0.8" },
     { name = "pyarrow", specifier = ">=14" },
     { name = "python-multipart", specifier = ">=0.0.13" },
     { name = "uvicorn" },
